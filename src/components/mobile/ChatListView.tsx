@@ -65,7 +65,7 @@ export const ChatListView: React.FC<ChatListViewProps> = ({
 
       {/* Matches Horizontal Scroll Strip (Нові метчі) */}
       <div className="px-4 pt-3 pb-2 border-b border-neutral-900">
-        <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-2">
+        <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-[10px]">
           Свіжі метчі (Готові випити)
         </span>
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
