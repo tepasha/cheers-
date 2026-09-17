@@ -1,0 +1,152 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile containing public details, preferences and current location",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 120 },
+        "avatar": { "type": "string", "maxLength": 500 },
+        "tagline": { "type": "string", "maxLength": 150 },
+        "paymentRule": { 
+          "type": "string", 
+          "enum": ["split_50_50", "each_for_themselves", "i_treat", "rounds"] 
+        },
+        "preferredDrinks": {
+          "type": "array",
+          "description": "List of preferred drinks (beer, craft, wine, cocktail, etc.)"
+        },
+        "locationName": { "type": "string", "maxLength": 100 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "FavoriteVenue": {
+      "title": "FavoriteVenue",
+      "description": "A favorite bar or pub saved by the user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 120 },
+        "area": { "type": "string", "maxLength": 120 },
+        "category": { "type": "string", "maxLength": 80 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "comment": { "type": "string", "maxLength": 250 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "lat", "lng"]
+    },
+    "FriendItem": {
+      "title": "FriendItem",
+      "description": "A friend saved by the user for bar meetups and direct connection",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "friendId": { "type": "string", "maxLength": 128 },
+        "friendName": { "type": "string", "maxLength": 100 },
+        "friendAvatar": { "type": "string", "maxLength": 500 },
+        "tagline": { "type": "string", "maxLength": 200 },
+        "addedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "friendId", "friendName"]
+    },
+    "HangoutAlert": {
+      "title": "HangoutAlert",
+      "description": "Live beacon looking for company in a venue",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "userAvatar": { "type": "string", "maxLength": 500 },
+        "barName": { "type": "string", "maxLength": 120 },
+        "locationArea": { "type": "string", "maxLength": 120 },
+        "drinkPreference": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "slotsAvailable": { "type": "number" },
+        "participantsCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "closed"] },
+        "joinedUsers": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id", "userId", "userName", "barName"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "End-to-end encrypted message inside a direct or venue chat thread",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "chatId": { "type": "string", "maxLength": 128 },
+        "senderId": { "type": "string", "maxLength": 128 },
+        "senderName": { "type": "string", "maxLength": 100 },
+        "cipherPayload": { "type": "string", "maxLength": 5000, "description": "AES-256-GCM encrypted ciphertext and IV" },
+        "text": { "type": "string", "maxLength": 1000 },
+        "isEncrypted": { "type": "boolean" },
+        "type": { "type": "string", "enum": ["text", "cheers", "location_proposal"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "chatId", "senderId"]
+    },
+    "GroupMeetup": {
+      "title": "GroupMeetup",
+      "description": "Scheduled group meetup in a bar or pub with invited participants",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "venueName": { "type": "string", "maxLength": 120 },
+        "venueAddress": { "type": "string", "maxLength": 200 },
+        "scheduledDate": { "type": "string", "maxLength": 50 },
+        "scheduledTime": { "type": "string", "maxLength": 20 },
+        "drinkPreference": { "type": "string", "maxLength": 100 },
+        "maxParticipants": { "type": "number" },
+        "creatorId": { "type": "string", "maxLength": 128 },
+        "creatorName": { "type": "string", "maxLength": 100 },
+        "creatorAvatar": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["upcoming", "ongoing", "past", "cancelled"] },
+        "participants": { "type": "array" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "venueName", "scheduledDate", "scheduledTime", "creatorId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile with drink preferences and status"
+    },
+    "/users/{userId}/favorites/{venueId}": {
+      "schema": "FavoriteVenue",
+      "description": "User's favorite bars and venues"
+    },
+    "/users/{userId}/friends/{friendId}": {
+      "schema": "FriendItem",
+      "description": "User's friends for bar meetups"
+    },
+    "/hangouts/{hangoutId}": {
+      "schema": "HangoutAlert",
+      "description": "Active hangout calls and bar invites"
+    },
+    "/group_meetups/{meetupId}": {
+      "schema": "GroupMeetup",
+      "description": "Scheduled group meetups in venues"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Messages sent within a chat room"
+    }
+  }
+}

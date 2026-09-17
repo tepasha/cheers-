@@ -1,0 +1,12 @@
+# fastlane/Appfile
+# Configuration for Apple Developer Portal & Google Play Console
+
+# Apple App Store Details
+app_identifier("com.budmo.app") # The bundle identifier of your app
+apple_id("tepasha.90@gmail.com") # Your Apple Developer Apple ID
+team_id("AB12CD34EF") # Developer Portal Team ID
+itc_team_id("123456789") # App Store Connect Team ID
+
+# Android Google Play Details
+json_key_file("./google-service-account.json") # Path to the Google Play service account JSON key
+package_name("com.budmo.app") # Android application ID

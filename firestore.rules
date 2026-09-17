@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection testing endpoint
+    match /test/{docId} {
+      allow read: if true;
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update: if isValidId(userId);
+      allow delete: if isOwner(userId);
+
+      // User's Favorite Venues Subcollection
+      match /favorites/{venueId} {
+        allow read, write: if isValidId(venueId);
+      }
+
+      // User's Friends Subcollection
+      match /friends/{friendId} {
+        allow read, write: if isValidId(friendId);
+      }
+    }
+
+    // Hangout Alerts / Live Beacons
+    match /hangouts/{hangoutId} {
+      allow read: if true;
+      allow create, update: if isValidId(hangoutId);
+      allow delete: if isSignedIn() 
+        && resource.data.userId == request.auth.uid;
+    }
+
+    // Scheduled Group Meetups
+    match /group_meetups/{meetupId} {
+      allow read: if true;
+      allow create, update: if isValidId(meetupId);
+      allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
+    }
+
+    // Chat threads & messages
+    match /chats/{chatId} {
+      allow read, write: if isValidId(chatId);
+
+      match /messages/{messageId} {
+        allow read: if true;
+        allow create: if isValidId(messageId);
+        allow update, delete: if isSignedIn() 
+          && resource.data.senderId == request.auth.uid;
+      }
+    }
+
+    // Abuse & Safety Reports
+    match /reports/{reportId} {
+      allow read: if isSignedIn();
+      allow create: if isValidId(reportId);
+    }
+  }
+}

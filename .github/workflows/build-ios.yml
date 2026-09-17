@@ -1,0 +1,125 @@
+name: 🍏 iOS - Build & Release (IPA & TestFlight)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Профіль збірки (production: TestFlight / App Store, preview: внутрішній тест)'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+      release_tag:
+        description: 'Тег версії (наприклад: v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+      submit_to_testflight:
+        description: 'Автоматично завантажити в Apple TestFlight'
+        required: false
+        default: true
+        type: boolean
+      publish_to_release:
+        description: 'Зберегти збірку у вкладку GitHub Releases'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    name: 🍏 Build iOS (${{ github.event.inputs.profile || 'production' }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 🚀 Setup EAS & Expo CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 📦 Install Dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: ⚙️ Configure App Store Connect API Key
+        env:
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          if [ -n "$APP_STORE_CONNECT_API_KEY_BASE64" ]; then
+            mkdir -p private_keys
+            echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8
+            echo "✅ App Store Connect AuthKey збережено"
+          else
+            echo "ℹ️ Використовуються ключі, збережені в Expo EAS"
+          fi
+
+      - name: 🏷️ Determine Tag & Profile
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.release_tag || 'v1.0.0' }}"
+            PROFILE="${{ github.event.inputs.profile || 'production' }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            PROFILE="production"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "profile=${PROFILE}" >> $GITHUB_OUTPUT
+
+      - name: 🔨 EAS Build for iOS
+        id: build
+        run: |
+          AUTO_SUBMIT_FLAG=""
+          if [ "${{ github.event.inputs.submit_to_testflight }}" = "true" ] || [ "${{ github.event_name }}" = "push" ]; then
+            AUTO_SUBMIT_FLAG="--auto-submit"
+          fi
+
+          echo "🚀 Запуск збірки iOS для профілю: ${{ steps.vars.outputs.profile }}"
+          eas build \
+            --platform ios \
+            --profile "${{ steps.vars.outputs.profile }}" \
+            --non-interactive \
+            $AUTO_SUBMIT_FLAG \
+            --json > ios-build-result.json
+          
+          cat ios-build-result.json
+
+      - name: 📤 Upload Build Metadata Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-${{ steps.vars.outputs.profile }}-metadata
+          path: ios-build-result.json
+          retention-days: 30
+
+      - name: 🚀 Publish to GitHub Releases Tab
+        if: ${{ github.event_name == 'push' || github.event.inputs.publish_to_release == true || github.event.inputs.publish_to_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: "Будьмо! iOS ${{ steps.vars.outputs.tag }} (${{ steps.vars.outputs.profile }})"
+          files: |
+            ios-build-result.json
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

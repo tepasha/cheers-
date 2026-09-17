@@ -1,0 +1,118 @@
+# fastlane/Fastfile
+default_platform(:all)
+
+before_all do
+  ensure_git_status_clean unless is_ci
+end
+
+platform :ios do
+  desc "Run tests and linting"
+  lane :test do
+    sh("npm run lint")
+  end
+
+  desc "Build iOS IPA and push to Apple TestFlight"
+  lane :beta do
+    # Configure App Store Connect API Key for headless CI
+    api_key = app_store_connect_api_key(
+      key_id: ENV["APP_STORE_CONNECT_KEY_ID"],
+      issuer_id: ENV["APP_STORE_CONNECT_ISSUER_ID"],
+      key_filepath: ENV["APP_STORE_CONNECT_KEY_FILEPATH"] || "./private_keys/AuthKey_#{ENV['APP_STORE_CONNECT_KEY_ID']}.p8",
+      duration: 1200,
+      in_house: false
+    )
+
+    # Sync certificates & provisioning profiles via match
+    if ENV["CI"]
+      setup_ci
+      match(
+        type: "appstore",
+        readonly: true,
+        api_key: api_key
+      )
+    end
+
+    # Increment build number
+    increment_build_number(
+      build_number: ENV["GITHUB_RUN_NUMBER"] || Time.now.strftime("%Y%m%d%H%M"),
+      xcodeproj: "ios/BudmoApp.xcodeproj"
+    )
+
+    # Build iOS archive & IPA
+    build_app(
+      workspace: "ios/BudmoApp.xcworkspace",
+      scheme: "BudmoApp",
+      export_method: "app-store",
+      output_directory: "./build/ios"
+    )
+
+    # Upload to TestFlight
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true,
+      changelog: "Оновлення додатку Будьмо! - нові функції пошуку компанії та гео-радару."
+    )
+  end
+
+  desc "Release iOS build to Apple App Store review"
+  lane :release do
+    api_key = app_store_connect_api_key(
+      key_id: ENV["APP_STORE_CONNECT_KEY_ID"],
+      issuer_id: ENV["APP_STORE_CONNECT_ISSUER_ID"],
+      key_filepath: ENV["APP_STORE_CONNECT_KEY_FILEPATH"]
+    )
+
+    deliver(
+      api_key: api_key,
+      force: true,
+      submit_for_review: true,
+      automatic_release: true,
+      phased_release: true,
+      ipa: "./build/ios/BudmoApp.ipa"
+    )
+  end
+end
+
+platform :android do
+  desc "Run tests and linting"
+  lane :test do
+    sh("npm run lint")
+  end
+
+  desc "Build Android AAB and push to Google Play Internal Track"
+  lane :beta do
+    # Build Android App Bundle
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      project_dir: "android/"
+    )
+
+    # Upload AAB to Google Play Console Internal Track
+    upload_to_play_store(
+      track: "internal",
+      package_name: "com.budmo.app",
+      json_key: "./google-service-account.json",
+      aab: "android/app/build/outputs/bundle/release/app-release.aab",
+      release_status: "completed"
+    )
+  end
+
+  desc "Promote Android build to Google Play Production Track"
+  lane :release do
+    upload_to_play_store(
+      track: "production",
+      package_name: "com.budmo.app",
+      json_key: "./google-service-account.json",
+      aab: "android/app/build/outputs/bundle/release/app-release.aab",
+      rollout: "0.1", # 10% phased rollout
+      changes_not_sent_for_review: false
+    )
+  end
+end
+
+desc "Release to both Apple App Store and Google Play Store simultaneously"
+lane :release_all do
+  ios_beta
+  android_beta
+end

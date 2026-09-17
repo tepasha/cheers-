@@ -1,0 +1,95 @@
+name: 🌐 Web - Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Тег версії (наприклад: v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      release_title:
+        description: 'Назва релізу'
+        required: false
+        default: 'Будьмо! Web Release'
+      publish_to_release:
+        description: 'Зберегти збірку у вкладку GitHub Releases'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-web:
+    name: 🌐 Build & Package Web App
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 📦 Install Dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: 🔍 Lint & Validation
+        run: npm run lint
+
+      - name: 🧪 Unit Tests
+        run: npm test
+
+      - name: 🔨 Build Production Web App (Vite)
+        run: npm run build
+
+      - name: 🏷️ Determine Release Tag & Title
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.release_tag }}"
+            TITLE="${{ github.event.inputs.release_title }}"
+            if [ -z "$TITLE" ]; then
+              TITLE="Будьмо! Web ${TAG}"
+            fi
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            TITLE="Будьмо! Web ${TAG}"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "title=${TITLE}" >> $GITHUB_OUTPUT
+
+      - name: 🗜️ Archive Web Build (dist.zip)
+        run: |
+          cd dist
+          zip -r ../budmo-web-${{ steps.vars.outputs.tag }}.zip ./*
+          cd ..
+
+      - name: 📤 Upload Web Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: budmo-web-${{ steps.vars.outputs.tag }}
+          path: budmo-web-${{ steps.vars.outputs.tag }}.zip
+          retention-days: 30
+
+      - name: 🚀 Publish to GitHub Releases Tab
+        if: ${{ github.event_name == 'push' || github.event.inputs.publish_to_release == true || github.event.inputs.publish_to_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: ${{ steps.vars.outputs.title }}
+          files: |
+            budmo-web-${{ steps.vars.outputs.tag }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

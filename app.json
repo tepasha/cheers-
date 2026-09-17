@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "Будьмо! - Пошук компанії",
+    "slug": "budmo-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0a"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.budmo.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Будьмо! потребує доступу до гео-локації для пошуку найближчих барів, компанії на радарі та безпечного виявлення санкційних зон.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Доступ до локації для фонового оновлення радарних кличів.",
+        "NSCameraUsageDescription": "Доступ до камери для додавання фотографій до профілю або чеків.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.budmo.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0a"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "VIBRATE",
+        "INTERNET"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Дозволити Будьмо! використовувати гео-позицію для пошуку компанії поблизу."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7c8e92f1-32b4-4e20-9182-budmoapp001"
+      }
+    }
+  }
+}
