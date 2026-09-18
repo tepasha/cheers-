@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ActiveTab, BuddyProfile, ChatThread, DeviceMode, HangoutAlert, Message, AuthUser, AppLanguage, GeoBlockInfo, PushNotificationItem } from './types';
-import { INITIAL_BUDDIES, INITIAL_CHATS, INITIAL_HANGOUTS } from './data/mockData';
+import { ActiveTab, BuddyProfile, ChatThread, ChatParticipant, DeviceMode, HangoutAlert, Message, AuthUser, AppLanguage, GeoBlockInfo, PushNotificationItem } from './types';
+import { INITIAL_BUDDIES, INITIAL_HANGOUTS } from './data/mockData';
 import { MobileFrame } from './components/mobile/MobileFrame';
 import { BottomTabBar } from './components/mobile/BottomTabBar';
 import { DiscoverView } from './components/mobile/DiscoverView';
@@ -21,6 +21,7 @@ import {
 import { sounds } from './services/soundService';
 import { authService } from './services/authService';
 import { firestoreSyncService } from './services/firestoreSyncService';
+import { chatService } from './services/chatService';
 import { pushNotificationService } from './services/pushNotificationService';
 import { friendsService } from './services/friendsService';
 import {
@@ -67,9 +68,22 @@ export default function App() {
     }))
   );
   const [hangouts, setHangouts] = useState<HangoutAlert[]>(INITIAL_HANGOUTS);
-  const [chats, setChats] = useState<ChatThread[]>(INITIAL_CHATS);
+  const [chats, setChats] = useState<ChatThread[]>(() => chatService.getChats());
   const [selectedChat, setSelectedChat] = useState<ChatThread | null>(null);
   const [friendsCount, setFriendsCount] = useState<number>(() => friendsService.getFriendIds().length);
+
+  // Subscribe to reactive chat service (for group creations, deletions, and persistence)
+  useEffect(() => {
+    const unsub = chatService.subscribe((updatedChats) => {
+      setChats(updatedChats);
+      setSelectedChat((currentSelected) => {
+        if (!currentSelected) return null;
+        const exists = updatedChats.find((c) => c.id === currentSelected.id);
+        return exists || null;
+      });
+    });
+    return unsub;
+  }, []);
 
   // Subscribe to friends list updates
   useEffect(() => {
@@ -314,37 +328,40 @@ export default function App() {
     chatId: string,
     messageText: string,
     type: 'text' | 'cheers' | 'location_proposal' = 'text',
-    proposalData?: Message['proposalData']
+    proposalData?: Message['proposalData'],
+    senderOverride?: { senderId: string; senderName: string; senderAvatar?: string }
   ) => {
     const now = new Date();
     const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
+    const isMe = !senderOverride;
     const newMsg: Message = {
-      id: `msg-${Date.now()}`,
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       chatId,
-      senderId: currentUser.id || 'me',
-      senderName: currentUser.name,
+      senderId: senderOverride ? senderOverride.senderId : (currentUser.id || 'me'),
+      senderName: senderOverride ? senderOverride.senderName : currentUser.name,
+      senderAvatar: senderOverride ? senderOverride.senderAvatar : currentUser.avatar,
       text: messageText,
       timestamp: timeString,
-      isMe: true,
+      isMe,
       type,
       proposalData,
       isEncrypted: true,
     };
 
-    setChats((prevChats) =>
-      prevChats.map((c) => {
-        if (c.id === chatId) {
-          return {
-            ...c,
-            lastMessage: type === 'cheers' ? `Тост: ${messageText}` : messageText,
-            lastMessageTime: timeString,
-            messages: [...c.messages, newMsg],
-          };
-        }
-        return c;
-      })
-    );
+    const updatedChats = chats.map((c) => {
+      if (c.id === chatId) {
+        return {
+          ...c,
+          lastMessage: type === 'cheers' ? `Тост: ${messageText}` : messageText,
+          lastMessageTime: timeString,
+          messages: [...c.messages, newMsg],
+        };
+      }
+      return c;
+    });
+
+    chatService.setChats(updatedChats);
 
     // Also update selectedChat if currently open
     setSelectedChat((prev) => {
@@ -376,6 +393,39 @@ export default function App() {
     }).catch((err) => {
       console.warn('Firestore encrypted sync notice:', err);
     });
+  };
+
+  // Delete chat handler (works for both direct and group chats)
+  const handleDeleteChat = (chatId: string) => {
+    chatService.deleteChat(chatId);
+    if (selectedChat?.id === chatId) {
+      setSelectedChat(null);
+    }
+  };
+
+  // Create new group chat handler
+  const handleCreateGroupChat = (groupData: {
+    name: string;
+    topic: string;
+    avatar: string;
+    participants: ChatParticipant[];
+  }) => {
+    const newGroup = chatService.createGroupChat({
+      name: groupData.name,
+      topic: groupData.topic,
+      avatar: groupData.avatar,
+      participants: groupData.participants,
+      creatorId: currentUser.id,
+      creatorName: currentUser.name,
+      creatorAvatar: currentUser.avatar,
+    });
+    sounds.playMatchCheer();
+    setSelectedChat(newGroup);
+  };
+
+  // Add participants to existing group
+  const handleAddGroupParticipants = (chatId: string, newParticipants: ChatParticipant[]) => {
+    chatService.addParticipants(chatId, newParticipants);
   };
 
   // Handle new Hangout / live check-in with Cloud Firestore broadcast
@@ -490,14 +540,23 @@ export default function App() {
           selectedChat ? (
             <ChatRoomView
               chat={selectedChat}
+              buddies={buddies}
               onBack={() => setSelectedChat(null)}
               onSendMessage={handleSendMessage}
+              onDeleteChat={handleDeleteChat}
+              onAddParticipants={handleAddGroupParticipants}
             />
           ) : (
             <ChatListView
               chats={chats}
+              buddies={buddies}
               onSelectChat={(c) => setSelectedChat(c)}
               onQuickDiscover={() => setActiveTab('discover')}
+              onDeleteChat={handleDeleteChat}
+              onCreateGroupChat={handleCreateGroupChat}
+              currentUserId={currentUser.id}
+              currentUserName={currentUser.name}
+              currentUserAvatar={currentUser.avatar}
             />
           )
         )}

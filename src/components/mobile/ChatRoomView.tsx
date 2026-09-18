@@ -18,8 +18,10 @@ import {
   ShieldAlert,
   UserX,
   MoreVertical,
+  Users,
+  Trash2,
 } from 'lucide-react';
-import { ChatThread, Message } from '../../types';
+import { ChatThread, Message, ChatParticipant, BuddyProfile } from '../../types';
 import { sounds } from '../../services/soundService';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { friendsService } from '../../services/friendsService';
@@ -28,22 +30,38 @@ import { ToastModal } from './ToastModal';
 import { SecurityInspectionModal } from './SecurityInspectionModal';
 import { SosEmergencyModal } from './SosEmergencyModal';
 import { QuickReportModal } from './QuickReportModal';
+import { DeleteChatConfirmModal } from './DeleteChatConfirmModal';
+import { GroupInfoModal } from './GroupInfoModal';
 
 interface ChatRoomViewProps {
   chat: ChatThread;
+  buddies?: BuddyProfile[];
   onBack: () => void;
-  onSendMessage: (chatId: string, messageText: string, type?: 'text' | 'cheers' | 'location_proposal', proposal?: Message['proposalData']) => void;
+  onSendMessage: (
+    chatId: string, 
+    messageText: string, 
+    type?: 'text' | 'cheers' | 'location_proposal', 
+    proposal?: Message['proposalData'],
+    senderOverride?: { senderId: string; senderName: string; senderAvatar?: string }
+  ) => void;
+  onDeleteChat?: (chatId: string) => void;
+  onAddParticipants?: (chatId: string, newParticipants: ChatParticipant[]) => void;
 }
 
 export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
   chat,
+  buddies = [],
   onBack,
   onSendMessage,
+  onDeleteChat,
+  onAddParticipants,
 }) => {
   const [inputText, setInputText] = useState('');
   const [showToastsModal, setShowToastsModal] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [showGroupInfoModal, setShowGroupInfoModal] = useState(false);
   const [inspectedMessageId, setInspectedMessageId] = useState<string | null>(null);
   const [proposalBar, setProposalBar] = useState(chat.buddy.favoriteBars[0] || 'Squat 17b');
   const [proposalTime, setProposalTime] = useState('Сьогодні о 20:30');
@@ -151,11 +169,18 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
 
         let reply = 'Домовились! Буду радий побачитись)';
         if (context === 'cheers') {
-          reply = 'Дзинь! 🍻 Будьмо! До дна за хорошу зустріч!';
+          reply = chat.isGroup 
+            ? 'Дзинь усім! 🍻 Піднімаймо келихи за нашу чудову компанію!' 
+            : 'Дзинь! 🍻 Будьмо! До дна за хорошу зустріч!';
         } else if (context === 'location') {
           reply = `Чудовий вибір! Обожнюю ${proposalBar}. Забронюю стіл або буду там трохи раніше! 🥂`;
         } else {
-          const replies = [
+          const replies = chat.isGroup ? [
+            'Круто! Я підійду близько 20:00.',
+            'Супер, беру нам по келиху крафту!',
+            'Підтримую, якраз поруч з локацією!',
+            'Хто ще сьогодні буде? Має бути весело 🍻',
+          ] : [
             'Круто! Я якраз закінчую справи і можу підійти.',
             'Супер, беру нам по келиху крафту!',
             'Підтримую, атмосфера там зараз дуже затишна.',
@@ -163,7 +188,17 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
           reply = replies[Math.floor(Math.random() * replies.length)];
         }
 
-        onSendMessage(chat.id, reply, 'text');
+        if (chat.isGroup && chat.participants && chat.participants.length > 0) {
+          const nonMe = chat.participants.filter((p) => p.id !== 'me');
+          const randomMember = nonMe[Math.floor(Math.random() * nonMe.length)] || chat.participants[0];
+          onSendMessage(chat.id, reply, 'text', undefined, {
+            senderId: randomMember.id,
+            senderName: randomMember.name,
+            senderAvatar: randomMember.avatar,
+          });
+        } else {
+          onSendMessage(chat.id, reply, 'text');
+        }
       }, 1600);
     }, 800);
   };
@@ -172,65 +207,107 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
     <div className="flex-1 flex flex-col h-full bg-neutral-950 relative select-none overflow-hidden">
       {/* Top Chat Bar */}
       <div className="px-3 py-2 flex items-center justify-between border-b border-neutral-800 bg-neutral-900/90 backdrop-blur-md z-30">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
             id="chat-back-btn"
             onClick={onBack}
-            className="p-1 rounded-full text-neutral-400 hover:text-white transition"
+            className="p-1 rounded-full text-neutral-400 hover:text-white transition shrink-0"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          <div className="relative">
+          <div
+            onClick={() => {
+              if (chat.isGroup) {
+                sounds.playTap();
+                setShowGroupInfoModal(true);
+              }
+            }}
+            className={`relative shrink-0 ${chat.isGroup ? 'cursor-pointer hover:opacity-90 transition' : ''}`}
+          >
             <img
-              src={chat.buddy.avatar}
-              alt={chat.buddy.name}
+              src={chat.isGroup ? (chat.groupAvatar || chat.buddy.avatar) : chat.buddy.avatar}
+              alt={chat.isGroup ? (chat.groupName || chat.buddy.name) : chat.buddy.name}
               className="w-9 h-9 rounded-full object-cover border border-amber-400/50"
+              referrerPolicy="no-referrer"
             />
-            {chat.buddy.online && (
-              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-neutral-950" />
+            {chat.isGroup ? (
+              <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-amber-500 text-neutral-950 flex items-center justify-center font-bold text-[8px] ring-2 ring-neutral-950">
+                👥
+              </span>
+            ) : (
+              chat.buddy.online && (
+                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-neutral-950" />
+              )
             )}
           </div>
 
-          <div>
-            <h3 className="text-xs font-bold text-white flex items-center gap-1.5 leading-none">
-              {chat.buddy.name}
-              <span className="text-[10px] text-amber-400 font-normal">
-                ({chat.buddy.distanceKm} км)
-              </span>
+          <div 
+            onClick={() => {
+              if (chat.isGroup) {
+                sounds.playTap();
+                setShowGroupInfoModal(true);
+              }
+            }}
+            className={`min-w-0 ${chat.isGroup ? 'cursor-pointer' : ''}`}
+          >
+            <h3 className="text-xs font-bold text-white flex items-center gap-1.5 leading-none truncate">
+              <span>{chat.isGroup ? (chat.groupName || chat.buddy.name) : chat.buddy.name}</span>
+              {!chat.isGroup && (
+                <span className="text-[10px] text-amber-400 font-normal">
+                  ({chat.buddy.distanceKm} км)
+                </span>
+              )}
             </h3>
-            <p className="text-[10px] text-neutral-400">
-              {chat.buddy.online ? 'Онлайн • Шукає компанію' : 'Був(ла) нещодавно'}
+            <p className="text-[10px] text-neutral-400 truncate mt-0.5">
+              {chat.isGroup
+                ? `${chat.participants?.length || 0} учасників • Натисніть для інфо`
+                : chat.buddy.online ? 'Онлайн • Шукає компанію' : 'Був(ла) нещодавно'}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5">
-          {/* Friend status button */}
-          <button
-            type="button"
-            id="chat-toggle-friend-btn"
-            onClick={handleToggleFriend}
-            className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition active:scale-95 ${
-              isFriend
-                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
-                : 'bg-neutral-900 hover:bg-neutral-800 text-amber-400 border-neutral-800'
-            }`}
-            title={isFriend ? 'У ваших друзях (клікніть щоб видалити)' : 'Додати до друзів'}
-          >
-            {isFriend ? (
-              <>
-                <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="hidden xs:inline">Друг</span>
-              </>
-            ) : (
-              <>
-                <UserPlus className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden xs:inline">+ Друг</span>
-              </>
-            )}
-          </button>
+          {/* If Group: Group details button, If Direct: Friend status button */}
+          {chat.isGroup ? (
+            <button
+              type="button"
+              id="chat-group-info-pill-btn"
+              onClick={() => {
+                sounds.playTap();
+                setShowGroupInfoModal(true);
+              }}
+              className="px-2 py-1 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[10px] font-bold flex items-center gap-1 transition active:scale-95"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">Учасники</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              id="chat-toggle-friend-btn"
+              onClick={handleToggleFriend}
+              className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition active:scale-95 ${
+                isFriend
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                  : 'bg-neutral-900 hover:bg-neutral-800 text-amber-400 border-neutral-800'
+              }`}
+              title={isFriend ? 'У ваших друзях (клікніть щоб видалити)' : 'Додати до друзів'}
+            >
+              {isFriend ? (
+                <>
+                  <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden xs:inline">Друг</span>
+                </>
+              ) : (
+                <>
+                  <UserPlus className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden xs:inline">+ Друг</span>
+                </>
+              )}
+            </button>
+          )}
 
           {/* Non-clickable E2EE Security Badge (icon only, no text) */}
           <div
@@ -281,7 +358,22 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
             </button>
 
             {showSafetyMenu && (
-              <div className="absolute right-0 top-8 w-52 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl p-1.5 z-50 space-y-1 animate-in fade-in zoom-in-95">
+              <div className="absolute right-0 top-8 w-56 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl p-1.5 z-50 space-y-1 animate-in fade-in zoom-in-95">
+                {chat.isGroup && (
+                  <button
+                    type="button"
+                    id="chat-menu-group-info-btn"
+                    onClick={() => {
+                      setShowSafetyMenu(false);
+                      setShowGroupInfoModal(true);
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl text-left text-xs font-semibold text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2 transition"
+                  >
+                    <Users className="w-4 h-4 text-amber-400" />
+                    <span>Інформація про групу</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => {
@@ -306,23 +398,42 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
                   <span>Поскаржитися на акаунт</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowSafetyMenu(false);
-                    safetyModerationService.blockUser(
-                      chat.buddy.id,
-                      chat.buddy.name,
-                      chat.buddy.avatar,
-                      'Заблоковано в меню чату'
-                    );
-                    setIsBlocked(true);
-                  }}
-                  className="w-full px-2.5 py-2 rounded-xl text-left text-xs font-semibold text-neutral-300 hover:bg-red-500/10 hover:text-red-300 flex items-center gap-2 transition"
-                >
-                  <UserX className="w-4 h-4 text-red-400" />
-                  <span>Заблокувати співрозмовника</span>
-                </button>
+                {!chat.isGroup && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSafetyMenu(false);
+                      safetyModerationService.blockUser(
+                        chat.buddy.id,
+                        chat.buddy.name,
+                        chat.buddy.avatar,
+                        'Заблоковано в меню чату'
+                      );
+                      setIsBlocked(true);
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl text-left text-xs font-semibold text-neutral-300 hover:bg-red-500/10 hover:text-red-300 flex items-center gap-2 transition"
+                  >
+                    <UserX className="w-4 h-4 text-red-400" />
+                    <span>Заблокувати співрозмовника</span>
+                  </button>
+                )}
+
+                {onDeleteChat && (
+                  <div className="pt-1 border-t border-neutral-800">
+                    <button
+                      type="button"
+                      id="chat-menu-delete-btn"
+                      onClick={() => {
+                        setShowSafetyMenu(false);
+                        setShowDeleteConfirmModal(true);
+                      }}
+                      className="w-full px-2.5 py-2 rounded-xl text-left text-xs font-bold text-red-400 hover:bg-red-500/10 flex items-center gap-2 transition"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-400" />
+                      <span>{chat.isGroup ? 'Видалити груповий чат' : 'Видалити цей чат'}</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -481,9 +592,10 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
             >
               {!msg.isMe && (
                 <img
-                  src={chat.buddy.avatar}
-                  alt={chat.buddy.name}
-                  className="w-6 h-6 rounded-full object-cover mb-0.5"
+                  src={msg.senderAvatar || (chat.isGroup ? chat.groupAvatar : chat.buddy.avatar)}
+                  alt={msg.senderName || chat.buddy.name}
+                  className="w-6 h-6 rounded-full object-cover mb-0.5 shrink-0"
+                  referrerPolicy="no-referrer"
                 />
               )}
 
@@ -496,6 +608,11 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
                 }`}
                 title="Натисніть, щоб переглянути шифротекст"
               >
+                {chat.isGroup && !msg.isMe && (
+                  <span className="text-[10px] font-bold text-amber-400 block mb-0.5">
+                    {msg.senderName || 'Учасник'}
+                  </span>
+                )}
                 <p>{msg.text}</p>
 
                 {isInspected && (
@@ -742,6 +859,40 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
           }
         }}
       />
+
+      {/* Delete Chat Confirmation Modal */}
+      <DeleteChatConfirmModal
+        isOpen={showDeleteConfirmModal}
+        onClose={() => setShowDeleteConfirmModal(false)}
+        onConfirmDelete={() => {
+          setShowDeleteConfirmModal(false);
+          if (onDeleteChat) {
+            onDeleteChat(chat.id);
+          }
+          onBack();
+        }}
+        chatTitle={chat.isGroup ? (chat.groupName || chat.buddy.name) : chat.buddy.name}
+        isGroup={!!chat.isGroup}
+      />
+
+      {/* Group Info Modal */}
+      {chat.isGroup && (
+        <GroupInfoModal
+          isOpen={showGroupInfoModal}
+          onClose={() => setShowGroupInfoModal(false)}
+          chat={chat}
+          buddies={buddies}
+          onAddParticipants={(newParticipants) => {
+            if (onAddParticipants) {
+              onAddParticipants(chat.id, newParticipants);
+            }
+          }}
+          onDeleteGroup={() => {
+            setShowGroupInfoModal(false);
+            setShowDeleteConfirmModal(true);
+          }}
+        />
+      )}
     </div>
   );
 };

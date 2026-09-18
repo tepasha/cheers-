@@ -54,11 +54,20 @@ export interface BuddyProfile {
   friendSince?: string;
 }
 
+export interface ChatParticipant {
+  id: string;
+  name: string;
+  avatar: string;
+  online?: boolean;
+  role?: 'admin' | 'member';
+}
+
 export interface Message {
   id: string;
   chatId: string;
   senderId: string;
   senderName: string;
+  senderAvatar?: string;
   text: string;
   timestamp: string;
   isMe: boolean;
@@ -82,6 +91,14 @@ export interface ChatThread {
   lastMessageTime: string;
   unreadCount: number;
   messages: Message[];
+  isGroup?: boolean;
+  groupName?: string;
+  groupAvatar?: string;
+  groupTopic?: string;
+  participants?: ChatParticipant[];
+  meetupId?: string;
+  createdBy?: string;
+  createdAt?: string;
 }
 
 export interface HangoutAlert {

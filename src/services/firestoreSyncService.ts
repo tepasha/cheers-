@@ -425,6 +425,19 @@ export const firestoreSyncService = {
   },
 
   /**
+   * Deletes a chat thread and its metadata in Cloud Firestore
+   */
+  async deleteChatThread(chatId: string): Promise<void> {
+    try {
+      const chatDocRef = doc(db, 'chats', chatId);
+      await deleteDoc(chatDocRef);
+      console.log('[Firestore] Deleted chat thread doc:', chatId);
+    } catch (error) {
+      console.warn('Could not delete chat thread in Firestore:', error);
+    }
+  },
+
+  /**
    * Subscribes to real-time chat messages from Cloud Firestore and decrypts them on the fly
    */
   subscribeToEncryptedChat(

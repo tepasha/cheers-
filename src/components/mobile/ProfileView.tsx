@@ -12,7 +12,6 @@ import {
   Locate,
   CheckCircle2,
   Search,
-  Database,
   Bell,
   UserX,
   LifeBuoy,
@@ -737,72 +736,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         </div>
 
-        {/* Google Authentication & Firebase Status Card */}
-        <div className="bg-gradient-to-tr from-amber-950/40 via-neutral-900 to-neutral-900 rounded-2xl border border-amber-500/25 p-3.5 shadow-md space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-lg bg-neutral-800 border border-neutral-700 flex items-center justify-center text-xs">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-                  <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.3 9 5 12 5z"/>
-                  <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.7-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z"/>
-                  <path fill="#FBBC05" d="M5.6 14.8c-.3-.8-.4-1.8-.4-2.8s.2-2 .4-2.8L1.9 6.3C.7 8.7 0 10.3 0 12s.7 3.3 1.9 5.7l3.7-2.9z"/>
-                  <path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.3-6.4-5.2L1.9 16C3.7 19.7 7.5 23 12 23z"/>
-                </svg>
-              </div>
-              <span className="text-xs font-bold text-neutral-100">
-                {isGoogle ? 'Авторизовано через Google' : 'Google Вхід не виконано'}
-              </span>
-            </div>
-
-            {isGoogle ? (
-              <span className="text-[10px] font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 px-2 py-0.5 rounded-full flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" />
-                OAuth 2.0 Active
-              </span>
-            ) : (
-              <span className="text-[10px] font-semibold bg-neutral-800 text-neutral-400 border border-neutral-700 px-2 py-0.5 rounded-full">
-                Гість
-              </span>
-            )}
-          </div>
-
-          {/* Details */}
-          {isGoogle ? (
-            <div className="bg-neutral-950/80 rounded-xl p-2.5 font-mono text-[10px] text-neutral-400 space-y-1 border border-neutral-800/80">
-              <div><span className="text-neutral-500">Google ID:</span> {currentUser.googleId || '109847291048291048123'}</div>
-              <div><span className="text-neutral-500">Email:</span> {currentUser.email}</div>
-              <div><span className="text-neutral-500">Scopes:</span> email, profile, openid</div>
-              <div><span className="text-neutral-500">Firebase UID:</span> fb_{currentUser.googleId?.slice(0, 8) || 'usr_google'}</div>
-              <div className="pt-1.5 mt-1.5 border-t border-neutral-800 flex items-center justify-between">
-                <span className="text-amber-400 font-sans font-bold flex items-center gap-1 text-[11px]">
-                  <Database className="w-3 h-3" />
-                  Cloud Firestore DB
-                </span>
-                <span className="bg-emerald-950/90 text-emerald-300 border border-emerald-700/60 px-2 py-0.5 rounded text-[9px] font-mono">
-                  Активна онлайн
-                </span>
-              </div>
-              <div className="text-[9px] text-neutral-500 truncate">ID бази: ai-studio-df109a92-91f7-44f7-944f-c92e7aa387b8</div>
-            </div>
-          ) : (
-            <div className="bg-neutral-950/60 rounded-xl p-2.5 text-xs text-neutral-300 border border-neutral-800 space-y-2">
-              <p className="text-[11px] text-neutral-400">
-                Авторизуйтесь через Google, щоб синхронізувати профіль із Cloud Firestore, зберігати історію чатів та зʼявлятися на радарній карті.
-              </p>
-              <div className="pt-1 border-t border-neutral-800/60 flex items-center justify-between text-[10px]">
-                <span className="text-neutral-400 flex items-center gap-1 font-mono">
-                  <Database className="w-3 h-3 text-amber-400" />
-                  Firestore:
-                </span>
-                <span className="text-emerald-400 font-mono text-[9px]">
-                  Готова до синхронізації
-                </span>
-              </div>
+        {/* Auth Action Buttons Card */}
+        <div className="bg-neutral-900 rounded-2xl border border-neutral-800 p-3 shadow-md flex items-center gap-2">
+          {!currentUser.isLoggedIn ? (
+            <>
               <button
                 type="button"
                 id="profile-google-login-btn"
                 onClick={onGoogleSignIn}
-                className="mt-1 w-full py-2 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-neutral-950 font-black text-xs shadow transition flex items-center justify-center gap-2"
+                className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-neutral-950 font-bold text-xs shadow transition flex items-center justify-center gap-2"
               >
                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
                   <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.3 9 5 12 5z"/>
@@ -812,32 +754,37 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </svg>
                 <span>Увійти через Google</span>
               </button>
-            </div>
-          )}
-
-          {/* Quick Buttons */}
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              id="switch-account-btn"
-              onClick={onOpenAuth}
-              className="flex-1 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-semibold transition"
-            >
-              {isGoogle ? 'Змінити Google акаунт' : 'Форма входу'}
-            </button>
-            {currentUser.isLoggedIn && (
+              <button
+                type="button"
+                id="switch-account-btn"
+                onClick={onOpenAuth}
+                className="py-2 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold transition"
+              >
+                Форма входу
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                id="switch-account-btn"
+                onClick={onOpenAuth}
+                className="flex-1 py-2 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold transition text-center"
+              >
+                {isGoogle ? 'Змінити Google акаунт' : 'Змінити акаунт'}
+              </button>
               <button
                 type="button"
                 id="profile-logout-btn"
                 onClick={onLogout}
-                className="px-3 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 text-xs font-semibold flex items-center gap-1 border border-rose-800/40 transition"
+                className="px-4 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1.5 border border-rose-800/40 transition shrink-0"
                 title="Вийти з акаунту"
               >
-                <LogOut className="w-3 h-3" />
+                <LogOut className="w-3.5 h-3.5" />
                 <span>Вийти</span>
               </button>
-            )}
-          </div>
+            </>
+          )}
         </div>
       </div>
 
