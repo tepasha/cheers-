@@ -71,7 +71,9 @@ export interface Message {
   text: string;
   timestamp: string;
   isMe: boolean;
-  type?: 'text' | 'cheers' | 'location_proposal';
+  type?: 'text' | 'cheers' | 'location_proposal' | 'audio';
+  audioUrl?: string;
+  audioDuration?: number;
   isEncrypted?: boolean;
   cipherPayload?: string;
   isFromCache?: boolean;

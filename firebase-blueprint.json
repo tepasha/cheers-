@@ -92,7 +92,9 @@
         "cipherPayload": { "type": "string", "maxLength": 5000, "description": "AES-256-GCM encrypted ciphertext and IV" },
         "text": { "type": "string", "maxLength": 1000 },
         "isEncrypted": { "type": "boolean" },
-        "type": { "type": "string", "enum": ["text", "cheers", "location_proposal"] },
+        "type": { "type": "string", "enum": ["text", "cheers", "location_proposal", "audio"] },
+        "audioUrl": { "type": "string", "description": "Base64 encoded audio or data URI" },
+        "audioDuration": { "type": "number", "description": "Duration of voice message in seconds" },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "chatId", "senderId"]

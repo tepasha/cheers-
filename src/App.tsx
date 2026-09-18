@@ -327,9 +327,10 @@ export default function App() {
   const handleSendMessage = (
     chatId: string,
     messageText: string,
-    type: 'text' | 'cheers' | 'location_proposal' = 'text',
+    type: 'text' | 'cheers' | 'location_proposal' | 'audio' = 'text',
     proposalData?: Message['proposalData'],
-    senderOverride?: { senderId: string; senderName: string; senderAvatar?: string }
+    senderOverride?: { senderId: string; senderName: string; senderAvatar?: string },
+    audioData?: { audioUrl: string; audioDuration?: number }
   ) => {
     const now = new Date();
     const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -345,15 +346,21 @@ export default function App() {
       timestamp: timeString,
       isMe,
       type,
+      audioUrl: audioData?.audioUrl,
+      audioDuration: audioData?.audioDuration,
       proposalData,
       isEncrypted: true,
     };
+
+    const displaySummary = type === 'cheers' 
+      ? `Тост: ${messageText}` 
+      : (type === 'audio' ? '🎙️ Голосове повідомлення' : messageText);
 
     const updatedChats = chats.map((c) => {
       if (c.id === chatId) {
         return {
           ...c,
-          lastMessage: type === 'cheers' ? `Тост: ${messageText}` : messageText,
+          lastMessage: displaySummary,
           lastMessageTime: timeString,
           messages: [...c.messages, newMsg],
         };
@@ -368,7 +375,7 @@ export default function App() {
       if (prev && prev.id === chatId) {
         return {
           ...prev,
-          lastMessage: messageText,
+          lastMessage: displaySummary,
           lastMessageTime: timeString,
           messages: [...prev.messages, newMsg],
         };

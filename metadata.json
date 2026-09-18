@@ -2,7 +2,8 @@
   "name": "Будьмо! - Пошук компанії",
   "description": "Мобільний додаток на React + Tailwind з Firebase (Cloud Firestore & Auth), запланованими груповими зустрічами (місце, час, додавання/запрошення людей, календар), вкладкою «Друзі» та системою додавання у друзі, Push-сповіщеннями, гейміфікацією рівнів, мапою закладів та гео-блокуванням РФ",
   "requestFramePermissions": [
-    "geolocation"
+    "geolocation",
+    "microphone"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

@@ -20,12 +20,15 @@ import {
   MoreVertical,
   Users,
   Trash2,
+  Mic,
+  AlertCircle,
 } from 'lucide-react';
 import { ChatThread, Message, ChatParticipant, BuddyProfile } from '../../types';
 import { sounds } from '../../services/soundService';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { friendsService } from '../../services/friendsService';
 import { safetyModerationService } from '../../services/safetyModerationService';
+import { AudioMessageBubble } from './AudioMessageBubble';
 import { ToastModal } from './ToastModal';
 import { SecurityInspectionModal } from './SecurityInspectionModal';
 import { SosEmergencyModal } from './SosEmergencyModal';
@@ -40,9 +43,10 @@ interface ChatRoomViewProps {
   onSendMessage: (
     chatId: string, 
     messageText: string, 
-    type?: 'text' | 'cheers' | 'location_proposal', 
+    type?: 'text' | 'cheers' | 'location_proposal' | 'audio', 
     proposal?: Message['proposalData'],
-    senderOverride?: { senderId: string; senderName: string; senderAvatar?: string }
+    senderOverride?: { senderId: string; senderName: string; senderAvatar?: string },
+    audioData?: { audioUrl: string; audioDuration?: number }
   ) => void;
   onDeleteChat?: (chatId: string) => void;
   onAddParticipants?: (chatId: string, newParticipants: ChatParticipant[]) => void;
@@ -76,6 +80,29 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
   const [isBlocked, setIsBlocked] = useState<boolean>(() =>
     safetyModerationService.isUserBlocked(chat.buddy.id)
   );
+
+  // Audio message recording states
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordingStartTimeRef = useRef<number>(0);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -160,7 +187,129 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
     triggerBuddyReply('location');
   };
 
-  const triggerBuddyReply = (context: 'text' | 'cheers' | 'location') => {
+  const formatRecordTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const startRecording = async () => {
+    try {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        setRecordingError('Запис аудіо не підтримується у цьому браузері');
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      let mimeType = '';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          mimeType = 'audio/webm';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+          mimeType = 'audio/ogg';
+        }
+      }
+
+      const options = mimeType ? { mimeType } : undefined;
+      const mediaRecorder = new MediaRecorder(stream, options);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recordingStartTimeRef.current = Date.now();
+      setRecordingDuration(0);
+      setIsRecording(true);
+      setRecordingError(null);
+      sounds.playTap();
+
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+
+      mediaRecorder.start(250);
+    } catch (err) {
+      console.warn('Microphone permission or device error:', err);
+      setRecordingError('Потрібен доступ до мікрофона для запису');
+      setTimeout(() => setRecordingError(null), 4000);
+    }
+  };
+
+  const stopRecording = (shouldSend: boolean) => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    const mediaRecorder = mediaRecorderRef.current;
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+      setIsRecording(false);
+      setRecordingDuration(0);
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
+      return;
+    }
+
+    mediaRecorder.onstop = () => {
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
+
+      if (shouldSend && audioChunksRef.current.length > 0) {
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mediaRecorder.mimeType || 'audio/webm',
+        });
+        const finalDuration = Math.max(
+          1,
+          Math.round((Date.now() - recordingStartTimeRef.current) / 1000)
+        );
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64Audio = reader.result as string;
+          sounds.playMessageSent();
+          onSendMessage(
+            chat.id,
+            '🎙️ Голосове повідомлення',
+            'audio',
+            undefined,
+            undefined,
+            { audioUrl: base64Audio, audioDuration: finalDuration }
+          );
+          triggerBuddyReply('audio');
+        };
+        reader.readAsDataURL(audioBlob);
+      }
+
+      audioChunksRef.current = [];
+      setIsRecording(false);
+      setRecordingDuration(0);
+    };
+
+    try {
+      mediaRecorder.stop();
+    } catch (err) {
+      console.warn('Error stopping MediaRecorder:', err);
+      setIsRecording(false);
+      setRecordingDuration(0);
+    }
+  };
+
+  const triggerBuddyReply = (context: 'text' | 'cheers' | 'location' | 'audio') => {
     setTimeout(() => {
       setIsTyping(true);
       setTimeout(() => {
@@ -174,6 +323,10 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
             : 'Дзинь! 🍻 Будьмо! До дна за хорошу зустріч!';
         } else if (context === 'location') {
           reply = `Чудовий вибір! Обожнюю ${proposalBar}. Забронюю стіл або буду там трохи раніше! 🥂`;
+        } else if (context === 'audio') {
+          reply = chat.isGroup
+            ? 'Дякую за голосове! Чудово чути всіх, зустрінемось у закладі 🎧🍻'
+            : 'Прослухав твоє голосове! Звучить супер, чекатиму на місці 🎧🍻';
         } else {
           const replies = chat.isGroup ? [
             'Круто! Я підійду близько 20:00.',
@@ -585,6 +738,30 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
             );
           }
 
+          if (msg.type === 'audio' || Boolean(msg.audioUrl)) {
+            return (
+              <div
+                key={msg.id}
+                className={`flex items-end gap-1.5 my-1.5 ${msg.isMe ? 'justify-end' : 'justify-start'}`}
+              >
+                {!msg.isMe && (
+                  <img
+                    src={msg.senderAvatar || (chat.isGroup ? chat.groupAvatar : chat.buddy.avatar)}
+                    alt={msg.senderName || chat.buddy.name}
+                    className="w-6 h-6 rounded-full object-cover mb-0.5 shrink-0"
+                    referrerPolicy="no-referrer"
+                  />
+                )}
+                <AudioMessageBubble
+                  message={msg}
+                  isMe={msg.isMe}
+                  isInspected={isInspected}
+                  onToggleInspect={() => setInspectedMessageId(isInspected ? null : msg.id)}
+                />
+              </div>
+            );
+          }
+
           return (
             <div
               key={msg.id}
@@ -722,31 +899,117 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
               <Beer className="w-3 h-3 text-amber-400" />
               <span>Келих пива</span>
             </button>
-          </div>
-
-          {/* Chat Input Bar */}
-          <form
-            onSubmit={handleSend}
-            className="p-2.5 bg-neutral-900 border-t border-neutral-800 flex items-center gap-2 z-20"
-          >
-            <input
-              type="text"
-              id="chat-message-input"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Напишіть повідомлення чи тост..."
-              className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2 text-neutral-100 placeholder-neutral-500 text-xs focus:outline-none focus:border-amber-400"
-            />
 
             <button
-              type="submit"
-              id="chat-send-btn"
-              disabled={!inputText.trim()}
-              className="w-9 h-9 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-neutral-950 flex items-center justify-center transition shadow-md"
+              type="button"
+              id="quick-audio-pill-btn"
+              onClick={startRecording}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-700 text-[11px] font-medium whitespace-nowrap"
             >
-              <Send className="w-4 h-4" />
+              <Mic className="w-3 h-3 text-amber-400" />
+              <span>Голосове 🎙️</span>
             </button>
-          </form>
+          </div>
+
+          {/* Recording Error Alert Banner */}
+          {recordingError && (
+            <div className="px-3 py-1.5 bg-rose-950/90 border-t border-rose-800 text-[11px] text-rose-300 flex items-center justify-between z-20">
+              <div className="flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{recordingError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRecordingError(null)}
+                className="text-rose-400 hover:text-white p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Chat Input / Recording Bar */}
+          {isRecording ? (
+            <div className="p-2.5 bg-neutral-900 border-t border-amber-500/40 flex items-center justify-between gap-3 z-20">
+              {/* Pulsing indicator & live timer */}
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="relative flex items-center justify-center w-3 h-3">
+                  <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping absolute" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 relative" />
+                </div>
+                <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-rose-400">
+                  <Mic className="w-3.5 h-3.5" />
+                  <span>{formatRecordTime(recordingDuration)}</span>
+                </div>
+              </div>
+
+              {/* Dynamic animated waveform bars */}
+              <div className="flex-1 flex items-center justify-center gap-1 h-6 max-w-[150px] mx-auto">
+                {[10, 18, 8, 22, 16, 12, 20, 14, 22, 9].map((h, i) => (
+                  <span
+                    key={i}
+                    style={{ height: `${h}px` }}
+                    className="w-1 bg-amber-400/85 rounded-full animate-pulse"
+                  />
+                ))}
+              </div>
+
+              {/* Cancel and Send buttons */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  id="cancel-voice-record-btn"
+                  onClick={() => stopRecording(false)}
+                  className="w-9 h-9 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-rose-400 flex items-center justify-center transition border border-neutral-700"
+                  title="Скасувати запис"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  id="send-voice-record-btn"
+                  onClick={() => stopRecording(true)}
+                  className="w-9 h-9 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 flex items-center justify-center transition shadow-md font-bold"
+                  title="Надіслати аудіоповідомлення"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form
+              onSubmit={handleSend}
+              className="p-2.5 bg-neutral-900 border-t border-neutral-800 flex items-center gap-2 z-20"
+            >
+              <input
+                type="text"
+                id="chat-message-input"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="Напишіть повідомлення чи тост..."
+                className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2 text-neutral-100 placeholder-neutral-500 text-xs focus:outline-none focus:border-amber-400"
+              />
+
+              <button
+                type="button"
+                id="chat-mic-btn"
+                onClick={startRecording}
+                className="w-9 h-9 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-amber-400 flex items-center justify-center transition shadow-sm shrink-0 border border-neutral-700/60"
+                title="Записати аудіоповідомлення"
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+
+              <button
+                type="submit"
+                id="chat-send-btn"
+                disabled={!inputText.trim()}
+                className="w-9 h-9 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-neutral-950 flex items-center justify-center transition shadow-md shrink-0"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          )}
         </>
       )}
 
