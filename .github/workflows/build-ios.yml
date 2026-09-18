@@ -54,7 +54,7 @@ jobs:
       - name: 📦 Install Dependencies
         run: |
           if [ -f package-lock.json ]; then
-            npm ci
+            npm ci || npm install
           else
             npm install
           fi
