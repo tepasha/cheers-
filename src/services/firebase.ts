@@ -17,6 +17,13 @@ import defaultFirebaseConfig from '../../firebase-applet-config.json';
 
 // Retrieve Firebase credentials from environment variables / secrets (VITE_FIREBASE_*)
 // with fallback to default project config if secrets are not yet configured.
+const rawMeasurementId = (
+  import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 
+  import.meta.env.VITE_GA_MEASUREMENT_ID || 
+  ((defaultFirebaseConfig as Record<string, unknown>).measurementId as string | undefined) || 
+  ''
+).trim();
+
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || defaultFirebaseConfig.apiKey || '',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || defaultFirebaseConfig.authDomain,
@@ -25,12 +32,13 @@ export const firebaseConfig = {
   firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || defaultFirebaseConfig.firestoreDatabaseId,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || defaultFirebaseConfig.storageBucket,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || defaultFirebaseConfig.messagingSenderId,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || defaultFirebaseConfig.measurementId || '',
+  ...(rawMeasurementId ? { measurementId: rawMeasurementId } : {}),
   oAuthClientId: import.meta.env.VITE_FIREBASE_OAUTH_CLIENT_ID || defaultFirebaseConfig.oAuthClientId || '',
 };
 
 // Initialize Firebase App
-const app = initializeApp(firebaseConfig);
+export const firebaseApp = initializeApp(firebaseConfig);
+const app = firebaseApp;
 
 // CRITICAL: Configure persistent multi-tab offline cache with unlimited size for basement bars
 let firestoreInstance: Firestore;

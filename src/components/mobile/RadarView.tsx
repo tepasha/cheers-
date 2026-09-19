@@ -23,6 +23,7 @@ import {
   calculateBearing,
   formatDistance,
 } from '../../services/geoService';
+import { batterySaverService } from '../../services/batterySaverService';
 
 interface RadarViewProps {
   buddies: BuddyProfile[];
@@ -170,7 +171,7 @@ export const RadarView: React.FC<RadarViewProps> = ({
         setIsRefreshingGps(false);
         triggerNotification('ℹ️ Використовуємо калібровані координати Києва (Поділ)');
       },
-      { timeout: 5000, enableHighAccuracy: true }
+      batterySaverService.getGeolocationOptions()
     );
   };
 

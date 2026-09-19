@@ -15,6 +15,8 @@ import {
   Bell,
   UserX,
   LifeBuoy,
+  Zap,
+  BatteryMedium,
 } from 'lucide-react';
 import { DrinkType, PaymentEtiquette, AuthUser, AppLanguage } from '../../types';
 import { DRINK_METADATA, PAYMENT_METADATA } from '../../data/mockData';
@@ -30,6 +32,9 @@ import { FavoriteVenuesSection } from './FavoriteVenuesSection';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { GamificationProgressCard } from './GamificationProgressCard';
 import { safetyModerationService } from '../../services/safetyModerationService';
+import { batterySaverService } from '../../services/batterySaverService';
+import { analyticsService } from '../../services/analyticsService';
+import { HangoutActivityChart } from './HangoutActivityChart';
 import { BlockedUsersModal } from './BlockedUsersModal';
 import { SosEmergencyModal } from './SosEmergencyModal';
 
@@ -77,13 +82,35 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [blockedUsersCount, setBlockedUsersCount] = useState(() => safetyModerationService.getBlockedUsers().length);
   const [reportsCount, setReportsCount] = useState(() => safetyModerationService.getReports().length);
 
+  // Battery Saver Mode State
+  const [isBatterySaver, setIsBatterySaver] = useState(() => batterySaverService.isBatterySaverEnabled());
+
   React.useEffect(() => {
-    const unsub = safetyModerationService.subscribe(() => {
+    const unsubSafety = safetyModerationService.subscribe(() => {
       setBlockedUsersCount(safetyModerationService.getBlockedUsers().length);
       setReportsCount(safetyModerationService.getReports().length);
     });
-    return unsub;
+    const unsubBattery = batterySaverService.subscribe((enabled) => {
+      setIsBatterySaver(enabled);
+    });
+    return () => {
+      unsubSafety();
+      unsubBattery();
+    };
   }, []);
+
+  const handleToggleBatterySaver = () => {
+    sounds.playTap();
+    const nextState = batterySaverService.toggle();
+    setIsBatterySaver(nextState);
+    analyticsService.trackBatterySaver(nextState);
+    if (nextState) {
+      setGeoNotification('⚡ Режим Battery Saver активовано: опитування GPS (90с) та оновлення (60с)');
+    } else {
+      setGeoNotification('🔋 Стандартний режим: висока точність GPS (15с) та Live оновлення');
+    }
+    setTimeout(() => setGeoNotification(null), 4000);
+  };
 
   const toggleDrink = (drink: DrinkType) => {
     setPreferredDrinks((prev) =>
@@ -94,6 +121,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const handleSave = () => {
     sounds.playClink();
     setIsSaved(true);
+    analyticsService.trackEvent('profile_saved', {
+      user_id: currentUser.id,
+      preferred_drinks_count: preferredDrinks.length,
+      payment_rule: paymentRule,
+    });
     // Persist profile to Cloud Firestore
     firestoreSyncService.saveUserProfile({
       id: currentUser.id,
@@ -120,6 +152,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
     setIsLocatingGps(true);
     sounds.playSwoosh();
+    analyticsService.trackEvent('gps_requested', {
+      battery_saver: isBatterySaver,
+    });
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -157,7 +192,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         setGeoNotification('Не вдалося отримати GPS або доступ відхилено. Будь ласка, оберіть готовий район нижче.');
         setTimeout(() => setGeoNotification(null), 4000);
       },
-      { timeout: 10000, enableHighAccuracy: true }
+      batterySaverService.getGeolocationOptions()
     );
   };
 
@@ -558,6 +593,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         {/* 4. Favorite Venues ("Після цього Улюблені заклади") */}
         <FavoriteVenuesSection userLocation={userLocation} />
 
+        {/* 4.1 Hangout Activity & Trends Chart ("Аналітика походів") */}
+        <HangoutActivityChart
+          currentUser={currentUser}
+          currentLanguage={currentLanguage}
+          onQuickCheckIn={() => {
+            setGeoNotification('🍻 Зараховано новий вихід у графік активності (+80 XP)!');
+            setTimeout(() => setGeoNotification(null), 3500);
+          }}
+        />
+
         {/* 5. Language Selection & Geo Detection Card */}
         <div className="bg-neutral-900 rounded-3xl border border-neutral-800 p-4 space-y-3 shadow-xl">
           <div className="flex items-center justify-between">
@@ -628,6 +673,104 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <p className="text-[10px] text-rose-200/80 leading-relaxed">
                   {t('language_ru_ban_notice', currentLanguage)}
                 </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Battery Saver Mode Settings Card */}
+        <div 
+          id="profile-battery-saver-section"
+          className={`rounded-3xl border p-4 space-y-3.5 shadow-xl transition-all duration-300 ${
+            isBatterySaver
+              ? 'bg-gradient-to-br from-amber-950/40 via-neutral-900 to-neutral-900 border-amber-500/50 ring-1 ring-amber-500/20'
+              : 'bg-neutral-900 border-neutral-800'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div 
+                className={`w-9 h-9 rounded-2xl border flex items-center justify-center shrink-0 transition-colors ${
+                  isBatterySaver
+                    ? 'bg-amber-500 text-neutral-950 border-amber-400 shadow-md shadow-amber-500/20'
+                    : 'bg-neutral-800 text-neutral-400 border-neutral-700'
+                }`}
+              >
+                {isBatterySaver ? (
+                  <Zap className="w-5 h-5 fill-neutral-950" />
+                ) : (
+                  <BatteryMedium className="w-5 h-5 text-neutral-300" />
+                )}
+              </div>
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-xs font-bold text-neutral-100 leading-tight">
+                    {t('battery_saver_title', currentLanguage)}
+                  </h4>
+                  <span 
+                    className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border transition-colors ${
+                      isBatterySaver
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : 'bg-neutral-800 text-neutral-400 border-neutral-700'
+                    }`}
+                  >
+                    {isBatterySaver ? t('battery_saver_active', currentLanguage) : t('battery_saver_disabled', currentLanguage)}
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-400 leading-relaxed">
+                  {t('battery_saver_desc', currentLanguage)}
+                </p>
+              </div>
+            </div>
+
+            {/* Accessible Toggle Switch */}
+            <button
+              type="button"
+              id="battery-saver-toggle"
+              role="switch"
+              aria-checked={isBatterySaver}
+              onClick={handleToggleBatterySaver}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 focus:ring-offset-neutral-950 ${
+                isBatterySaver ? 'bg-amber-500' : 'bg-neutral-800'
+              }`}
+            >
+              <span className="sr-only">Toggle Battery Saver</span>
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-neutral-950 shadow ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
+                  isBatterySaver ? 'translate-x-5 bg-neutral-950' : 'translate-x-0 bg-neutral-400'
+                }`}
+              >
+                {isBatterySaver && <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />}
+              </span>
+            </button>
+          </div>
+
+          {/* Metrics & Throttling Breakdown */}
+          <div className="grid grid-cols-2 gap-2 pt-1 border-t border-neutral-800/80">
+            <div className="bg-neutral-950/70 border border-neutral-800/80 rounded-2xl p-2.5 space-y-1">
+              <div className="flex items-center gap-1.5 text-[10px] text-neutral-400">
+                <Navigation className="w-3 h-3 text-amber-400" />
+                <span className="font-medium">Опитування GPS:</span>
+              </div>
+              <div className="text-xs font-bold text-neutral-100 flex items-baseline gap-1">
+                <span>{isBatterySaver ? 'кожні 90 сек' : 'кожні 15 сек'}</span>
+                <span className="text-[9px] text-neutral-500 font-normal">
+                  {isBatterySaver ? '(Low Power)' : '(High Acc)'}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-neutral-950/70 border border-neutral-800/80 rounded-2xl p-2.5 space-y-1">
+              <div className="flex items-center gap-1.5 text-[10px] text-neutral-400">
+                <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                <span className="font-medium">Real-time оновлення:</span>
+              </div>
+              <div className="text-xs font-bold text-neutral-100 flex items-baseline gap-1">
+                <span>{isBatterySaver ? 'кожні 60 сек' : 'миттєво (Live)'}</span>
+                <span className="text-[9px] text-neutral-500 font-normal">
+                  {isBatterySaver ? '(-65% CPU)' : '(100% Sync)'}
+                </span>
               </div>
             </div>
           </div>

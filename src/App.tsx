@@ -35,6 +35,8 @@ import {
   INITIAL_USER_LOCATION,
   calculateDistanceKm,
 } from './services/geoService';
+import { batterySaverService } from './services/batterySaverService';
+import { analyticsService } from './services/analyticsService';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('discover');
@@ -104,9 +106,77 @@ export default function App() {
     return unsub;
   }, [userLocation]);
 
+  // Adaptive background location polling (frequency determined by Battery Saver mode: 15s standard vs 90s saver)
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const pollLocation = () => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+      if (userLocation.isSimulated) return; // Do not overwrite user-selected bar district preset
+
+      const options = batterySaverService.getGeolocationOptions();
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = Math.round(pos.coords.latitude * 10000) / 10000;
+          const lng = Math.round(pos.coords.longitude * 10000) / 10000;
+
+          // Only trigger state update if position moved to avoid unnecessary re-renders
+          if (
+            Math.abs(lat - userLocation.lat) > 0.0003 ||
+            Math.abs(lng - userLocation.lng) > 0.0003
+          ) {
+            handleUpdateLocation({
+              lat,
+              lng,
+              locationName: 'Реальна геолокація GPS',
+              accuracyMeters: Math.round(pos.coords.accuracy) || 8,
+              lastUpdated: new Date().toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' }),
+              isSimulated: false,
+              status: 'active',
+            });
+          }
+        },
+        () => {
+          // Silent fallback on background polling
+        },
+        options
+      );
+    };
+
+    const setupInterval = () => {
+      if (timer) clearInterval(timer);
+      const intervalMs = batterySaverService.getLocationPollingInterval();
+      timer = setInterval(pollLocation, intervalMs);
+    };
+
+    setupInterval();
+
+    const unsubBattery = batterySaverService.subscribe(() => {
+      setupInterval();
+    });
+
+    return () => {
+      if (timer) clearInterval(timer);
+      unsubBattery();
+    };
+  }, [userLocation.isSimulated, userLocation.lat, userLocation.lng]);
+
+  // Initialize Google Analytics (GA4) on application mount
+  useEffect(() => {
+    analyticsService.init();
+    analyticsService.trackPageView('Головна - Будьмо!', `/${activeTab}`);
+  }, []);
+
   // Update user coordinates and synchronize buddy distances across the app
   const handleUpdateLocation = (newLoc: UserGeoLocation) => {
     setUserLocation(newLoc);
+    analyticsService.trackEvent('location_updated', {
+      location_name: newLoc.locationName,
+      lat: newLoc.lat,
+      lng: newLoc.lng,
+      is_simulated: newLoc.isSimulated,
+    });
+
     // Re-verify geo restrictions
     const check = checkRussianTerritoryRestriction(newLoc);
     setGeoBlockInfo(check);
@@ -128,6 +198,15 @@ export default function App() {
     setCurrentLanguage(lang);
     saveAppLanguage(lang);
     setLangSourceHint('Обрано вручну користувачем');
+    analyticsService.trackLanguageChange(lang, 'manual');
+  };
+
+  const handleTabChange = (tab: ActiveTab) => {
+    sounds.playClink();
+    analyticsService.trackTabSwitch(activeTab, tab);
+    analyticsService.trackPageView(`Вкладка: ${tab}`, `/${tab}`);
+    setSelectedChat(null);
+    setActiveTab(tab);
   };
 
   const handleDisableRuSimulation = () => {
@@ -197,6 +276,15 @@ export default function App() {
       const user = await authService.loginWithGoogle();
       setCurrentUser(user);
       sounds.playMatchCheer();
+      analyticsService.trackEvent('login', {
+        method: 'google_popup',
+        user_id: user.id,
+      });
+      analyticsService.setUser(user.id, {
+        name: user.name,
+        provider: user.provider,
+        is_google: true,
+      });
     } catch {
       // Fallback
     }
@@ -206,10 +294,20 @@ export default function App() {
     sounds.playClink();
     const guestUser = authService.logout();
     setCurrentUser(guestUser);
+    analyticsService.trackEvent('logout', {
+      user_id: currentUser.id,
+    });
+    analyticsService.setUser(null);
   };
 
   // Handle Match
   const handleMatch = (buddy: BuddyProfile) => {
+    analyticsService.trackEvent('buddy_matched', {
+      buddy_id: buddy.id,
+      buddy_name: buddy.name,
+      mood: buddy.currentMood,
+    });
+
     // Check if chat already exists
     const existingChat = chats.find((c) => c.buddy.id === buddy.id);
     if (!existingChat) {
@@ -238,6 +336,10 @@ export default function App() {
   // Open Chat with Buddy directly
   const handleOpenChatWithBuddy = (buddy: BuddyProfile) => {
     sounds.playClink();
+    analyticsService.trackEvent('chat_opened', {
+      buddy_id: buddy.id,
+      buddy_name: buddy.name,
+    });
     let targetChat = chats.find((c) => c.buddy.id === buddy.id);
     if (!targetChat) {
       targetChat = {
@@ -437,6 +539,11 @@ export default function App() {
 
   // Handle new Hangout / live check-in with Cloud Firestore broadcast
   const handleNewHangout = async (newHangout: HangoutAlert) => {
+    analyticsService.trackMeetupAction('create', newHangout.id, {
+      bar_name: newHangout.barName,
+      created_at: newHangout.createdAt,
+      description: newHangout.description,
+    });
     // Optimistic local update
     setHangouts((prev) => [newHangout, ...prev.filter((h) => h.id !== newHangout.id)]);
     // Instant Firestore publication
@@ -449,6 +556,9 @@ export default function App() {
 
   const handleJoinHangout = async (hangoutId: string) => {
     const target = hangouts.find((h) => h.id === hangoutId);
+    analyticsService.trackMeetupAction('join', hangoutId, {
+      bar_name: target?.barName,
+    });
     setHangouts((prev) =>
       prev.map((h) =>
         h.id === hangoutId ? { ...h, participantsCount: h.participantsCount + 1 } : h
@@ -492,6 +602,7 @@ export default function App() {
       activeBanner={activePushBanner}
       onNavigateToHangout={handleNavigateToHangout}
       onNavigateToChat={handleNavigateToChat}
+      lang={currentLanguage}
     >
       {/* Screen Views based on active Tab */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
@@ -589,11 +700,7 @@ export default function App() {
       {!(activeTab === 'chats' && selectedChat) && (
         <BottomTabBar
           activeTab={activeTab}
-          onTabChange={(tab) => {
-            sounds.playClink();
-            setSelectedChat(null);
-            setActiveTab(tab);
-          }}
+          onTabChange={handleTabChange}
           unreadCount={unreadTotal}
           activeHangoutsCount={hangouts.length}
           friendsCount={friendsCount}

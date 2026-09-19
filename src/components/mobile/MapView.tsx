@@ -36,6 +36,8 @@ import {
   calculateBearing,
   formatDistance,
 } from '../../services/geoService';
+import { batterySaverService } from '../../services/batterySaverService';
+import { analyticsService } from '../../services/analyticsService';
 import {
   GOOGLE_MAPS_VENUES,
   CATEGORY_CONFIG,
@@ -351,7 +353,7 @@ export const MapView: React.FC<MapViewProps> = ({
             triggerNotification('✅ Калібрований GPS сигнал стабільний');
           }, 600);
         },
-        { timeout: 5000, enableHighAccuracy: true }
+        batterySaverService.getGeolocationOptions()
       );
     } else {
       setTimeout(() => {
@@ -388,6 +390,11 @@ export const MapView: React.FC<MapViewProps> = ({
     if (!customBar.trim()) return;
 
     sounds.playClink();
+    analyticsService.trackMeetupAction('check_in', undefined, {
+      bar_name: customBar,
+      drink: drinkChoice,
+      area: userLocation.locationName,
+    });
     const newAlert: HangoutAlert = {
       id: `hangout-${Date.now()}`,
       userId: 'me',
@@ -744,10 +751,15 @@ export const MapView: React.FC<MapViewProps> = ({
               onSelectBuddy={(b) => {
                 setSelectedBuddy(b);
                 setSelectedVenue(null);
+                analyticsService.trackEvent('buddy_selected_on_map', {
+                  buddy_id: b.id,
+                  buddy_name: b.name,
+                });
               }}
               onSelectVenue={(v) => {
                 setSelectedVenue(v);
                 setSelectedBuddy(null);
+                analyticsService.trackVenueView(v.id, v.name, v.category);
               }}
               onMapClick={handleMapCoordsClick}
               onTriggerNotification={triggerNotification}

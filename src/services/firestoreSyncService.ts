@@ -21,16 +21,20 @@ import { FavoriteVenueItem, PaymentEtiquette, DrinkType, Message, HangoutAlert, 
 import { cryptoService } from './cryptoService';
 import { UserGeoLocation, calculateDistanceKm, formatDistance } from './geoService';
 import { INITIAL_HANGOUTS } from '../data/mockData';
+import { batterySaverService } from './batterySaverService';
 
 let isBasementOfflineSimulated = false;
+let isFirestoreConnectedState = true;
 const networkListeners: Array<(isOnline: boolean, isBasement: boolean) => void> = [];
 
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    networkListeners.forEach((cb) => cb(true, isBasementOfflineSimulated));
+    isFirestoreConnectedState = true;
+    firestoreSyncService.notifyNetworkListeners();
   });
   window.addEventListener('offline', () => {
-    networkListeners.forEach((cb) => cb(false, isBasementOfflineSimulated));
+    isFirestoreConnectedState = false;
+    firestoreSyncService.notifyNetworkListeners();
   });
 }
 
@@ -49,9 +53,56 @@ export interface FirestoreUserProfile {
 }
 
 export const firestoreSyncService = {
+  /**
+   * Check if Firestore is currently reachable and online
+   */
+  isOnline(): boolean {
+    const isBrowserOnline = 
+      typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean' 
+        ? navigator.onLine 
+        : true;
+    return Boolean(isBrowserOnline && !isBasementOfflineSimulated && isFirestoreConnectedState);
+  },
+
+  /**
+   * Notify all registered network status listeners
+   */
+  notifyNetworkListeners(): void {
+    const online = this.isOnline();
+    networkListeners.forEach((cb) => cb(online, isBasementOfflineSimulated));
+  },
+
+  /**
+   * Explicitly set connection status if a Firestore operation fails or succeeds
+   */
+  setFirestoreConnectionStatus(connected: boolean): void {
+    if (isFirestoreConnectedState !== connected) {
+      isFirestoreConnectedState = connected;
+      this.notifyNetworkListeners();
+    }
+  },
+
   // Test connection status
   async verifyConnection(): Promise<boolean> {
-    return await testFirestoreConnection();
+    const isBrowserOnline = 
+      typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean' 
+        ? navigator.onLine 
+        : true;
+    if (!isBrowserOnline || isBasementOfflineSimulated) {
+      isFirestoreConnectedState = false;
+      this.notifyNetworkListeners();
+      return false;
+    }
+    try {
+      const ok = await testFirestoreConnection();
+      isFirestoreConnectedState = ok;
+      this.notifyNetworkListeners();
+      return ok;
+    } catch {
+      isFirestoreConnectedState = false;
+      this.notifyNetworkListeners();
+      return false;
+    }
   },
 
   // Save/Update user profile in Firestore
@@ -230,10 +281,23 @@ export const firestoreSyncService = {
   ): () => void {
     try {
       const hangoutsCol = collection(db, 'hangouts');
+      let lastEmissionTimestamp = 0;
+
       const unsubscribe = onSnapshot(
         hangoutsCol,
         { includeMetadataChanges: true },
         (snapshot) => {
+          const now = Date.now();
+          // In Battery Saver mode, throttle updates to the reduced sync interval to conserve CPU & battery
+          if (
+            batterySaverService.isBatterySaverEnabled() &&
+            lastEmissionTimestamp > 0 &&
+            now - lastEmissionTimestamp < batterySaverService.getRealtimeSyncInterval()
+          ) {
+            return;
+          }
+          lastEmissionTimestamp = now;
+
           const liveFirestoreItems: HangoutAlert[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data();
@@ -515,13 +579,14 @@ export const firestoreSyncService = {
   async setBasementMode(enabled: boolean): Promise<void> {
     isBasementOfflineSimulated = enabled;
     if (enabled) {
+      isFirestoreConnectedState = false;
       await disableOfflineNetwork();
     } else {
+      isFirestoreConnectedState = true;
       await enableOfflineNetwork();
       await syncPendingWrites();
     }
-    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    networkListeners.forEach((cb) => cb(isOnline && !enabled, enabled));
+    this.notifyNetworkListeners();
   },
 
   /**
@@ -530,8 +595,7 @@ export const firestoreSyncService = {
   onNetworkStatusChange(callback: (isOnline: boolean, isBasement: boolean) => void): () => void {
     networkListeners.push(callback);
     // Initial call
-    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    callback(isOnline && !isBasementOfflineSimulated, isBasementOfflineSimulated);
+    callback(this.isOnline(), isBasementOfflineSimulated);
     return () => {
       const idx = networkListeners.indexOf(callback);
       if (idx !== -1) networkListeners.splice(idx, 1);
