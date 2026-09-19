@@ -17,11 +17,18 @@ import {
   LifeBuoy,
   Zap,
   BatteryMedium,
+  Pencil,
+  User,
+  X,
+  Clock,
+  RefreshCw,
+  Calendar,
 } from 'lucide-react';
 import { DrinkType, PaymentEtiquette, AuthUser, AppLanguage } from '../../types';
 import { DRINK_METADATA, PAYMENT_METADATA } from '../../data/mockData';
 import { sounds } from '../../services/soundService';
 import { SUPPORTED_LANGUAGES, t } from '../../services/i18nService';
+import { calculateAge, formatAgeWithUnit, formatBirthDateUkrainian } from '../../utils/ageUtils';
 import { 
   UserGeoLocation, 
   PRESET_LOCATIONS, 
@@ -37,6 +44,7 @@ import { analyticsService } from '../../services/analyticsService';
 import { HangoutActivityChart } from './HangoutActivityChart';
 import { BlockedUsersModal } from './BlockedUsersModal';
 import { SosEmergencyModal } from './SosEmergencyModal';
+import { authService } from '../../services/authService';
 
 interface ProfileViewProps {
   currentUser: AuthUser;
@@ -50,6 +58,7 @@ interface ProfileViewProps {
   onUpdateLocation: (newLoc: UserGeoLocation) => void;
   onOpenNotifications?: () => void;
   onOpenGamificationTour?: () => void;
+  onUpdateUser?: (user: AuthUser) => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -64,11 +73,74 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onUpdateLocation,
   onOpenNotifications,
   onOpenGamificationTour,
+  onUpdateUser,
 }) => {
+  const [userName, setUserName] = useState(currentUser.name || 'Павло');
+  const [isEditingNameInline, setIsEditingNameInline] = useState(false);
   const [tagline, setTagline] = useState('React Native розробник, шукаю компанію на крафтове пиво або вино 🍺🍷');
   const [preferredDrinks, setPreferredDrinks] = useState<DrinkType[]>(['craft', 'wine', 'cider']);
   const [paymentRule, setPaymentRule] = useState<PaymentEtiquette>('split_50_50');
   const [isSaved, setIsSaved] = useState(false);
+
+  // Date of Birth & Dynamic Age Calculation State
+  const [birthDate, setBirthDate] = useState<string>(currentUser.birthDate || '1998-05-15');
+  const [calculatedAge, setCalculatedAge] = useState<number | null>(() =>
+    calculateAge(currentUser.birthDate || '1998-05-15')
+  );
+
+  React.useEffect(() => {
+    if (currentUser.birthDate) {
+      setBirthDate(currentUser.birthDate);
+      setCalculatedAge(calculateAge(currentUser.birthDate));
+    }
+  }, [currentUser.birthDate]);
+
+  const handleBirthDateChange = (newDate: string) => {
+    setBirthDate(newDate);
+    const age = calculateAge(newDate);
+    setCalculatedAge(age);
+  };
+
+  const handleSaveBirthDate = (newDate?: string) => {
+    const targetDate = newDate || birthDate;
+    const age = calculateAge(targetDate);
+    if (!targetDate) return;
+    sounds.playClink();
+    const updatedUser: AuthUser = {
+      ...currentUser,
+      birthDate: targetDate,
+      age: age ?? currentUser.age,
+    };
+    if (onUpdateUser) {
+      onUpdateUser(updatedUser);
+    }
+    authService.saveUser(updatedUser);
+    firestoreSyncService.saveUserProfile({
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      avatar: updatedUser.avatar,
+      tagline,
+      paymentRule,
+      preferredDrinks,
+      locationName: userLocation.locationName,
+      lat: userLocation.lat,
+      lng: userLocation.lng,
+      updatedAt: new Date().toISOString(),
+      birthDate: targetDate,
+      age: age ?? undefined,
+    });
+    setGeoNotification(
+      age !== null
+        ? `🎂 Дату народження збережено! Вік: ${formatAgeWithUnit(age)}`
+        : '🎂 Дату народження збережено!'
+    );
+    setTimeout(() => setGeoNotification(null), 3500);
+  };
+
+  React.useEffect(() => {
+    setUserName(currentUser.name || '');
+  }, [currentUser.name]);
 
   // Geolocation & District Management States
   const [geoNotification, setGeoNotification] = useState<string | null>(null);
@@ -84,6 +156,31 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   // Battery Saver Mode State
   const [isBatterySaver, setIsBatterySaver] = useState(() => batterySaverService.isBatterySaverEnabled());
+
+  // 36-Hour Session State & Formatting
+  const [sessionRemaining, setSessionRemaining] = useState<string>(() =>
+    authService.formatRemainingSession(currentUser.sessionExpiresAt)
+  );
+
+  React.useEffect(() => {
+    const updateSessionDisplay = () => {
+      setSessionRemaining(authService.formatRemainingSession(currentUser.sessionExpiresAt));
+    };
+    updateSessionDisplay();
+    const interval = setInterval(updateSessionDisplay, 15000); // refresh display every 15s
+    return () => clearInterval(interval);
+  }, [currentUser.sessionExpiresAt]);
+
+  const handleManualExtendSession = () => {
+    sounds.playClink();
+    const updated = authService.touchSession();
+    if (onUpdateUser) {
+      onUpdateUser(updated);
+    }
+    setSessionRemaining(authService.formatRemainingSession(updated.sessionExpiresAt));
+    setGeoNotification('⏳ Сесію успішно подовжено ще на 36 годин!');
+    setTimeout(() => setGeoNotification(null), 3500);
+  };
 
   React.useEffect(() => {
     const unsubSafety = safetyModerationService.subscribe(() => {
@@ -118,20 +215,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     );
   };
 
-  const handleSave = () => {
+  const handleSaveName = (customName?: string) => {
+    const targetName = (customName !== undefined ? customName : userName).trim();
+    if (!targetName) return;
     sounds.playClink();
-    setIsSaved(true);
-    analyticsService.trackEvent('profile_saved', {
-      user_id: currentUser.id,
-      preferred_drinks_count: preferredDrinks.length,
-      payment_rule: paymentRule,
-    });
-    // Persist profile to Cloud Firestore
+    setUserName(targetName);
+    setIsEditingNameInline(false);
+    const updatedUser: AuthUser = {
+      ...currentUser,
+      name: targetName,
+      birthDate,
+      age: calculatedAge ?? currentUser.age,
+    };
+    if (onUpdateUser) {
+      onUpdateUser(updatedUser);
+    }
+    authService.saveUser(updatedUser);
     firestoreSyncService.saveUserProfile({
-      id: currentUser.id,
-      name: currentUser.name,
-      email: currentUser.email,
-      avatar: currentUser.avatar,
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      avatar: updatedUser.avatar,
       tagline,
       paymentRule,
       preferredDrinks,
@@ -139,7 +243,54 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       lat: userLocation.lat,
       lng: userLocation.lng,
       updatedAt: new Date().toISOString(),
+      birthDate,
+      age: calculatedAge ?? undefined,
     });
+    setGeoNotification(`✅ Ім'я успішно оновлено на «${targetName}»!`);
+    setTimeout(() => setGeoNotification(null), 3000);
+  };
+
+  const handleSave = () => {
+    sounds.playClink();
+    setIsSaved(true);
+    const targetName = userName.trim() || currentUser.name || 'Користувач';
+    setUserName(targetName);
+    setIsEditingNameInline(false);
+
+    const updatedUser: AuthUser = {
+      ...currentUser,
+      name: targetName,
+      birthDate,
+      age: calculatedAge ?? currentUser.age,
+    };
+    if (onUpdateUser) {
+      onUpdateUser(updatedUser);
+    }
+    authService.saveUser(updatedUser);
+
+    analyticsService.trackEvent('profile_saved', {
+      user_id: currentUser.id,
+      preferred_drinks_count: preferredDrinks.length,
+      payment_rule: paymentRule,
+    });
+    // Persist profile to Cloud Firestore
+    firestoreSyncService.saveUserProfile({
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      avatar: updatedUser.avatar,
+      tagline,
+      paymentRule,
+      preferredDrinks,
+      locationName: userLocation.locationName,
+      lat: userLocation.lat,
+      lng: userLocation.lng,
+      updatedAt: new Date().toISOString(),
+      birthDate,
+      age: calculatedAge ?? undefined,
+    });
+    setGeoNotification(`✅ Профіль, вік та ім'я «${targetName}» збережено!`);
+    setTimeout(() => setGeoNotification(null), 3000);
     setTimeout(() => setIsSaved(false), 2000);
   };
 
@@ -268,14 +419,69 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-base font-bold text-white leading-tight truncate">
-                {currentUser.name}, 27
-              </h3>
-              {isGoogle && (
-                <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold border border-amber-500/30 flex items-center gap-1">
-                  Google
-                </span>
+            {/* Interactive Name Display & Inline Editing */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {isEditingNameInline ? (
+                <div className="flex items-center gap-1.5 min-w-0 py-0.5">
+                  <input
+                    type="text"
+                    id="profile-card-inline-name-input"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveName();
+                      if (e.key === 'Escape') {
+                        setUserName(currentUser.name || '');
+                        setIsEditingNameInline(false);
+                      }
+                    }}
+                    autoFocus
+                    maxLength={35}
+                    placeholder="Введіть ім'я"
+                    className="bg-neutral-950 border border-amber-400 rounded-lg px-2 py-1 text-sm text-white font-bold w-36 focus:outline-none shadow-inner"
+                  />
+                  <button
+                    type="button"
+                    id="profile-card-save-name-btn"
+                    onClick={() => handleSaveName()}
+                    className="p-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-neutral-950 transition cursor-pointer shadow"
+                    title="Зберегти ім'я"
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </button>
+                  <button
+                    type="button"
+                    id="profile-card-cancel-name-btn"
+                    onClick={() => {
+                      setUserName(currentUser.name || '');
+                      setIsEditingNameInline(false);
+                    }}
+                    className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition cursor-pointer"
+                    title="Скасувати"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <h3 className="text-base font-bold text-white leading-tight truncate">
+                    {userName || currentUser.name || 'Користувач'}{calculatedAge !== null ? `, ${calculatedAge}` : ''}
+                  </h3>
+                  <button
+                    type="button"
+                    id="profile-edit-name-btn"
+                    onClick={() => setIsEditingNameInline(true)}
+                    className="p-1 rounded-md bg-neutral-800/60 hover:bg-neutral-800 text-neutral-400 hover:text-amber-400 transition cursor-pointer shrink-0"
+                    title="Редагувати ім'я"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  {isGoogle && (
+                    <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold border border-amber-500/30 flex items-center gap-1 shrink-0">
+                      Google
+                    </span>
+                  )}
+                </>
               )}
             </div>
 
@@ -298,8 +504,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </button>
 
             <p className="text-[11px] text-neutral-400 truncate mt-0.5">
-              {currentUser.email || 'Не вказано (Гість)'}
+              {currentUser.email || 'Email не вказано'}
             </p>
+
+            {calculatedAge !== null && (
+              <div className="flex items-center gap-1.5 text-[10px] text-amber-300/90 font-medium mt-1 bg-amber-950/40 border border-amber-500/20 px-2 py-0.5 rounded-lg w-fit">
+                <Calendar className="w-3 h-3 text-amber-400 shrink-0" />
+                <span>{formatAgeWithUnit(calculatedAge)} ({formatBirthDateUkrainian(birthDate)})</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -314,6 +527,105 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             setTimeout(() => setGeoNotification(null), 3500);
           }}
         />
+
+        {/* 0. Name Editing Section */}
+        <div className="bg-neutral-900 rounded-3xl border border-neutral-800 p-4 space-y-2.5 shadow-xl">
+          <div className="flex items-center justify-between">
+            <label htmlFor="profile-name-input" className="text-xs font-bold text-neutral-200 flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-amber-400" />
+              <span>👤 Моє ім'я (Нікнейм)</span>
+            </label>
+            <span className="text-[10px] text-neutral-400">Пошук та чати</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                id="profile-name-input"
+                value={userName}
+                onChange={(e) => setUserName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveName();
+                }}
+                placeholder="Введіть ваше ім'я..."
+                maxLength={35}
+                className="w-full bg-neutral-950 border border-neutral-800 rounded-2xl px-3.5 py-2.5 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-amber-400 shadow-inner font-medium transition"
+              />
+            </div>
+            {userName.trim() !== currentUser.name && userName.trim().length > 0 && (
+              <button
+                type="button"
+                id="profile-name-save-btn"
+                onClick={() => handleSaveName()}
+                className="px-3.5 py-2.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 text-xs font-bold rounded-2xl transition shadow flex items-center gap-1.5 shrink-0 cursor-pointer active:scale-95"
+              >
+                <Check className="w-3.5 h-3.5 stroke-[3]" />
+                <span>Оновити</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 0.1 Date of Birth & Live Age Calculation */}
+        <div className="bg-neutral-900 rounded-3xl border border-neutral-800 p-4 space-y-3 shadow-xl">
+          <div className="flex items-center justify-between">
+            <label htmlFor="profile-birthdate-input" className="text-xs font-bold text-neutral-200 flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-amber-400" />
+              <span>🎂 Дата народження та вік</span>
+            </label>
+            {calculatedAge !== null && (
+              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                {formatAgeWithUnit(calculatedAge)}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="space-y-1">
+              <input
+                type="date"
+                id="profile-birthdate-input"
+                value={birthDate}
+                max={new Date().toISOString().split('T')[0]}
+                min="1920-01-01"
+                onChange={(e) => handleBirthDateChange(e.target.value)}
+                className="w-full bg-neutral-950 border border-neutral-800 rounded-2xl px-3.5 py-2.5 text-xs text-neutral-100 focus:outline-none focus:border-amber-400 shadow-inner font-medium transition cursor-pointer [color-scheme:dark]"
+              />
+              <span className="text-[10px] text-neutral-400 block px-1">
+                Вкажіть дату — роки обчислюються автоматично
+              </span>
+            </div>
+
+            <div className="bg-neutral-950/80 border border-neutral-800/80 rounded-2xl p-2.5 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <span className="text-[10px] text-neutral-400 block">Повний вік:</span>
+                {calculatedAge !== null ? (
+                  <div className="text-xs font-bold text-amber-400 truncate">
+                    {formatAgeWithUnit(calculatedAge)}
+                    <span className="text-[10px] text-neutral-400 font-normal ml-1">
+                      ({formatBirthDateUkrainian(birthDate)})
+                    </span>
+                  </div>
+                ) : (
+                  <span className="text-xs text-neutral-500 italic">Не вказано</span>
+                )}
+              </div>
+
+              {birthDate !== currentUser.birthDate && (
+                <button
+                  type="button"
+                  id="profile-save-birthdate-btn"
+                  onClick={() => handleSaveBirthDate()}
+                  className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 text-[11px] font-bold rounded-xl transition shadow flex items-center gap-1 shrink-0 cursor-pointer active:scale-95"
+                  title="Зберегти дату народження"
+                >
+                  <Check className="w-3 h-3 stroke-[3]" />
+                  <span>Зберегти</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* 1. Tagline / Mood Text ("Мій статус" піднято над "Моя геопозиція") */}
         <div className="bg-neutral-900 rounded-3xl border border-neutral-800 p-4 space-y-2 shadow-xl">
@@ -878,6 +1190,50 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* 36-Hour Active Session Info Card */}
+        {currentUser.isLoggedIn && (
+          <div className="bg-gradient-to-r from-amber-500/10 via-neutral-900 to-neutral-900 rounded-2xl border border-amber-500/30 p-3.5 shadow-md space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-neutral-100 flex items-center gap-1.5">
+                    <span>Сесія акаунта (36 годин)</span>
+                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded-full font-semibold border border-emerald-500/30">
+                      Активна
+                    </span>
+                  </h4>
+                  <p className="text-[10px] text-neutral-400">
+                    Автоматично продовжується при кожному вході в застосунок
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-neutral-950/70 border border-neutral-800/80 rounded-xl p-2.5 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <span className="text-[10px] text-neutral-400 block">Залишок дії поточної сесії:</span>
+                <span className="text-xs font-bold text-amber-400 flex items-center gap-1">
+                  <span>⏳ {sessionRemaining}</span>
+                  <span className="text-[10px] text-neutral-500 font-normal">/ 36 год</span>
+                </span>
+              </div>
+              <button
+                type="button"
+                id="profile-extend-session-btn"
+                onClick={handleManualExtendSession}
+                className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 border border-amber-500/40 text-[11px] font-semibold flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                title="Оновити сесію ще на 36 годин"
+              >
+                <RefreshCw className="w-3 h-3 text-amber-400" />
+                <span>+36 год</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Auth Action Buttons Card */}
         <div className="bg-neutral-900 rounded-2xl border border-neutral-800 p-3 shadow-md flex items-center gap-2">

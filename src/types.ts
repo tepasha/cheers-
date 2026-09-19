@@ -199,6 +199,10 @@ export interface AuthUser {
   accessToken?: string;
   joinedAt?: string;
   emailVerified?: boolean;
+  sessionExpiresAt?: number;
+  lastActiveAt?: number;
+  birthDate?: string;
+  age?: number;
 }
 
 export interface FavoriteVenueItem {

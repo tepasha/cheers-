@@ -11,6 +11,8 @@ import { ChatRoomView } from './components/mobile/ChatRoomView';
 import { ProfileView } from './components/mobile/ProfileView';
 import { FriendsView } from './components/mobile/FriendsView';
 import { AuthModal } from './components/mobile/AuthModal';
+import { LaunchScreen } from './components/mobile/LaunchScreen';
+import { AuthScreen } from './components/mobile/AuthScreen';
 import { ArchitectureHub } from './components/architecture/ArchitectureHub';
 import { RussiaBlockScreen } from './components/mobile/RussiaBlockScreen';
 import { NotificationCenterModal } from './components/mobile/NotificationCenterModal';
@@ -219,6 +221,9 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isArchitectureOpen, setIsArchitectureOpen] = useState(false);
 
+  // Screen flow: 'launch' (splash screen) -> 'auth' (authorization screen) -> 'app' (main app)
+  const [activeAppFlow, setActiveAppFlow] = useState<'launch' | 'auth' | 'app'>('launch');
+
   // Push Notifications State & Web Notifications
   const [unreadNotifications, setUnreadNotifications] = useState<number>(() =>
     pushNotificationService.getUnreadCount()
@@ -241,6 +246,39 @@ export default function App() {
       setActivePushBanner(banner);
     });
     return unsubscribe;
+  }, []);
+
+  // 36-Hour Session Lifecycle: Auto-prolong session when user enters the app or returns to tab
+  useEffect(() => {
+    // 1. Prolong session immediately on initial app load / entry
+    const touchedUser = authService.touchSession();
+    setCurrentUser(touchedUser);
+
+    // 2. Automatically extend session whenever the user returns to the app tab
+    const handleAppFocus = () => {
+      if (document.visibilityState === 'visible') {
+        const refreshed = authService.touchSession();
+        setCurrentUser(refreshed);
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleAppFocus);
+    window.addEventListener('focus', handleAppFocus);
+
+    // 3. Periodic session expiration check (every 60s)
+    const sessionTimer = setInterval(() => {
+      if (!authService.isSessionValid()) {
+        const loggedOut = authService.logout();
+        setCurrentUser(loggedOut);
+        setActiveAppFlow('auth');
+      }
+    }, 60000);
+
+    return () => {
+      window.removeEventListener('visibilitychange', handleAppFocus);
+      window.removeEventListener('focus', handleAppFocus);
+      clearInterval(sessionTimer);
+    };
   }, []);
 
   // Navigation handlers from Push Notifications
@@ -275,6 +313,7 @@ export default function App() {
     try {
       const user = await authService.loginWithGoogle();
       setCurrentUser(user);
+      setActiveAppFlow('app');
       sounds.playMatchCheer();
       analyticsService.trackEvent('login', {
         method: 'google_popup',
@@ -294,6 +333,7 @@ export default function App() {
     sounds.playClink();
     const guestUser = authService.logout();
     setCurrentUser(guestUser);
+    setActiveAppFlow('auth');
     analyticsService.trackEvent('logout', {
       user_id: currentUser.id,
     });
@@ -603,110 +643,145 @@ export default function App() {
       onNavigateToHangout={handleNavigateToHangout}
       onNavigateToChat={handleNavigateToChat}
       lang={currentLanguage}
+      activeFlow={activeAppFlow}
+      onSelectFlow={setActiveAppFlow}
     >
-      {/* Screen Views based on active Tab */}
-      <div className="flex-1 flex flex-col overflow-hidden relative">
-        {activeTab === 'discover' && (
-          <DiscoverView
-            buddies={buddies}
-            onMatch={handleMatch}
-            onOpenChat={handleOpenChatWithBuddy}
-          />
-        )}
-
-        {(activeTab === 'map' || activeTab === 'radar') && (
-          <MapView
-            buddies={buddies}
-            userLocation={userLocation}
-            onUpdateLocation={handleUpdateLocation}
-            onSelectBuddy={(b) => handleOpenChatWithBuddy(b)}
-            onOpenChat={handleOpenChatWithBuddy}
-            onNewHangout={handleNewHangout}
-            hangouts={hangouts}
-            onJoinHangout={handleJoinHangout}
-          />
-        )}
-
-        {activeTab === 'hangouts' && (
-          <HangoutsView
-            hangouts={hangouts}
-            onJoinHangout={handleJoinHangout}
-            onCloseHangout={handleCloseHangout}
-            onOpenBuddyChat={handleOpenChatByName}
-            buddies={buddies}
-            onNewHangout={handleNewHangout}
-            currentUserId={currentUser.id}
-            currentUserName={currentUser.name}
-            currentUserAvatar={currentUser.avatar}
-            currentLocationName={userLocation.locationName}
-            userLocation={userLocation}
-            onNavigateToMap={() => setActiveTab('map')}
-          />
-        )}
-
-        {activeTab === 'friends' && (
-          <FriendsView
-            buddies={buddies}
-            onOpenChat={handleOpenChatWithBuddy}
-            onNavigateToDiscover={() => setActiveTab('discover')}
-            onNavigateToMap={() => setActiveTab('map')}
-            userLocation={userLocation}
-          />
-        )}
-
-        {activeTab === 'chats' && (
-          selectedChat ? (
-            <ChatRoomView
-              chat={selectedChat}
-              buddies={buddies}
-              onBack={() => setSelectedChat(null)}
-              onSendMessage={handleSendMessage}
-              onDeleteChat={handleDeleteChat}
-              onAddParticipants={handleAddGroupParticipants}
-            />
-          ) : (
-            <ChatListView
-              chats={chats}
-              buddies={buddies}
-              onSelectChat={(c) => setSelectedChat(c)}
-              onQuickDiscover={() => setActiveTab('discover')}
-              onDeleteChat={handleDeleteChat}
-              onCreateGroupChat={handleCreateGroupChat}
-              currentUserId={currentUser.id}
-              currentUserName={currentUser.name}
-              currentUserAvatar={currentUser.avatar}
-            />
-          )
-        )}
-
-        {activeTab === 'profile' && (
-          <ProfileView
-            currentUser={currentUser}
-            onOpenAuth={() => setIsAuthModalOpen(true)}
-            onLogout={handleLogout}
-            onGoogleSignIn={handleGoogleQuickSignIn}
-            currentLanguage={currentLanguage}
-            onLanguageChange={handleLanguageChange}
-            langSourceHint={langSourceHint}
-            userLocation={userLocation}
-            onUpdateLocation={handleUpdateLocation}
-            onOpenNotifications={() => setIsNotificationCenterOpen(true)}
-            onOpenGamificationTour={handleOpenGamificationTour}
-          />
-        )}
-      </div>
-
-      {/* Persistent Bottom Tab Bar (hidden only when inside active chat room for more messaging space) */}
-      {!(activeTab === 'chats' && selectedChat) && (
-        <BottomTabBar
-          activeTab={activeTab}
-          onTabChange={handleTabChange}
-          unreadCount={unreadTotal}
-          activeHangoutsCount={hangouts.length}
-          friendsCount={friendsCount}
-          currentLanguage={currentLanguage}
-          showGamificationTooltip={shouldShowGamificationTour}
+      {/* Launch / Splash Screen Flow */}
+      {activeAppFlow === 'launch' && (
+        <LaunchScreen
+          isLoggedIn={currentUser.isLoggedIn && authService.isSessionValid()}
+          onContinueToApp={() => {
+            const user = authService.touchSession();
+            setCurrentUser(user);
+            setActiveAppFlow('app');
+          }}
+          onContinueToAuth={() => setActiveAppFlow('auth')}
         />
+      )}
+
+      {/* Full-Screen Authorization Screen Flow */}
+      {activeAppFlow === 'auth' && (
+        <AuthScreen
+          currentUser={currentUser}
+          onAuthSuccess={(user) => {
+            setCurrentUser(user);
+            setActiveAppFlow('app');
+          }}
+        />
+      )}
+
+      {/* Main App Flow with Tabs */}
+      {activeAppFlow === 'app' && (
+        <>
+          {/* Screen Views based on active Tab */}
+          <div className="flex-1 flex flex-col overflow-hidden relative">
+            {activeTab === 'discover' && (
+              <DiscoverView
+                buddies={buddies}
+                onMatch={handleMatch}
+                onOpenChat={handleOpenChatWithBuddy}
+              />
+            )}
+
+            {(activeTab === 'map' || activeTab === 'radar') && (
+              <MapView
+                buddies={buddies}
+                userLocation={userLocation}
+                onUpdateLocation={handleUpdateLocation}
+                onSelectBuddy={(b) => handleOpenChatWithBuddy(b)}
+                onOpenChat={handleOpenChatWithBuddy}
+                onNewHangout={handleNewHangout}
+                hangouts={hangouts}
+                onJoinHangout={handleJoinHangout}
+              />
+            )}
+
+            {activeTab === 'hangouts' && (
+              <HangoutsView
+                hangouts={hangouts}
+                onJoinHangout={handleJoinHangout}
+                onCloseHangout={handleCloseHangout}
+                onOpenBuddyChat={handleOpenChatByName}
+                buddies={buddies}
+                onNewHangout={handleNewHangout}
+                currentUserId={currentUser.id}
+                currentUserName={currentUser.name}
+                currentUserAvatar={currentUser.avatar}
+                currentLocationName={userLocation.locationName}
+                userLocation={userLocation}
+                onNavigateToMap={() => setActiveTab('map')}
+              />
+            )}
+
+            {activeTab === 'friends' && (
+              <FriendsView
+                buddies={buddies}
+                onOpenChat={handleOpenChatWithBuddy}
+                onNavigateToDiscover={() => setActiveTab('discover')}
+                onNavigateToMap={() => setActiveTab('map')}
+                userLocation={userLocation}
+              />
+            )}
+
+            {activeTab === 'chats' && (
+              selectedChat ? (
+                <ChatRoomView
+                  chat={selectedChat}
+                  buddies={buddies}
+                  onBack={() => setSelectedChat(null)}
+                  onSendMessage={handleSendMessage}
+                  onDeleteChat={handleDeleteChat}
+                  onAddParticipants={handleAddGroupParticipants}
+                />
+              ) : (
+                <ChatListView
+                  chats={chats}
+                  buddies={buddies}
+                  onSelectChat={(c) => setSelectedChat(c)}
+                  onQuickDiscover={() => setActiveTab('discover')}
+                  onDeleteChat={handleDeleteChat}
+                  onCreateGroupChat={handleCreateGroupChat}
+                  currentUserId={currentUser.id}
+                  currentUserName={currentUser.name}
+                  currentUserAvatar={currentUser.avatar}
+                />
+              )
+            )}
+
+            {activeTab === 'profile' && (
+              <ProfileView
+                currentUser={currentUser}
+                onOpenAuth={() => setIsAuthModalOpen(true)}
+                onLogout={handleLogout}
+                onGoogleSignIn={handleGoogleQuickSignIn}
+                currentLanguage={currentLanguage}
+                onLanguageChange={handleLanguageChange}
+                langSourceHint={langSourceHint}
+                userLocation={userLocation}
+                onUpdateLocation={handleUpdateLocation}
+                onOpenNotifications={() => setIsNotificationCenterOpen(true)}
+                onOpenGamificationTour={handleOpenGamificationTour}
+                onUpdateUser={(updatedUser) => {
+                  setCurrentUser(updatedUser);
+                  authService.saveUser(updatedUser);
+                }}
+              />
+            )}
+          </div>
+
+          {/* Persistent Bottom Tab Bar (hidden only when inside active chat room for more messaging space) */}
+          {!(activeTab === 'chats' && selectedChat) && (
+            <BottomTabBar
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+              unreadCount={unreadTotal}
+              activeHangoutsCount={hangouts.length}
+              friendsCount={friendsCount}
+              currentLanguage={currentLanguage}
+              showGamificationTooltip={shouldShowGamificationTour}
+            />
+          )}
+        </>
       )}
 
       {/* Russia Geoblock Overlay (Strict Sanction & Security Screen) */}

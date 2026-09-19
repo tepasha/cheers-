@@ -17,6 +17,8 @@ interface MobileFrameProps {
   onNavigateToHangout?: (hangoutId?: string, venueName?: string) => void;
   onNavigateToChat?: (chatId?: string, buddyId?: string) => void;
   lang?: AppLanguage;
+  activeFlow?: 'launch' | 'auth' | 'app';
+  onSelectFlow?: (flow: 'launch' | 'auth' | 'app') => void;
 }
 
 export const MobileFrame: React.FC<MobileFrameProps> = ({
@@ -26,6 +28,8 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
   onNavigateToHangout,
   onNavigateToChat,
   lang,
+  activeFlow,
+  onSelectFlow,
 }) => {
   const [currentTime, setCurrentTime] = useState('20:45');
   const [isBatterySaver, setIsBatterySaver] = useState(() => batterySaverService.isBatterySaverEnabled());
@@ -75,6 +79,49 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-0 sm:p-4 overflow-x-hidden">
+      {/* Top flow selector for previewing Launch and Auth screens */}
+      {onSelectFlow && activeFlow && (
+        <div className="mb-2 hidden sm:flex items-center gap-1.5 bg-neutral-900/90 border border-neutral-800 p-1 rounded-full text-xs font-medium shadow-md select-none">
+          <span className="text-[10px] text-neutral-400 px-2 font-semibold">Екрани додатку:</span>
+          <button
+            type="button"
+            id="flow-switch-launch"
+            onClick={() => onSelectFlow('launch')}
+            className={`px-3 py-1 rounded-full text-xs transition cursor-pointer ${
+              activeFlow === 'launch'
+                ? 'bg-amber-500 text-neutral-950 font-bold shadow'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            🚀 Запуск (Splash)
+          </button>
+          <button
+            type="button"
+            id="flow-switch-auth"
+            onClick={() => onSelectFlow('auth')}
+            className={`px-3 py-1 rounded-full text-xs transition cursor-pointer ${
+              activeFlow === 'auth'
+                ? 'bg-amber-500 text-neutral-950 font-bold shadow'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            🔐 Авторизація
+          </button>
+          <button
+            type="button"
+            id="flow-switch-app"
+            onClick={() => onSelectFlow('app')}
+            className={`px-3 py-1 rounded-full text-xs transition cursor-pointer ${
+              activeFlow === 'app'
+                ? 'bg-amber-500 text-neutral-950 font-bold shadow'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            📱 Додаток (Головна)
+          </button>
+        </div>
+      )}
+
       {/* Realistic Mobile Enclosure */}
       <div
         id="mobile-device-container"

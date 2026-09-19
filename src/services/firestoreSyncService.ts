@@ -50,6 +50,8 @@ export interface FirestoreUserProfile {
   lat: number;
   lng: number;
   updatedAt: string;
+  birthDate?: string;
+  age?: number;
 }
 
 export const firestoreSyncService = {

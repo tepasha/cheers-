@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, Lock, Mail, ShieldCheck, Check, User, LogOut } from 'lucide-react';
+import { X, Lock, Mail, ShieldCheck, LogOut } from 'lucide-react';
 import { sounds } from '../../services/soundService';
-import { authService, KNOWN_GOOGLE_ACCOUNTS } from '../../services/authService';
+import { authService } from '../../services/authService';
 import { AuthUser } from '../../types';
 
 interface AuthModalProps {
@@ -20,11 +20,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<'google' | 'email'>('google');
-  const [selectedGoogleEmail, setSelectedGoogleEmail] = useState<string>(
-    currentUser.email || KNOWN_GOOGLE_ACCOUNTS[0].email
-  );
-  const [customGoogleEmail, setCustomGoogleEmail] = useState('');
-  const [showCustomInput, setShowCustomInput] = useState(false);
   const [email, setEmail] = useState(currentUser.email || 'tepasha.90@gmail.com');
   const [password, setPassword] = useState('••••••••••••');
   const [mode, setMode] = useState<'login' | 'signup'>('login');
@@ -33,13 +28,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleGoogleSignIn = async (chosenEmail?: string) => {
+  const handleGoogleSignIn = async () => {
     setIsLoading(true);
     setAuthNotice('Підключення до Google Identity Services...');
     
     try {
-      const emailToUse = chosenEmail || (showCustomInput && customGoogleEmail ? customGoogleEmail : selectedGoogleEmail);
-      const user = await authService.loginWithGoogle(emailToUse);
+      const user = await authService.loginWithGoogle();
       sounds.playMatchCheer();
       setAuthNotice('Успішна авторизація через Google!');
       setTimeout(() => {
@@ -175,95 +169,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {activeTab === 'google' && (
           <div className="space-y-3">
             {/* Google OAuth Status Banner */}
-            <div className="bg-amber-950/20 border border-amber-500/20 rounded-2xl p-2.5 text-[11px] text-amber-200/90 flex items-start gap-2">
-              <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="bg-amber-950/20 border border-amber-500/20 rounded-2xl p-3 text-[11px] text-amber-200/90 flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <span>
                 Швидкий вхід за допомогою Google OAuth 2.0 без паролів. Фото, ім'я та email синхронізуються автоматично.
               </span>
-            </div>
-
-            {/* Account Picker */}
-            <div>
-              <label className="block text-[11px] font-bold text-neutral-300 mb-1.5">
-                Оберіть Google акаунт:
-              </label>
-
-              <div className="space-y-1.5">
-                {KNOWN_GOOGLE_ACCOUNTS.map((acc) => {
-                  const isSelected = !showCustomInput && selectedGoogleEmail === acc.email;
-                  return (
-                    <button
-                      key={acc.email}
-                      type="button"
-                      id={`google-acc-${acc.email.split('@')[0]}`}
-                      onClick={() => {
-                        setShowCustomInput(false);
-                        setSelectedGoogleEmail(acc.email);
-                      }}
-                      className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between transition ${
-                        isSelected
-                          ? 'bg-amber-500/15 border-amber-500 text-white shadow-sm'
-                          : 'bg-neutral-950/70 border-neutral-800 text-neutral-300 hover:bg-neutral-800/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <img
-                          src={acc.avatar}
-                          alt={acc.name}
-                          className="w-8 h-8 rounded-full object-cover border border-amber-400/40 shrink-0"
-                        />
-                        <div className="truncate">
-                          <div className="text-xs font-bold text-neutral-100 truncate flex items-center gap-1.5">
-                            {acc.name}
-                            {currentUser.email === acc.email && currentUser.isLoggedIn && (
-                              <span className="text-[9px] bg-emerald-950 text-emerald-300 px-1.5 py-0.2 rounded font-semibold border border-emerald-800">
-                                Поточний
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-neutral-400 truncate">{acc.email}</div>
-                        </div>
-                      </div>
-                      {isSelected && <Check className="w-4 h-4 text-amber-400 shrink-0" />}
-                    </button>
-                  );
-                })}
-
-                {/* Custom Google Account Option */}
-                <button
-                  type="button"
-                  id="google-custom-acc-btn"
-                  onClick={() => setShowCustomInput(true)}
-                  className={`w-full p-2 rounded-xl border text-left flex items-center justify-between transition text-xs ${
-                    showCustomInput
-                      ? 'bg-amber-500/15 border-amber-500 text-white'
-                      : 'bg-neutral-950/70 border-neutral-800 text-neutral-400 hover:text-neutral-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <User className="w-4 h-4 text-neutral-400" />
-                    <span className="font-semibold text-[11px]">Увійти з іншим Google акаунтом...</span>
-                  </div>
-                  {showCustomInput && <Check className="w-4 h-4 text-amber-400" />}
-                </button>
-              </div>
-
-              {/* Custom Google Email Input */}
-              {showCustomInput && (
-                <div className="mt-2 animate-fadeIn">
-                  <div className="relative">
-                    <input
-                      type="email"
-                      id="custom-google-email-input"
-                      value={customGoogleEmail}
-                      onChange={(e) => setCustomGoogleEmail(e.target.value)}
-                      placeholder="ваш.акаунт@gmail.com"
-                      className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-amber-400"
-                      autoFocus
-                    />
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Google Sign In Action Button */}
@@ -271,8 +181,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               type="button"
               id="google-submit-auth-btn"
               onClick={() => handleGoogleSignIn()}
-              disabled={isLoading || (showCustomInput && !customGoogleEmail)}
-              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-neutral-950 font-black text-xs shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+              disabled={isLoading}
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-neutral-950 font-black text-xs shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.3 9 5 12 5z"/>
