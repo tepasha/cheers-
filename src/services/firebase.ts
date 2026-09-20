@@ -28,8 +28,14 @@ const rawMeasurementId = (
 
 const isValidMeasurementId = /^G-[A-Z0-9]+$/i.test(rawMeasurementId);
 
+const rawApiKey = (
+  import.meta.env.VITE_FIREBASE_API_KEY || 
+  defaultFirebaseConfig.apiKey || 
+  'AIzaSyB0ZTp7YqZlOOgz5V3-NKYLVwo7ADFFcOo'
+).trim().replace(/^["']+|["']+$/g, '');
+
 export const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || defaultFirebaseConfig.apiKey || '',
+  apiKey: rawApiKey,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || defaultFirebaseConfig.authDomain,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || defaultFirebaseConfig.projectId,
   appId: import.meta.env.VITE_FIREBASE_APP_ID || defaultFirebaseConfig.appId,
@@ -63,9 +69,19 @@ try {
   firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 }
 
-// CRITICAL: Export the configured Firestore instance and Auth
+// CRITICAL: Export the configured Firestore instance and safely initialized Auth
 export const db = firestoreInstance;
-export const auth = getAuth(app);
+
+let authInstance: ReturnType<typeof getAuth>;
+try {
+  authInstance = getAuth(app);
+} catch (err) {
+  console.warn('[Firebase Auth] Gracefully bypassing Auth initialization:', err);
+  authInstance = {
+    currentUser: null,
+  } as unknown as ReturnType<typeof getAuth>;
+}
+export const auth = authInstance;
 
 // Cached flag to track if anonymous sign-in is disabled in Firebase Console
 let isAnonymousAuthRestricted = false;
@@ -73,44 +89,53 @@ let isAnonymousAuthRestricted = false;
 // Ensure Firebase Auth user session safely without triggering admin-restricted-operation error
 export function ensureFirebaseAuth(): Promise<string | null> {
   return new Promise((resolve) => {
+    if (!auth || !auth.currentUser && !rawApiKey) {
+      resolve(null);
+      return;
+    }
+
     // If a user is already authenticated (Google OAuth or email)
     if (auth.currentUser) {
       resolve(auth.currentUser.uid);
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      unsubscribe();
-      if (user) {
-        resolve(user.uid);
-        return;
-      }
+    try {
+      const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        unsubscribe();
+        if (user) {
+          resolve(user.uid);
+          return;
+        }
 
-      // If anonymous auth is already marked as restricted in project settings, skip
-      if (isAnonymousAuthRestricted) {
-        resolve(null);
-        return;
-      }
-
-      try {
-        const cred = await signInAnonymously(auth);
-        resolve(cred.user.uid);
-      } catch (err: unknown) {
-        const errObj = err as { code?: string; message?: string };
-        // If Anonymous Auth provider is not enabled in Firebase Console (auth/admin-restricted-operation),
-        // gracefully handle without warnings; Google OAuth and local guest mode are active.
-        if (
-          errObj?.code === 'auth/admin-restricted-operation' ||
-          errObj?.message?.includes('admin-restricted-operation')
-        ) {
-          isAnonymousAuthRestricted = true;
+        // If anonymous auth is already marked as restricted in project settings, skip
+        if (isAnonymousAuthRestricted) {
           resolve(null);
           return;
         }
-        // Silent fallback for guest mode
-        resolve(null);
-      }
-    });
+
+        try {
+          const cred = await signInAnonymously(auth);
+          resolve(cred.user.uid);
+        } catch (err: unknown) {
+          const errObj = err as { code?: string; message?: string };
+          // If Anonymous Auth provider is not enabled in Firebase Console (auth/admin-restricted-operation),
+          // gracefully handle without warnings; Google OAuth and local guest mode are active.
+          if (
+            errObj?.code === 'auth/admin-restricted-operation' ||
+            errObj?.message?.includes('admin-restricted-operation')
+          ) {
+            isAnonymousAuthRestricted = true;
+            resolve(null);
+            return;
+          }
+          // Silent fallback for guest mode
+          resolve(null);
+        }
+      });
+    } catch {
+      resolve(null);
+    }
   });
 }
 
