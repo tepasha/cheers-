@@ -20,8 +20,6 @@ import {
   Pencil,
   User,
   X,
-  Clock,
-  RefreshCw,
   Calendar,
 } from 'lucide-react';
 import { DrinkType, PaymentEtiquette, AuthUser, AppLanguage } from '../../types';
@@ -156,31 +154,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   // Battery Saver Mode State
   const [isBatterySaver, setIsBatterySaver] = useState(() => batterySaverService.isBatterySaverEnabled());
-
-  // 36-Hour Session State & Formatting
-  const [sessionRemaining, setSessionRemaining] = useState<string>(() =>
-    authService.formatRemainingSession(currentUser.sessionExpiresAt)
-  );
-
-  React.useEffect(() => {
-    const updateSessionDisplay = () => {
-      setSessionRemaining(authService.formatRemainingSession(currentUser.sessionExpiresAt));
-    };
-    updateSessionDisplay();
-    const interval = setInterval(updateSessionDisplay, 15000); // refresh display every 15s
-    return () => clearInterval(interval);
-  }, [currentUser.sessionExpiresAt]);
-
-  const handleManualExtendSession = () => {
-    sounds.playClink();
-    const updated = authService.touchSession();
-    if (onUpdateUser) {
-      onUpdateUser(updated);
-    }
-    setSessionRemaining(authService.formatRemainingSession(updated.sessionExpiresAt));
-    setGeoNotification('⏳ Сесію успішно подовжено ще на 36 годин!');
-    setTimeout(() => setGeoNotification(null), 3500);
-  };
 
   React.useEffect(() => {
     const unsubSafety = safetyModerationService.subscribe(() => {
@@ -1190,50 +1163,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </button>
           </div>
         </div>
-
-        {/* 36-Hour Active Session Info Card */}
-        {currentUser.isLoggedIn && (
-          <div className="bg-gradient-to-r from-amber-500/10 via-neutral-900 to-neutral-900 rounded-2xl border border-amber-500/30 p-3.5 shadow-md space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center">
-                  <Clock className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-neutral-100 flex items-center gap-1.5">
-                    <span>Сесія акаунта (36 годин)</span>
-                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded-full font-semibold border border-emerald-500/30">
-                      Активна
-                    </span>
-                  </h4>
-                  <p className="text-[10px] text-neutral-400">
-                    Автоматично продовжується при кожному вході в застосунок
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-neutral-950/70 border border-neutral-800/80 rounded-xl p-2.5 flex items-center justify-between">
-              <div className="space-y-0.5">
-                <span className="text-[10px] text-neutral-400 block">Залишок дії поточної сесії:</span>
-                <span className="text-xs font-bold text-amber-400 flex items-center gap-1">
-                  <span>⏳ {sessionRemaining}</span>
-                  <span className="text-[10px] text-neutral-500 font-normal">/ 36 год</span>
-                </span>
-              </div>
-              <button
-                type="button"
-                id="profile-extend-session-btn"
-                onClick={handleManualExtendSession}
-                className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 border border-amber-500/40 text-[11px] font-semibold flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
-                title="Оновити сесію ще на 36 годин"
-              >
-                <RefreshCw className="w-3 h-3 text-amber-400" />
-                <span>+36 год</span>
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Auth Action Buttons Card */}
         <div className="bg-neutral-900 rounded-2xl border border-neutral-800 p-3 shadow-md flex items-center gap-2">

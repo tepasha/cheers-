@@ -7,11 +7,13 @@ import {
   ShieldCheck, 
   Ban, 
   Eye, 
-  EyeOff 
+  EyeOff,
+  Calendar
 } from 'lucide-react';
 import { sounds } from '../../services/soundService';
 import { authService } from '../../services/authService';
 import { AuthUser } from '../../types';
+import { calculateAge, formatAgeWithUnit } from '../../utils/ageUtils';
 
 interface AuthScreenProps {
   currentUser: AuthUser;
@@ -30,6 +32,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [password, setPassword] = useState('budmo2026pass');
   const [showPassword, setShowPassword] = useState(false);
   const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [birthDate, setBirthDate] = useState('1998-05-15');
+
+  const registeredAge = calculateAge(birthDate);
 
   const [isLoading, setIsLoading] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
@@ -64,7 +69,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       setStatusNotice(null);
       sounds.playClink();
 
-      const user = authService.loginWithEmail(email);
+      const user = authService.loginWithEmail(email, undefined, birthDate);
       onAuthSuccess(user);
     }, 600);
   };
@@ -220,6 +225,31 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 </button>
               </div>
             </div>
+
+            {isRegisterMode && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-medium text-neutral-300">Дата народження</label>
+                  {registeredAge !== null && (
+                    <span className="text-[10px] text-amber-400 font-semibold">
+                      Вік: {formatAgeWithUnit(registeredAge)}
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <Calendar className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-3 pointer-events-none" />
+                  <input
+                    type="date"
+                    required
+                    value={birthDate}
+                    max={new Date().toISOString().split('T')[0]}
+                    min="1920-01-01"
+                    onChange={(e) => setBirthDate(e.target.value)}
+                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-8 pr-3 py-2 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-amber-500 [color-scheme:dark]"
+                  />
+                </div>
+              </div>
+            )}
 
             <button
               type="submit"

@@ -237,7 +237,7 @@ export const authService = {
       name: '',
       email: '',
       avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-      provider: 'google',
+      provider: 'guest',
       isLoggedIn: false,
       emailVerified: false,
       sessionExpiresAt: 0,

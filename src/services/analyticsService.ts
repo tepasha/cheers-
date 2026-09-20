@@ -40,10 +40,11 @@ class AnalyticsService {
     const rawId = 
       import.meta.env.VITE_GA_MEASUREMENT_ID ||
       import.meta.env.VITE_FIREBASE_MEASUREMENT_ID ||
-      (firebaseConfig as { measurementId?: string }).measurementId;
+      (firebaseConfig as { measurementId?: string }).measurementId ||
+      'G-WG0NLYM38P';
     
-    const sanitized = (rawId || '').trim().replace(/^["']|["']$/g, '');
-    this.measurementId = (sanitized && sanitized.length > 2) ? sanitized : '';
+    const sanitized = (rawId || '').trim().replace(/^["']+|["']+$/g, '');
+    this.measurementId = (sanitized && /^G-[A-Z0-9]+$/i.test(sanitized)) ? sanitized : 'G-WG0NLYM38P';
   }
 
   /**
@@ -96,7 +97,7 @@ class AnalyticsService {
 
       // 3. Attempt Firebase Analytics initialization only when configured with a valid measurementId
       const fbMeasurementId = (firebaseConfig as { measurementId?: string }).measurementId;
-      if (fbMeasurementId) {
+      if (fbMeasurementId && /^G-[A-Z0-9]+$/i.test(fbMeasurementId)) {
         try {
           const { isSupported, getAnalytics } = await import('firebase/analytics');
           const supported = await isSupported();
@@ -105,7 +106,7 @@ class AnalyticsService {
             console.log('[Analytics] Firebase Analytics successfully initialized');
           }
         } catch (fbErr) {
-          // Non-blocking fallback if IndexedDB/cookies restricted
+          // Non-blocking fallback if IndexedDB/cookies restricted or remote config not linked
           console.info('[Analytics] Firebase Analytics optional module bypassed:', fbErr);
         }
       }

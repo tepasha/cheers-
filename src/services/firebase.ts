@@ -17,12 +17,16 @@ import defaultFirebaseConfig from '../../firebase-applet-config.json';
 
 // Retrieve Firebase credentials from environment variables / secrets (VITE_FIREBASE_*)
 // with fallback to default project config if secrets are not yet configured.
+// NOTE: Firebase Analytics requires a matching measurementId registered on the Firebase server.
+// If not configured on the Firebase project or set to empty quotes (""), omit measurementId from
+// the local Firebase config to prevent @firebase/analytics config-mismatch warnings.
 const rawMeasurementId = (
   import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 
-  import.meta.env.VITE_GA_MEASUREMENT_ID || 
   ((defaultFirebaseConfig as Record<string, unknown>).measurementId as string | undefined) || 
   ''
-).trim();
+).trim().replace(/^["']+|["']+$/g, '');
+
+const isValidMeasurementId = /^G-[A-Z0-9]+$/i.test(rawMeasurementId);
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || defaultFirebaseConfig.apiKey || '',
@@ -32,7 +36,7 @@ export const firebaseConfig = {
   firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || defaultFirebaseConfig.firestoreDatabaseId,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || defaultFirebaseConfig.storageBucket,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || defaultFirebaseConfig.messagingSenderId,
-  ...(rawMeasurementId ? { measurementId: rawMeasurementId } : {}),
+  ...(isValidMeasurementId ? { measurementId: rawMeasurementId } : {}),
   oAuthClientId: import.meta.env.VITE_FIREBASE_OAUTH_CLIENT_ID || defaultFirebaseConfig.oAuthClientId || '',
 };
 
