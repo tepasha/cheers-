@@ -21,6 +21,7 @@ import {
   User,
   X,
   Calendar,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { DrinkType, PaymentEtiquette, AuthUser, AppLanguage } from '../../types';
 import { DRINK_METADATA, PAYMENT_METADATA } from '../../data/mockData';
@@ -42,6 +43,7 @@ import { analyticsService } from '../../services/analyticsService';
 import { HangoutActivityChart } from './HangoutActivityChart';
 import { BlockedUsersModal } from './BlockedUsersModal';
 import { SosEmergencyModal } from './SosEmergencyModal';
+import { AppIconModal } from './AppIconModal';
 import { authService } from '../../services/authService';
 
 interface ProfileViewProps {
@@ -149,6 +151,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   // Safety & Moderation States
   const [showBlockedModal, setShowBlockedModal] = useState(false);
   const [showSosModal, setShowSosModal] = useState(false);
+  const [showIconModal, setShowIconModal] = useState(false);
   const [blockedUsersCount, setBlockedUsersCount] = useState(() => safetyModerationService.getBlockedUsers().length);
   const [reportsCount, setReportsCount] = useState(() => safetyModerationService.getReports().length);
 
@@ -1138,6 +1141,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               type="button"
+              id="profile-open-icon-modal-btn"
+              onClick={() => {
+                sounds.playTap();
+                setShowIconModal(true);
+              }}
+              className="py-2 px-3 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition col-span-1 sm:col-span-2"
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+              <span>Іконка та ассети додатка («Будьмо!»)</span>
+            </button>
+
+            <button
+              type="button"
               id="profile-open-blocked-modal-btn"
               onClick={() => {
                 sounds.playTap();
@@ -1227,6 +1243,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         isOpen={showSosModal}
         onClose={() => setShowSosModal(false)}
         venueName={userLocation?.locationName}
+      />
+
+      {/* App Icon & Brand Assets Modal */}
+      <AppIconModal
+        isOpen={showIconModal}
+        onClose={() => setShowIconModal(false)}
       />
     </div>
   );
