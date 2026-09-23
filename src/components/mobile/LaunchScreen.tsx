@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Wine, Sparkles, ShieldCheck, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { sounds } from '../../services/soundService';
 
 interface LaunchScreenProps {
@@ -103,11 +103,16 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
           className="relative"
         >
           {/* Logo badge with pulse */}
-          <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 p-0.5 shadow-2xl shadow-amber-500/30 flex items-center justify-center">
-            <div className="w-full h-full bg-neutral-950 rounded-[22px] flex items-center justify-center relative overflow-hidden group">
-              <div className="absolute inset-0 bg-gradient-to-tr from-amber-500/20 to-transparent" />
-              <Wine className="w-11 h-11 text-amber-400 transform -rotate-12 transition-transform group-hover:scale-110" />
-              <Sparkles className="w-5 h-5 text-yellow-300 absolute top-3 right-3 animate-pulse" />
+          <div className="w-24 h-24 rounded-3xl bg-neutral-900/90 p-1 shadow-2xl shadow-amber-500/20 flex items-center justify-center border border-neutral-800">
+            <div className="w-full h-full bg-black rounded-[20px] flex items-center justify-center relative overflow-hidden group">
+              <img 
+                src="/icon.png" 
+                alt="Будьмо!" 
+                className="w-full h-full object-contain p-1" 
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/icon.svg';
+                }}
+              />
             </div>
           </div>
         </motion.div>

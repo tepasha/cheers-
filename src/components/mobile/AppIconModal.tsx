@@ -69,7 +69,7 @@ export const AppIconModal: React.FC<AppIconModalProps> = ({ isOpen, onClose }) =
                 <img
                   src="/icon.png"
                   alt="Будьмо! App Icon"
-                  className="relative w-28 h-28 rounded-2xl shadow-xl border border-amber-500/40 object-cover"
+                  className="relative w-28 h-28 rounded-2xl shadow-xl border border-neutral-800 object-contain bg-black p-1"
                   onError={(e) => {
                     // Fallback to SVG if PNG fails to load in preview
                     (e.target as HTMLImageElement).src = '/icon.svg';
@@ -80,10 +80,10 @@ export const AppIconModal: React.FC<AppIconModalProps> = ({ isOpen, onClose }) =
                 </div>
               </div>
               <span className="mt-3 text-[11px] font-bold text-neutral-200">
-                Офіційний фірмовий знак «Будьмо!»
+                Офіційний фірмовий знак «Будьмо!» (Келихи пива 🍻)
               </span>
               <span className="text-[10px] text-neutral-500">
-                512 × 512 px • RGB • Прозорий або Squircle
+                512 × 512 px • Чорний фон (#000000) • Растр та Вектор
               </span>
             </div>
 
