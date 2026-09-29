@@ -243,7 +243,7 @@ export const AudioMessageBubble: React.FC<AudioMessageBubbleProps> = ({
         >
           <div className="flex items-center gap-1 font-bold mb-0.5">
             <Lock className="w-2.5 h-2.5 text-emerald-500" />
-            Захист аудіоповідомлення у Firestore:
+            Захист аудіоповідомлення:
           </div>
           <div>Аудіопотік: base64/audio-container ({message.audioDuration || 0} сек)</div>
           <div>Шифротекст метаданих: {message.cipherPayload || 'aes-256-gcm-encrypted'}</div>

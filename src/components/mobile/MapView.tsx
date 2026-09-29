@@ -6,7 +6,6 @@ import {
   Compass,
   Navigation,
   CheckCircle2,
-  TrendingUp,
   ZoomIn,
   ZoomOut,
   Crosshair,
@@ -27,7 +26,6 @@ import {
 import { BuddyProfile, HangoutAlert } from '../../types';
 import { sounds } from '../../services/soundService';
 import { friendsService } from '../../services/friendsService';
-import { ActivityAnalyticsModal } from './ActivityAnalyticsModal';
 import { LeafletMapView } from './LeafletMapView';
 import {
   UserGeoLocation,
@@ -145,7 +143,6 @@ export const MapView: React.FC<MapViewProps> = ({
   // Modals & drawers
   const [showCheckInModal, setShowCheckInModal] = useState(false);
   const [showLocationDrawer, setShowLocationDrawer] = useState(false);
-  const [showActivityModal, setShowActivityModal] = useState(false);
   const [isRefreshingGps, setIsRefreshingGps] = useState(false);
   const [gpsNotification, setGpsNotification] = useState<string | null>(null);
 
@@ -451,21 +448,6 @@ export const MapView: React.FC<MapViewProps> = ({
 
           {/* Quick Actions */}
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* Peak Hours Activity Graph */}
-            <button
-              id="map-activity-modal-btn"
-              type="button"
-              onClick={() => {
-                sounds.playClink();
-                setShowActivityModal(true);
-              }}
-              title="Графік активності закладів та людей (Recharts)"
-              className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-850 text-amber-400 border border-neutral-800 transition active:scale-95 flex items-center gap-1 text-xs"
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-bold hidden xs:inline">Пік</span>
-            </button>
-
             {/* View toggle (Map vs List) */}
             <button
               id="map-view-toggle-btn"
@@ -1193,12 +1175,6 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         </div>
       )}
-
-      {/* Activity Analytics Modal (Peak hours charts) */}
-      <ActivityAnalyticsModal
-        isOpen={showActivityModal}
-        onClose={() => setShowActivityModal(false)}
-      />
     </div>
   );
 };

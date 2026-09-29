@@ -285,7 +285,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <span>РФ заблоковано</span>
           </span>
           <span>•</span>
-          <span className="text-neutral-400">Cloud Firestore</span>
+          <span className="text-neutral-400">Хмарний захист</span>
         </div>
         <p className="text-[9px] text-neutral-500">
           Будьмо! v2.4.0 • Безпечний пошук компанії у закладах України 🇺🇦

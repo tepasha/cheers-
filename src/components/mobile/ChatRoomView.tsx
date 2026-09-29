@@ -637,7 +637,7 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
             className="inline-flex items-center gap-1.5 text-[10px] bg-neutral-900/90 text-neutral-400 px-3 py-1 rounded-full border border-neutral-800 select-none"
           >
             <Lock className="w-2.5 h-2.5 text-emerald-400" />
-            <span>Наскрізне шифрування • Cloud Firestore</span>
+            <span>Наскрізне шифрування • Захищений чат</span>
           </div>
         </div>
 
@@ -668,7 +668,7 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
                   {isInspected && (
                     <div className="mt-2 pt-1.5 border-t border-amber-500/30 text-[9px] font-mono text-amber-200/80 break-all leading-tight">
                       <div className="flex items-center gap-1 text-emerald-300 font-bold mb-0.5">
-                        <Eye className="w-2.5 h-2.5" /> Шифротекст у Firestore:
+                        <Eye className="w-2.5 h-2.5" /> Зашифрований шифротекст:
                       </div>
                       {msg.cipherPayload || `enc:v1:aes256:${btoa(encodeURIComponent(msg.text)).slice(0, 24)}...`}
                     </div>
@@ -798,7 +798,7 @@ export const ChatRoomView: React.FC<ChatRoomViewProps> = ({
                   }`}>
                     <div className="flex items-center gap-1 font-bold mb-0.5">
                       <Lock className="w-2.5 h-2.5 text-emerald-500" />
-                      Шифротекст у Firestore (E2EE):
+                      Шифротекст (E2EE):
                     </div>
                     <span>{msg.cipherPayload || `enc:v1:aes256:${btoa(encodeURIComponent(msg.text)).slice(0, 32)}...`}</span>
                   </div>

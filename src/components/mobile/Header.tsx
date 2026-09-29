@@ -185,7 +185,7 @@ export const Header: React.FC<HeaderProps> = ({
                 onClick={() => void retryConnection()}
                 disabled={isRetrying}
                 className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 active:bg-amber-500/30 border border-amber-500/30 text-[10px] font-semibold text-amber-300 transition-colors disabled:opacity-50 cursor-pointer"
-                title="Перевірити підключення до Cloud Firestore"
+                title="Перевірити підключення до сервера"
               >
                 <RefreshCw className={`w-2.5 h-2.5 text-amber-400 ${isRetrying ? 'animate-spin' : ''}`} />
                 <span>{isRetrying ? t('firestore_offline_retrying', lang) : t('firestore_offline_retry', lang)}</span>

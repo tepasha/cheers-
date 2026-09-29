@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Lock, Key, Database, X, Check, Copy, Sparkles } from 'lucide-react';
+import { ShieldCheck, Lock, Key, Cloud, X, Check, Copy, Sparkles } from 'lucide-react';
 import { cryptoService } from '../../services/cryptoService';
 import { sounds } from '../../services/soundService';
 
@@ -103,8 +103,8 @@ export const SecurityInspectionModal: React.FC<SecurityInspectionModalProps> = (
 
           <div className="flex items-center justify-between text-[11px]">
             <span className="text-neutral-400 flex items-center gap-1.5">
-              <Database className="w-3.5 h-3.5 text-sky-400" />
-              Cloud Firestore DB:
+              <Cloud className="w-3.5 h-3.5 text-sky-400" />
+              Хмарна синхронізація:
             </span>
             <span className="text-sky-300 font-mono text-[10px]">
               ai-studio-df109a92...
@@ -138,7 +138,7 @@ export const SecurityInspectionModal: React.FC<SecurityInspectionModalProps> = (
 
           <div>
             <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
-              <span>Вигляд у Cloud Firestore (Шифротекст):</span>
+              <span>Вигляд під час передачі (Шифротекст):</span>
               <span className="text-amber-400/90 font-mono text-[9px]">Нерозбірливі байти</span>
             </div>
             <div className="bg-black/60 border border-neutral-800 rounded-xl p-2 font-mono text-[9px] text-neutral-400 break-all leading-tight max-h-16 overflow-y-auto no-scrollbar">
@@ -159,7 +159,7 @@ export const SecurityInspectionModal: React.FC<SecurityInspectionModalProps> = (
           </p>
           <p className="flex items-start gap-1.5">
             <span className="text-emerald-400 font-bold">•</span>
-            <span>Хмарна база бачить лише зашифрований шифротекст, гарантуючи конфіденційність переписки.</span>
+            <span>Під час передачі доступний лише зашифрований шифротекст, гарантуючи повну конфіденційність переписки.</span>
           </p>
         </div>
 

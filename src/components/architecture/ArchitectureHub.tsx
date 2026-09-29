@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { 
   Code2, 
-  Database, 
   Layers, 
+  Cloud,
   Flame, 
   Server, 
   Copy, 
@@ -89,12 +89,12 @@ export const ArchitectureHub: React.FC<ArchitectureHubProps> = ({ isOpen, onClos
 
     const testSteps = [
       '⚡ [Vitest v5.0.0] Ініціалізація тестового середовища та завантаження конфігурації vitest.config.ts...',
-      '🔍 [ESLint Flat Config v10] Перевірка кодової бази `src/` (typescript-eslint): 0 помилок, 0 попереджень ✨',
+      '🔍 [ESLint Flat Config v10] Перевірка вихідного коду `src/` (typescript-eslint): 0 помилок, 0 попереджень ✨',
       '🏷️ [TypeScript Compiler] `tsc --noEmit`: сувора типізація пройдена успішно (Strict mode OK)',
       '🧭 [Test Suite 1/4] `src/services/geoService.test.ts` (8 тестів): формули Haversine, азимут, кроки пішки, пресети Подолу... PASSED (12ms)',
       '🌐 [Test Suite 2/4] `src/services/i18nService.test.ts` (12 тестів): переклади UK/EN/PL/DE, геоблокування РФ за координатами та таймзонами... PASSED (32ms)',
       '🔐 [Test Suite 3/4] `src/services/authService.test.ts` (5 тестів): Google OAuth провайдер, сесії, вихід у гостьовий режим... PASSED (602ms)',
-      '🍺 [Test Suite 4/4] `src/data/mockData.test.ts` (7 тестів): валідація бази користувачів, кличів та колекції українських тостів... PASSED (14ms)',
+      '🍺 [Test Suite 4/4] `src/data/mockData.test.ts` (7 тестів): валідація профілів користувачів, кличів та колекції українських тостів... PASSED (14ms)',
       '🎉 [Vitest Summary] 4 Test Files passed (4/4) | 32 Tests passed (32/32) | 100% Green in 1.7s 🍻'
     ];
 
@@ -732,7 +732,7 @@ end`,
                 : 'text-neutral-400 hover:text-neutral-200'
             }`}
           >
-            <Database className="w-3.5 h-3.5" />
+            <Layers className="w-3.5 h-3.5" />
             <span>Firestore Схеми & Правила</span>
           </button>
 
@@ -825,11 +825,11 @@ end`,
                   </ul>
                 </div>
 
-                {/* Layer 3: Database & Real-Time */}
+                {/* Layer 3: Cloud & Real-Time */}
                 <div className="bg-neutral-900 rounded-2xl border border-neutral-800 p-4 space-y-2">
                   <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
-                    <Database className="w-4 h-4" />
-                    <span>База даних & Realtime</span>
+                    <Cloud className="w-4 h-4" />
+                    <span>Хмарна синхронізація & Realtime</span>
                   </div>
                   <h4 className="text-sm font-bold text-white">Google Cloud Firestore</h4>
                   <ul className="text-xs text-neutral-400 space-y-1.5 list-disc list-inside">
@@ -1537,7 +1537,7 @@ end`,
                       <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px] font-mono">7 тестів</span>
                     </div>
                     <p className="text-neutral-400 text-[11px]">
-                      Цілісність структури профілів, валідність координат [lat, lng], формати повідомлень та база українських тостів.
+                      Цілісність структури профілів, валідність координат [lat, lng], формати повідомлень та колекція українських тостів.
                     </p>
                   </div>
                 </div>

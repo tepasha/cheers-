@@ -17,7 +17,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
   autoAdvance = true,
 }) => {
   const [progress, setProgress] = useState(15);
-  const [statusMessage, setStatusMessage] = useState('Ініціалізація Cloud Firestore...');
+  const [statusMessage, setStatusMessage] = useState('Ініціалізація застосунку...');
   const [isReady, setIsReady] = useState(false);
 
   const handleProceed = () => {
@@ -177,7 +177,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({
 
         <div className="flex items-center justify-center gap-2 text-[10px] text-neutral-500 font-medium">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-500/80" />
-          <span>E2EE шифрування • Cloud Firestore • Безпечний чат</span>
+          <span>E2EE шифрування • Хмарний захист • Безпечний чат</span>
         </div>
       </motion.div>
     </div>

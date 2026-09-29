@@ -5,7 +5,6 @@ import {
   Lock, 
   ShieldCheck, 
   WifiOff, 
-  Database, 
   Users, 
   Trash2, 
   Search, 
@@ -156,7 +155,7 @@ export const ChatListView: React.FC<ChatListViewProps> = ({
       {/* Offline basement bar notice if disconnected */}
       {isOffline && (
         <div className="mx-3 mt-2 px-2.5 py-1.5 rounded-lg bg-neutral-900/90 border border-amber-500/30 flex items-center gap-2 text-[10px] text-neutral-300">
-          <Database className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <WifiOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
           <span>Усі діалоги завантажені з локального кешу. Ви можете писати тости — вони відправляться при виході з підвалу.</span>
         </div>
       )}

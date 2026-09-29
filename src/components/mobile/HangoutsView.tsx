@@ -13,8 +13,6 @@ import {
   Copy,
   Dices,
   ScrollText,
-  TrendingUp,
-  ChevronRight,
   Radio,
   Navigation,
   Trash2,
@@ -26,7 +24,6 @@ import { BuddyProfile, HangoutAlert, ReportTargetType } from '../../types';
 import { sounds } from '../../services/soundService';
 import { ALL_TOASTS, getRandomToast, ToastItem } from '../../data/toastsData';
 import { ToastModal } from './ToastModal';
-import { ActivityAnalyticsModal } from './ActivityAnalyticsModal';
 import { UserGeoLocation } from '../../services/geoService';
 import { gamificationService } from '../../services/gamificationService';
 import { ScheduledMeetupsSection } from './ScheduledMeetupsSection';
@@ -83,7 +80,6 @@ export const HangoutsView: React.FC<HangoutsViewProps> = ({
   const [joinedHangouts, setJoinedHangouts] = useState<string[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showToastsModal, setShowToastsModal] = useState(false);
-  const [showActivityModal, setShowActivityModal] = useState(false);
   const [currentToast, setCurrentToast] = useState<ToastItem>(() => getRandomToast());
   const [copiedToast, setCopiedToast] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -314,36 +310,6 @@ export const HangoutsView: React.FC<HangoutsViewProps> = ({
         </div>
       ) : (
         <div className="p-4 space-y-3 pb-8">
-        {/* User Activity Peak Chart Teaser */}
-        <button
-          type="button"
-          id="open-activity-analytics-hangouts-btn"
-          onClick={() => setShowActivityModal(true)}
-          className="w-full p-2.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-neutral-900 to-amber-950/20 border border-amber-500/30 hover:border-amber-500/60 transition flex items-center justify-between group text-left shadow-md"
-        >
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
-              <TrendingUp className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                <span>Графік активності (Recharts)</span>
-                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold flex items-center gap-1 border border-emerald-500/30">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Пік 19:00–22:30
-                </span>
-              </div>
-              <p className="text-[10px] text-neutral-400">
-                Дізнайтеся, коли найбільше людей шукають компанію в барах
-              </p>
-            </div>
-          </div>
-          <span className="text-[11px] font-bold text-amber-400 flex items-center gap-0.5 group-hover:translate-x-0.5 transition shrink-0">
-            <span>Графік</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </span>
-        </button>
-
         {/* Featured Toast of the Evening Widget */}
         <div className="bg-gradient-to-br from-neutral-900 via-neutral-900 to-amber-950/40 rounded-2xl border border-amber-500/30 p-3.5 shadow-lg space-y-2.5">
           <div className="flex items-center justify-between">
@@ -412,7 +378,7 @@ export const HangoutsView: React.FC<HangoutsViewProps> = ({
           <div className="flex items-center justify-between text-[11px] px-1">
             <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Наживо в Cloud Firestore ({liveCount} активних)</span>
+              <span>Наживо ({liveCount} активних)</span>
             </div>
             {userLocation && (
               <span className="text-[10px] text-neutral-400 flex items-center gap-1 truncate max-w-[140px]">
@@ -947,12 +913,6 @@ export const HangoutsView: React.FC<HangoutsViewProps> = ({
         }}
         title="Скринька тостів для компанії 🍻"
         allowCustom={true}
-      />
-
-      {/* User Activity & Peak Hours Analytics Modal (Recharts) */}
-      <ActivityAnalyticsModal
-        isOpen={showActivityModal}
-        onClose={() => setShowActivityModal(false)}
       />
 
       {/* Quick Report Modal */}

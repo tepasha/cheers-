@@ -12,7 +12,6 @@ import {
   Rows3,
   LayoutGrid,
   Layers,
-  TrendingUp,
   UserPlus,
   UserCheck,
   ShieldAlert,
@@ -22,7 +21,6 @@ import { BuddyProfile, DrinkType, FilterSettings, MoodType, ReportTargetType } f
 import { DRINK_METADATA, MOOD_METADATA, PAYMENT_METADATA, POPULAR_INTERESTS } from '../../data/mockData';
 import { sounds } from '../../services/soundService';
 import { formatDistance } from '../../services/geoService';
-import { ActivityAnalyticsModal } from './ActivityAnalyticsModal';
 import { gamificationService } from '../../services/gamificationService';
 import { friendsService } from '../../services/friendsService';
 import { safetyModerationService } from '../../services/safetyModerationService';
@@ -44,7 +42,6 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
   const [viewMode, setViewMode] = useState<ViewMode>('feed');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
-  const [showActivityModal, setShowActivityModal] = useState(false);
   const [showBioModal, setShowBioModal] = useState<BuddyProfile | null>(null);
   const [matchedBuddy, setMatchedBuddy] = useState<BuddyProfile | null>(null);
   const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | 'up' | null>(null);
@@ -264,24 +261,6 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Activity Chart Button */}
-            <button
-              id="activity-analytics-discover-btn"
-              type="button"
-              onClick={() => {
-                sounds.playClink();
-                setShowActivityModal(true);
-              }}
-              className="px-2 py-1 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-amber-500/40 text-neutral-300 hover:text-amber-300 transition flex items-center gap-1 text-[11px] font-semibold"
-              title="Графік активності (пікові години)"
-            >
-              <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Пік</span>
-              </span>
-            </button>
-
             {/* Filters Toggle Button */}
             <button
               id="filter-toggle-btn"
@@ -1375,12 +1354,6 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
           </div>
         </div>
       )}
-
-      {/* User Activity & Peak Hours Modal (Recharts) */}
-      <ActivityAnalyticsModal
-        isOpen={showActivityModal}
-        onClose={() => setShowActivityModal(false)}
-      />
 
       {/* Quick Report Modal */}
       {reportingTarget && (

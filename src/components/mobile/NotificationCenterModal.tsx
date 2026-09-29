@@ -325,7 +325,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
         <div className="p-3 bg-neutral-950 border-t border-neutral-850 flex items-center justify-between text-[11px] text-neutral-400">
           <span className="flex items-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Підтримка Firebase Cloud Messaging (FCM) & Expo Notifications</span>
+            <span>Підтримка миттєвих Push & Expo Notifications</span>
           </span>
           <button
             type="button"

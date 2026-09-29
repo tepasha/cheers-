@@ -11,11 +11,9 @@ import {
   Compass,
   Navigation,
   CheckCircle2,
-  TrendingUp,
 } from 'lucide-react';
 import { BuddyProfile, HangoutAlert } from '../../types';
 import { sounds } from '../../services/soundService';
-import { ActivityAnalyticsModal } from './ActivityAnalyticsModal';
 import {
   UserGeoLocation,
   PRESET_LOCATIONS,
@@ -45,7 +43,6 @@ export const RadarView: React.FC<RadarViewProps> = ({
   const [selectedBuddy, setSelectedBuddy] = useState<BuddyProfile | null>(null);
   const [showCheckInModal, setShowCheckInModal] = useState(false);
   const [showLocationDrawer, setShowLocationDrawer] = useState(false);
-  const [showActivityModal, setShowActivityModal] = useState(false);
   const [radarRadiusKm, setRadarRadiusKm] = useState<number>(3); // 1, 3, 5 km
   const [isRefreshingGps, setIsRefreshingGps] = useState(false);
   const [gpsNotification, setGpsNotification] = useState<string | null>(null);
@@ -245,20 +242,6 @@ export const RadarView: React.FC<RadarViewProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              id="open-activity-modal-radar-btn"
-              type="button"
-              onClick={() => {
-                sounds.playClink();
-                setShowActivityModal(true);
-              }}
-              title="Графік пікових годин активності (Recharts)"
-              className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-amber-400 border border-neutral-800 transition active:scale-95 flex items-center gap-1 text-xs"
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-bold hidden xs:inline">Графік</span>
-            </button>
-
             <button
               id="refresh-gps-btn"
               type="button"
@@ -716,12 +699,6 @@ export const RadarView: React.FC<RadarViewProps> = ({
           </div>
         </div>
       )}
-
-      {/* User Activity & Peak Hours Analytics Modal (Recharts) */}
-      <ActivityAnalyticsModal
-        isOpen={showActivityModal}
-        onClose={() => setShowActivityModal(false)}
-      />
     </div>
   );
 };
