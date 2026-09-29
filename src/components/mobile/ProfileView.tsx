@@ -1415,6 +1415,30 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <span className="truncate">Технічна підтримка</span>
             </button>
           </div>
+
+          {/* Telegram Технічна підтримка */}
+          <a
+            href="https://t.me/cheers_support_bot"
+            target="_blank"
+            rel="noopener noreferrer"
+            id="profile-support-telegram-bot-link"
+            onClick={() => sounds.playTap()}
+            className="flex items-center justify-between p-3 rounded-2xl bg-neutral-900 border border-neutral-800 hover:border-sky-500/50 transition group cursor-pointer shadow-md"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-sky-500/15 text-sky-400 border border-sky-500/30 flex items-center justify-center shrink-0">
+                <MessageSquare className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 text-left">
+                <div className="text-xs font-bold text-neutral-100 group-hover:text-sky-300 transition-colors flex items-center gap-1.5">
+                  <span>Техпідтримка в Telegram</span>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30 font-semibold">Бот 24/7</span>
+                </div>
+                <div className="text-[10px] text-sky-400 font-mono truncate">https://t.me/cheers_support_bot</div>
+              </div>
+            </div>
+            <ExternalLink className="w-4 h-4 text-neutral-400 group-hover:text-sky-300 shrink-0 transition-colors" />
+          </a>
         </div>
       </div>
 
@@ -1581,10 +1605,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
             </div>
 
+            {/* Direct Telegram Support Banner */}
+            <a
+              href="https://t.me/cheers_support_bot"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => sounds.playTap()}
+              className="w-full py-2.5 px-3.5 rounded-2xl bg-gradient-to-r from-sky-600 to-sky-500 hover:from-sky-500 hover:to-sky-400 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-sky-500/20 transition active:scale-[0.98] cursor-pointer"
+            >
+              <MessageSquare className="w-4 h-4 shrink-0" />
+              <span>Написати у Telegram: @cheers_support_bot</span>
+              <ExternalLink className="w-3.5 h-3.5 opacity-80 shrink-0" />
+            </a>
+
             {/* Quick Contact Options */}
             <div className="grid grid-cols-2 gap-2">
               <a
-                href="https://t.me/budmo_support"
+                href="https://t.me/cheers_support_bot"
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => sounds.playTap()}
@@ -1594,8 +1631,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   <MessageSquare className="w-3.5 h-3.5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-bold text-white group-hover:text-sky-300 transition-colors">Telegram</div>
-                  <div className="text-[10px] text-neutral-400 truncate">@budmo_support</div>
+                  <div className="text-xs font-bold text-white group-hover:text-sky-300 transition-colors">Telegram Бот</div>
+                  <div className="text-[10px] text-sky-400 font-mono truncate">@cheers_support_bot</div>
                 </div>
               </a>
 

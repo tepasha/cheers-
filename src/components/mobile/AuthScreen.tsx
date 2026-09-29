@@ -287,6 +287,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           <span>•</span>
           <span className="text-neutral-400">Хмарний захист</span>
         </div>
+        <div className="pt-0.5">
+          <a
+            href="https://t.me/cheers_support_bot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] text-sky-400 hover:text-sky-300 transition font-medium"
+          >
+            Техпідтримка: @cheers_support_bot
+          </a>
+        </div>
         <p className="text-[9px] text-neutral-500">
           Будьмо! v2.4.0 • Безпечний пошук компанії у закладах України 🇺🇦
         </p>
