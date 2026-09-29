@@ -17,10 +17,9 @@ import {
   enableOfflineNetwork, 
   syncPendingWrites 
 } from './firebase';
-import { FavoriteVenueItem, PaymentEtiquette, DrinkType, Message, HangoutAlert, UserGamificationState } from '../types';
+import { FavoriteVenueItem, PaymentEtiquette, DrinkType, Message, HangoutAlert, UserGamificationState, BuddyProfile } from '../types';
 import { cryptoService } from './cryptoService';
 import { UserGeoLocation, calculateDistanceKm, formatDistance } from './geoService';
-import { INITIAL_HANGOUTS } from '../data/mockData';
 import { batterySaverService } from './batterySaverService';
 
 let isBasementOfflineSimulated = false;
@@ -342,41 +341,11 @@ export const firestoreSyncService = {
             });
           });
 
-          // Merge live items with initial curated hangouts (avoiding duplicates)
+          // Real live hangouts from Firestore only
           const merged: HangoutAlert[] = [...liveFirestoreItems];
-
-          INITIAL_HANGOUTS.forEach((initialHangout) => {
-            if (!merged.some((h) => h.id === initialHangout.id)) {
-              let distKm = initialHangout.distanceKm;
-              let distFormatted = initialHangout.distanceFormatted;
-              if (
-                typeof initialHangout.lat === 'number' &&
-                typeof initialHangout.lng === 'number' &&
-                userLocation &&
-                typeof userLocation.lat === 'number'
-              ) {
-                distKm = calculateDistanceKm(
-                  userLocation.lat,
-                  userLocation.lng,
-                  initialHangout.lat,
-                  initialHangout.lng
-                );
-                distFormatted = formatDistance(distKm);
-              }
-
-              merged.push({
-                ...initialHangout,
-                distanceKm: distKm,
-                distanceFormatted: distFormatted,
-              });
-            }
-          });
 
           // Sort by proximity: closest check-ins first, keeping newest live check-ins prominent
           merged.sort((a, b) => {
-            // Live Firestore check-ins first
-            if (a.isLive && !b.isLive) return -1;
-            if (!a.isLive && b.isLive) return 1;
             const distA = typeof a.distanceKm === 'number' ? a.distanceKm : 999;
             const distB = typeof b.distanceKm === 'number' ? b.distanceKm : 999;
             return distA - distB;
@@ -386,15 +355,7 @@ export const firestoreSyncService = {
         },
         (error) => {
           console.warn('[Firestore] Live Hangouts subscription warning:', error);
-          // Fallback with calculated distances
-          const fallback = INITIAL_HANGOUTS.map((h) => {
-            if (typeof h.lat === 'number' && typeof h.lng === 'number' && userLocation) {
-              const d = calculateDistanceKm(userLocation.lat, userLocation.lng, h.lat, h.lng);
-              return { ...h, distanceKm: d, distanceFormatted: formatDistance(d) };
-            }
-            return h;
-          });
-          callback(fallback);
+          callback([]);
         }
       );
 
@@ -683,6 +644,82 @@ export const firestoreSyncService = {
       console.warn('Could not fetch friends from Firestore:', e);
       return [];
     }
-  }
+  },
+
+  /**
+   * Subscribes to real registered users in Cloud Firestore (excluding current user)
+   */
+  subscribeToPublicBuddies(
+    currentUserId: string,
+    userLocation: UserGeoLocation,
+    callback: (buddies: BuddyProfile[]) => void
+  ): () => void {
+    try {
+      const usersCol = collection(db, 'users');
+      const unsubscribe = onSnapshot(
+        usersCol,
+        (snapshot) => {
+          if (snapshot.empty) {
+            callback([]);
+            return;
+          }
+
+          const liveBuddies: BuddyProfile[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            const uid = docSnap.id;
+            // Skip current user or empty records
+            if (uid === currentUserId || !data.name) return;
+
+            const lat = typeof data.lat === 'number' ? data.lat : 50.45;
+            const lng = typeof data.lng === 'number' ? data.lng : 30.52;
+            const distKm =
+              userLocation && typeof userLocation.lat === 'number'
+                ? calculateDistanceKm(userLocation.lat, userLocation.lng, lat, lng)
+                : 1.0;
+
+            liveBuddies.push({
+              id: uid,
+              name: data.name,
+              age: typeof data.age === 'number' ? data.age : 26,
+              avatar:
+                data.avatar ||
+                'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
+              tagline: data.tagline || 'Радий знайомству за келихом 🍻',
+              bio: data.bio || '',
+              locationName: data.locationName || 'Київ',
+              distanceKm: distKm,
+              coordinates: { lat, lng },
+              preferredDrinks: Array.isArray(data.preferredDrinks) && data.preferredDrinks.length > 0
+                ? data.preferredDrinks
+                : ['craft'],
+              paymentRule: data.paymentRule || 'split_50_50',
+              currentMood: data.currentMood || 'chill_talk',
+              favoriteBars: Array.isArray(data.favoriteBars) ? data.favoriteBars : [],
+              talkTopics: Array.isArray(data.talkTopics) ? data.talkTopics : [],
+              online: Boolean(data.online ?? true),
+              activeCheckIn: data.activeCheckIn || undefined,
+              level: data.level || 1,
+              levelTitle: data.levelTitle,
+              totalCheckIns: data.totalCheckIns,
+            });
+          });
+
+          // Sort by distance
+          liveBuddies.sort((a, b) => a.distanceKm - b.distanceKm);
+          callback(liveBuddies);
+        },
+        (error) => {
+          console.warn('[Firestore] Error subscribing to public buddies:', error);
+          callback([]);
+        }
+      );
+
+      return unsubscribe;
+    } catch (err) {
+      console.warn('[Firestore] Failed to establish public buddies listener:', err);
+      return () => {};
+    }
+  },
 };
 

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { ActiveTab, BuddyProfile, ChatThread, ChatParticipant, DeviceMode, HangoutAlert, Message, AuthUser, AppLanguage, GeoBlockInfo, PushNotificationItem } from './types';
-import { INITIAL_BUDDIES, INITIAL_HANGOUTS } from './data/mockData';
 import { MobileFrame } from './components/mobile/MobileFrame';
 import { BottomTabBar } from './components/mobile/BottomTabBar';
 import { DiscoverView } from './components/mobile/DiscoverView';
@@ -60,18 +59,8 @@ export default function App() {
     checkRussianTerritoryRestriction(INITIAL_USER_LOCATION)
   );
 
-  const [buddies, setBuddies] = useState<BuddyProfile[]>(() =>
-    INITIAL_BUDDIES.map((b) => ({
-      ...b,
-      distanceKm: calculateDistanceKm(
-        INITIAL_USER_LOCATION.lat,
-        INITIAL_USER_LOCATION.lng,
-        b.coordinates.lat,
-        b.coordinates.lng
-      ),
-    }))
-  );
-  const [hangouts, setHangouts] = useState<HangoutAlert[]>(INITIAL_HANGOUTS);
+  const [buddies, setBuddies] = useState<BuddyProfile[]>([]);
+  const [hangouts, setHangouts] = useState<HangoutAlert[]>([]);
   const [chats, setChats] = useState<ChatThread[]>(() => chatService.getChats());
   const [selectedChat, setSelectedChat] = useState<ChatThread | null>(null);
   const [friendsCount, setFriendsCount] = useState<number>(() => friendsService.getFriendIds().length);
@@ -247,6 +236,39 @@ export default function App() {
     });
     return unsubscribe;
   }, []);
+
+  // Subscribe to real registered users in Cloud Firestore
+  useEffect(() => {
+    const unsub = firestoreSyncService.subscribeToPublicBuddies(
+      currentUser.id,
+      userLocation,
+      (liveBuddies) => {
+        setBuddies(liveBuddies);
+      }
+    );
+    return unsub;
+  }, [currentUser.id, userLocation]);
+
+  // Sync logged-in user profile to Firestore
+  useEffect(() => {
+    if (currentUser && currentUser.isLoggedIn && currentUser.id) {
+      firestoreSyncService.saveUserProfile({
+        id: currentUser.id,
+        name: currentUser.name,
+        email: currentUser.email || '',
+        avatar: currentUser.avatar || '',
+        tagline: 'Радий знайомству за келихом 🍻',
+        paymentRule: 'split_50_50',
+        preferredDrinks: ['craft', 'beer'],
+        locationName: userLocation.locationName,
+        lat: userLocation.lat,
+        lng: userLocation.lng,
+        updatedAt: new Date().toISOString(),
+        birthDate: currentUser.birthDate,
+        age: currentUser.age,
+      });
+    }
+  }, [currentUser.id, currentUser.isLoggedIn, userLocation.locationName, userLocation.lat, userLocation.lng]);
 
   // 36-Hour Session Lifecycle: Auto-prolong session when user enters the app or returns to tab
   useEffect(() => {

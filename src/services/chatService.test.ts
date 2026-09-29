@@ -7,12 +7,9 @@ describe('chatService', () => {
     localStorage.clear();
   });
 
-  it('should load initial chats including group chat', () => {
+  it('should initialize with empty chats when no mock data is present', () => {
     const chats = chatService.getChats();
-    expect(chats.length).toBeGreaterThan(0);
-    const groupChat = chats.find((c) => c.isGroup);
-    expect(groupChat).toBeDefined();
-    expect(groupChat?.participants).toBeDefined();
+    expect(chats.length).toBe(0);
   });
 
   it('should create a new group chat and prepend it', () => {
@@ -44,12 +41,15 @@ describe('chatService', () => {
   });
 
   it('should add participants to existing group chat', () => {
-    const chats = chatService.getChats();
-    const group = chats.find((c) => c.isGroup);
-    expect(group).toBeDefined();
-    if (!group) return;
+    const group = chatService.createGroupChat({
+      name: 'Барний двіж',
+      topic: 'Зустріч',
+      avatar: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=150',
+      participants: [],
+      creatorId: 'me',
+      creatorName: 'Павло',
+    });
 
-    const initialCount = group.participants?.length || 0;
     const newParticipant: ChatParticipant = {
       id: 'test-new-buddy',
       name: 'Новий Друг',
@@ -61,18 +61,26 @@ describe('chatService', () => {
     chatService.addParticipants(group.id, [newParticipant]);
 
     const updatedGroup = chatService.getChatById(group.id);
-    expect(updatedGroup?.participants?.length).toBe(initialCount + 1);
+    expect(updatedGroup?.participants?.length).toBe(1);
   });
 
   it('should delete a chat thread by ID', () => {
+    const createdChat = chatService.createGroupChat({
+      name: 'Чат для видалення',
+      topic: 'Тест',
+      avatar: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=150',
+      participants: [],
+      creatorId: 'me',
+      creatorName: 'Павло',
+    });
+
     const chatsBefore = chatService.getChats();
-    const targetChat = chatsBefore[0];
     const initialCount = chatsBefore.length;
 
-    chatService.deleteChat(targetChat.id);
+    chatService.deleteChat(createdChat.id);
 
     const chatsAfter = chatService.getChats();
     expect(chatsAfter.length).toBe(initialCount - 1);
-    expect(chatsAfter.find((c) => c.id === targetChat.id)).toBeUndefined();
+    expect(chatsAfter.find((c) => c.id === createdChat.id)).toBeUndefined();
   });
 });

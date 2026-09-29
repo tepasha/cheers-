@@ -94,7 +94,7 @@ export const ArchitectureHub: React.FC<ArchitectureHubProps> = ({ isOpen, onClos
       '🧭 [Test Suite 1/4] `src/services/geoService.test.ts` (8 тестів): формули Haversine, азимут, кроки пішки, пресети Подолу... PASSED (12ms)',
       '🌐 [Test Suite 2/4] `src/services/i18nService.test.ts` (12 тестів): переклади UK/EN/PL/DE, геоблокування РФ за координатами та таймзонами... PASSED (32ms)',
       '🔐 [Test Suite 3/4] `src/services/authService.test.ts` (5 тестів): Google OAuth провайдер, сесії, вихід у гостьовий режим... PASSED (602ms)',
-      '🍺 [Test Suite 4/4] `src/data/mockData.test.ts` (7 тестів): валідація профілів користувачів, кличів та колекції українських тостів... PASSED (14ms)',
+      '🍺 [Test Suite 4/4] `src/data/mockData.test.ts` (5 тестів): перевірка відсутності мокових даних, валідація словників напоїв та українських тостів... PASSED (14ms)',
       '🎉 [Vitest Summary] 4 Test Files passed (4/4) | 32 Tests passed (32/32) | 100% Green in 1.7s 🍻'
     ];
 

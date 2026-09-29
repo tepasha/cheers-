@@ -1,23 +1,53 @@
 import { BuddyProfile } from '../types';
-import { INITIAL_BUDDIES } from '../data/mockData';
 import { sounds } from './soundService';
 import { gamificationService } from './gamificationService';
 import { pushNotificationService } from './pushNotificationService';
 import { firestoreSyncService } from './firestoreSyncService';
 
 const FRIENDS_STORAGE_KEY = 'budmo_friends_ids';
+const FRIENDS_PROFILES_STORAGE_KEY = 'budmo_friends_profiles_v1';
 
-// Default initial friend seed so user has a friend out of the box (Богдан from Podil)
-const DEFAULT_FRIEND_IDS = ['buddy-1'];
+// Clean initial friend list (no mock seed)
+const DEFAULT_FRIEND_IDS: string[] = [];
 
 type FriendChangeListener = (friends: BuddyProfile[]) => void;
 const listeners: FriendChangeListener[] = [];
 
 class FriendsService {
   private friendIds: Set<string>;
+  private friendsMap: Map<string, BuddyProfile>;
 
   constructor() {
     this.friendIds = new Set<string>(this.loadStoredFriendIds());
+    this.friendsMap = new Map<string, BuddyProfile>(this.loadStoredFriendProfiles());
+  }
+
+  private loadStoredFriendProfiles(): [string, BuddyProfile][] {
+    if (typeof window === 'undefined') return [];
+    try {
+      const stored = localStorage.getItem(FRIENDS_PROFILES_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(([id]) => !id.startsWith('buddy-'));
+        }
+      }
+    } catch (e) {
+      console.warn('Could not load friend profiles from localStorage:', e);
+    }
+    return [];
+  }
+
+  private persistFriendProfiles(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(
+        FRIENDS_PROFILES_STORAGE_KEY,
+        JSON.stringify(Array.from(this.friendsMap.entries()))
+      );
+    } catch (e) {
+      console.warn('Could not persist friend profiles to localStorage:', e);
+    }
   }
 
   private loadStoredFriendIds(): string[] {
@@ -27,14 +57,14 @@ class FriendsService {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          return parsed;
+          // Filter out mock friend IDs
+          const cleaned = parsed.filter((id: string) => !id.startsWith('buddy-'));
+          return cleaned;
         }
       }
     } catch (e) {
       console.warn('Could not load friend IDs from localStorage:', e);
     }
-    // Seed default friend
-    this.persistFriendIds(DEFAULT_FRIEND_IDS);
     return DEFAULT_FRIEND_IDS;
   }
 
@@ -90,12 +120,11 @@ class FriendsService {
   /**
    * Get all friends as full BuddyProfile objects
    */
-  public getFriends(allBuddiesPool: BuddyProfile[] = INITIAL_BUDDIES): BuddyProfile[] {
+  public getFriends(allBuddiesPool: BuddyProfile[] = []): BuddyProfile[] {
     const poolMap = new Map<string, BuddyProfile>();
+    // Seed with stored friend profiles
+    this.friendsMap.forEach((b, id) => poolMap.set(id, b));
     allBuddiesPool.forEach((b) => poolMap.set(b.id, b));
-    INITIAL_BUDDIES.forEach((b) => {
-      if (!poolMap.has(b.id)) poolMap.set(b.id, b);
-    });
 
     const result: BuddyProfile[] = [];
     this.friendIds.forEach((id) => {
@@ -129,8 +158,10 @@ class FriendsService {
     if (this.friendIds.has(buddy.id)) return false;
 
     this.friendIds.add(buddy.id);
+    this.friendsMap.set(buddy.id, { ...buddy, isFriend: true });
     const newIds = Array.from(this.friendIds);
     this.persistFriendIds(newIds);
+    this.persistFriendProfiles();
 
     // Play feedback sound
     sounds.playClink();
@@ -174,8 +205,10 @@ class FriendsService {
     if (!this.friendIds.has(buddyId)) return false;
 
     this.friendIds.delete(buddyId);
+    this.friendsMap.delete(buddyId);
     const newIds = Array.from(this.friendIds);
     this.persistFriendIds(newIds);
+    this.persistFriendProfiles();
 
     sounds.playTap();
 

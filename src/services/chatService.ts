@@ -1,5 +1,4 @@
 import { ChatThread, ChatParticipant, Message, BuddyProfile } from '../types';
-import { INITIAL_CHATS } from '../data/mockData';
 import { firestoreSyncService } from './firestoreSyncService';
 import { sounds } from './soundService';
 
@@ -14,19 +13,28 @@ class ChatService {
   }
 
   private loadFromStorage(): ChatThread[] {
-    if (typeof window === 'undefined') return INITIAL_CHATS;
+    if (typeof window === 'undefined') return [];
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          // Filter out any mock chats
+          const realChats = parsed.filter(
+            (c) =>
+              c.id !== 'chat-group-podil' &&
+              c.id !== 'chat-1' &&
+              c.id !== 'chat-2' &&
+              !c.id.startsWith('mock-') &&
+              !c.buddy?.id?.startsWith('buddy-')
+          );
+          return realChats;
         }
       }
     } catch (e) {
       console.warn('Failed to parse stored chats, using defaults', e);
     }
-    return INITIAL_CHATS;
+    return [];
   }
 
   private saveToStorage(): void {

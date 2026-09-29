@@ -7,154 +7,7 @@ import { doc, setDoc, onSnapshot, collection } from 'firebase/firestore';
 
 const STORAGE_KEY = 'budmo_scheduled_group_meetups_v1';
 
-export const INITIAL_GROUP_MEETUPS: GroupMeetup[] = [
-  {
-    id: 'meetup-catan-squat17b',
-    title: '🎲 Крафтовий вечір & настілки (Catan + Кодові імена)',
-    description: 'Беремо настілку Catan та Кодові імена! Замовляємо сидр та крафтовий ель у затишному дворику на Подолі. Хто любить настілки чи просто хоче поспілкуватися — велкам!',
-    venueName: 'Squat 17b',
-    venueAddress: 'Поділ, вул. Терещенківська, 17б',
-    scheduledDate: 'Сьогодні',
-    scheduledTime: '19:30',
-    dateTimeIso: new Date(Date.now() + 3.5 * 3600 * 1000).toISOString(),
-    drinkPreference: 'Крафтове пиво & Сидр',
-    maxParticipants: 6,
-    topicTag: 'Настілки & Крафт',
-    creatorId: 'buddy-1',
-    creatorName: 'Богдан',
-    creatorAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80',
-    status: 'upcoming',
-    lat: 50.4415,
-    lng: 30.514,
-    createdAt: 'Сьогодні, 14:20',
-    participants: [
-      {
-        userId: 'buddy-1',
-        userName: 'Богдан',
-        userAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80',
-        role: 'host',
-        status: 'going',
-        joinedAt: '14:20',
-      },
-      {
-        userId: 'buddy-2',
-        userName: 'Софія',
-        userAvatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500&auto=format&fit=crop&q=80',
-        role: 'member',
-        status: 'going',
-        joinedAt: '15:10',
-      },
-      {
-        userId: 'buddy-3',
-        userName: 'Тарас',
-        userAvatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=500&auto=format&fit=crop&q=80',
-        role: 'member',
-        status: 'going',
-        joinedAt: '16:05',
-      },
-      {
-        userId: 'buddy-4',
-        userName: 'Олена',
-        userAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500&auto=format&fit=crop&q=80',
-        role: 'member',
-        status: 'invited',
-        joinedAt: '16:30',
-      },
-    ],
-  },
-  {
-    id: 'meetup-it-punkcraft',
-    title: "💻 П'ятничний IT-мітап: React Native, AI & дегустація IPA",
-    description: "Традиційний п'ятничний збір інженерів та дизайнерів. Говоримо про запуск додатків, AI агентів, архітектуру та відпочиваємо після насиченого спринту.",
-    venueName: 'Punkcraft',
-    venueAddress: 'Поділ, вул. Ігорівська, 14',
-    scheduledDate: "П'ятниця, 18 вересня",
-    scheduledTime: '20:00',
-    dateTimeIso: new Date(Date.now() + 2 * 86400 * 1000).toISOString(),
-    drinkPreference: 'Крафтовий IPA & DIPA',
-    maxParticipants: 8,
-    topicTag: 'IT & Розробка',
-    creatorId: 'buddy-5',
-    creatorName: 'Максим',
-    creatorAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80',
-    status: 'upcoming',
-    lat: 50.4608,
-    lng: 30.5218,
-    createdAt: 'Вчора, 18:00',
-    participants: [
-      {
-        userId: 'buddy-5',
-        userName: 'Максим',
-        userAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80',
-        role: 'host',
-        status: 'going',
-        joinedAt: 'Вчора',
-      },
-      {
-        userId: 'buddy-1',
-        userName: 'Богдан',
-        userAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80',
-        role: 'member',
-        status: 'going',
-        joinedAt: 'Вчора',
-      },
-      {
-        userId: 'buddy-6',
-        userName: 'Андрій',
-        userAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=500&auto=format&fit=crop&q=80',
-        role: 'member',
-        status: 'going',
-        joinedAt: 'Сьогодні, 11:00',
-      },
-    ],
-  },
-  {
-    id: 'meetup-wine-winbar',
-    title: '🍷 Винний вечір & дегустація оранжів',
-    description: 'Замовляємо дегустаційний сет українських та європейських помаранчевих вин, сирне плато. Неспішні бесіди про подорожі та кіно.',
-    venueName: 'Win Bar',
-    venueAddress: 'Поділ, вул. Хорива, 16/7',
-    scheduledDate: 'Субота, 19 вересня',
-    scheduledTime: '18:30',
-    dateTimeIso: new Date(Date.now() + 3 * 86400 * 1000).toISOString(),
-    drinkPreference: 'Сухе біле / Оранж',
-    maxParticipants: 5,
-    topicTag: 'Вино & Енологія',
-    creatorId: 'buddy-2',
-    creatorName: 'Софія',
-    creatorAvatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500&auto=format&fit=crop&q=80',
-    status: 'upcoming',
-    lat: 50.467,
-    lng: 30.5145,
-    createdAt: 'Сьогодні, 10:15',
-    participants: [
-      {
-        userId: 'buddy-2',
-        userName: 'Софія',
-        userAvatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500&auto=format&fit=crop&q=80',
-        role: 'host',
-        status: 'going',
-        joinedAt: '10:15',
-      },
-      {
-        userId: 'buddy-4',
-        userName: 'Олена',
-        userAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500&auto=format&fit=crop&q=80',
-        role: 'member',
-        status: 'going',
-        joinedAt: '12:40',
-      },
-      {
-        userId: 'buddy-7',
-        userName: 'Катерина',
-        userAvatar: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500&auto=format&fit=crop&q=80',
-        role: 'member',
-        status: 'invited',
-        joinedAt: '13:00',
-      },
-    ],
-  },
-];
+export const INITIAL_GROUP_MEETUPS: GroupMeetup[] = [];
 
 class GroupMeetupService {
   private meetups: GroupMeetup[] = [];
@@ -174,16 +27,23 @@ class GroupMeetupService {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          this.meetups = parsed;
+          // Filter out any mock meetups
+          this.meetups = parsed.filter(
+            (m) =>
+              m.id !== 'meetup-catan-squat17b' &&
+              m.id !== 'meetup-it-punkcraft' &&
+              m.id !== 'meetup-wine-winbar' &&
+              !m.id.startsWith('mock-')
+          );
         } else {
-          this.meetups = [...INITIAL_GROUP_MEETUPS];
+          this.meetups = [];
         }
       } else {
-        this.meetups = [...INITIAL_GROUP_MEETUPS];
+        this.meetups = [];
         this.saveLocal();
       }
     } catch {
-      this.meetups = [...INITIAL_GROUP_MEETUPS];
+      this.meetups = [];
     }
 
     // Try listening to Cloud Firestore

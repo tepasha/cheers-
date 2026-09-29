@@ -28,37 +28,10 @@ describe('mockData integrity tests', () => {
     expect(PAYMENT_METADATA.split_50_50.badge).toContain('50/50');
   });
 
-  it('should validate INITIAL_BUDDIES data structure', () => {
-    expect(INITIAL_BUDDIES.length).toBeGreaterThanOrEqual(5);
-    INITIAL_BUDDIES.forEach(buddy => {
-      expect(buddy.id).toBeTruthy();
-      expect(buddy.name).toBeTruthy();
-      expect(buddy.age).toBeGreaterThan(18);
-      expect(buddy.preferredDrinks.length).toBeGreaterThan(0);
-      expect(buddy.coordinates.lat).toBeTypeOf('number');
-      expect(buddy.coordinates.lng).toBeTypeOf('number');
-      expect(buddy.distanceKm).toBeGreaterThanOrEqual(0);
-    });
-  });
-
-  it('should validate INITIAL_HANGOUTS have valid participants and venue', () => {
-    expect(INITIAL_HANGOUTS.length).toBeGreaterThanOrEqual(3);
-    INITIAL_HANGOUTS.forEach(hangout => {
-      expect(hangout.id).toBeTruthy();
-      expect(hangout.barName).toBeTruthy();
-      expect(hangout.description).toBeTruthy();
-      expect(hangout.slotsAvailable).toBeGreaterThanOrEqual(1);
-      expect(hangout.participantsCount).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  it('should validate INITIAL_CHATS contain threads and messages', () => {
-    expect(INITIAL_CHATS.length).toBeGreaterThan(0);
-    INITIAL_CHATS.forEach(chat => {
-      expect(chat.id).toBeTruthy();
-      expect(chat.buddy.name).toBeTruthy();
-      expect(chat.messages.length).toBeGreaterThan(0);
-    });
+  it('should ensure INITIAL_BUDDIES, INITIAL_HANGOUTS, and INITIAL_CHATS are clean empty arrays', () => {
+    expect(INITIAL_BUDDIES).toHaveLength(0);
+    expect(INITIAL_HANGOUTS).toHaveLength(0);
+    expect(INITIAL_CHATS).toHaveLength(0);
   });
 
   it('should validate Ukrainian toasts collection in ALL_TOASTS', () => {
