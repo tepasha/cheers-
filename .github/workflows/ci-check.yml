@@ -32,6 +32,11 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm ci
 
+      # The root type-check (lint) and the tests import functions/src, which needs firebase-admin's types
+      - name: 📦 Install Cloud Functions dependencies
+        run: npm ci
+        working-directory: functions
+
       - name: 🏷️ Versions and identifiers are consistent
         run: node scripts/release-check.mjs
 
@@ -54,9 +59,7 @@ jobs:
         run: npx expo prebuild --no-install --clean
 
       - name: ☁️ Build the Cloud Functions package
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
         working-directory: functions
 
   # The security rules are the only thing standing between users' data and the internet, so every change
