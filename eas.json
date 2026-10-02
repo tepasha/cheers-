@@ -37,9 +37,6 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "tepasha.90@gmail.com",
-        "ascAppId": "6478901234",
-        "appleTeamId": "AB12CD34EF",
         "sku": "budmo-ios-app"
       },
       "android": {

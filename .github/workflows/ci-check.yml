@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
+# CI only reads the repository
+permissions:
+  contents: read
+
 jobs:
   check:
     name: ⚡ Fast Validation, Lint & Tests
@@ -14,21 +18,59 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node.js 20
+      - name: 🟢 Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: 📦 Install Dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci || npm install
-          else
-            npm install
-          fi
+        run: npm ci
+
+      # The tests import the Cloud Function sources, which need their own dependencies (firebase-admin)
+      - name: 📦 Install Cloud Functions dependencies
+        run: npm ci
+        working-directory: functions
 
       - name: 🔍 ESLint & TypeScript Check
         run: npm run lint
 
       - name: 🧪 Run Unit Test Suite (Vitest)
         run: npm test
+
+      - name: 📦 Verify the Metro bundle builds (Android)
+        run: npx expo export --platform android --output-dir "$RUNNER_TEMP/export"
+
+      - name: ☁️ Build the Cloud Functions package
+        run: npm run build
+        working-directory: functions
+
+  # The security rules are the only thing standing between users' data and the internet, so every change
+  # to them (or to the client code that talks to them) must pass the emulator suites.
+  rules:
+    name: 🔒 Firestore security rules (emulator)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: ☕ Setup Java 21 (Firestore emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      # The tests import the Cloud Function sources, which need their own dependencies (firebase-admin)
+      - name: 📦 Install Cloud Functions dependencies
+        run: npm ci
+        working-directory: functions
+
+      - name: 🔒 Rules + client contract tests
+        run: npm run test:rules

@@ -71,7 +71,10 @@ export interface Message {
   text: string;
   timestamp: string;
   isMe: boolean;
-  type?: 'text' | 'cheers' | 'location_proposal' | 'audio';
+  type?: 'text' | 'cheers' | 'location_proposal' | 'audio' | 'proposal_response';
+  /** For `proposal_response`: the proposal message being answered, and the answer */
+  proposalId?: string;
+  proposalStatus?: 'accepted' | 'declined';
   audioUrl?: string;
   audioDuration?: number;
   isEncrypted?: boolean;
@@ -101,6 +104,10 @@ export interface ChatThread {
   meetupId?: string;
   createdBy?: string;
   createdAt?: string;
+  /** Firebase uids allowed to read this chat (mirrors `chats/{id}.members`) */
+  memberIds?: string[];
+  /** Cloud `updatedAt` last applied to the preview, to detect new activity */
+  updatedAt?: string;
 }
 
 export interface HangoutAlert {
@@ -251,6 +258,10 @@ export interface PushNotificationSettings {
   bannerEnabled: boolean;
   webPushEnabled: boolean;
   vibrateEnabled: boolean;
+  /** Expo push token of this phone while it is registered for the signed-in account */
+  deviceToken?: string;
+  /** The one-time "turn on notifications?" question has been asked */
+  promptShown?: boolean;
 }
 
 export interface UserLevelInfo {

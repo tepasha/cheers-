@@ -28,36 +28,3 @@ function calculateFromDate(birthDate: Date): number | null {
   if (age < 0 || age > 120) return null;
   return age;
 }
-
-export function formatAgeWithUnit(age: number): string {
-  const mod10 = age % 10;
-  const mod100 = age % 100;
-  if (mod100 >= 11 && mod100 <= 14) {
-    return `${age} років`;
-  }
-  if (mod10 === 1) {
-    return `${age} рік`;
-  }
-  if (mod10 >= 2 && mod10 <= 4) {
-    return `${age} роки`;
-  }
-  return `${age} років`;
-}
-
-export function formatBirthDateUkrainian(dateStr?: string | null): string {
-  if (!dateStr) return '';
-  const parts = dateStr.split('-');
-  if (parts.length === 3) {
-    const months = [
-      'січня', 'лютого', 'березня', 'квітня', 'травня', 'червня',
-      'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'
-    ];
-    const y = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10) - 1;
-    const d = parseInt(parts[2], 10);
-    if (!isNaN(y) && !isNaN(m) && !isNaN(d) && m >= 0 && m < 12) {
-      return `${d} ${months[m]} ${y} р.`;
-    }
-  }
-  return dateStr;
-}

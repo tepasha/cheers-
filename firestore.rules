@@ -1,78 +1,371 @@
 rules_version = '2';
+
+// Security model
+// - Every read and write requires a signed-in user with a VERIFIED email (anti-fake-account, anti-spam).
+// - Users write only their own documents; nobody can write as someone else (senderId, userId, creatorId are
+//   always compared with request.auth.uid).
+// - Chats are private to their `members`; messages are immutable once written.
+// - Email, birth date and gamification live under users/{uid}/private and are readable by the owner only.
+// - Blocking is enforced here, not just in the app: if B blocked A (document users/B/blocks/A), A cannot start a
+//   chat with B, message B, take a seat at B's table, join B's meetup, or open B's profile by id.
+//   Rules cannot filter LIST queries, so discovery lists (users, hangouts, meetups) still contain B's public
+//   documents; hiding B there needs a server-side component (see SECURITY.md).
+// - All other paths are denied by default.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isSignedIn() {
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    function signedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function verified() {
+      return signedIn() && request.auth.token.email_verified == true;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128;
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
     }
 
-    // Default deny all
-    match /{document=**} {
-      allow read, write: if false;
+    // True when `owner` has blocked the caller. exists() reads the blocks collection regardless of its own read rule,
+    // so the blocked person can neither see nor learn that they were blocked.
+    function blockedBy(owner) {
+      return exists(/databases/$(database)/documents/users/$(owner)/blocks/$(request.auth.uid));
     }
 
-    // Connection testing endpoint
-    match /test/{docId} {
-      allow read: if true;
+    function str(v, max) {
+      return v is string && v.size() <= max;
     }
 
-    // User Profiles
-    match /users/{userId} {
-      allow read: if true;
-      allow create, update: if isValidId(userId);
-      allow delete: if isOwner(userId);
+    // Optional field `k` of map `d`: absent, or a string of at most `max` characters
+    function optStr(d, k, max) {
+      return !(k in d) || str(d[k], max);
+    }
 
-      // User's Favorite Venues Subcollection
+    function optNum(d, k, lo, hi) {
+      return !(k in d) || (d[k] is number && d[k] >= lo && d[k] <= hi);
+    }
+
+    // ─── Users ────────────────────────────────────────────────────────────────
+
+    function validProfile(d, uid) {
+      return d.keys().hasOnly([
+          'id', 'name', 'avatar', 'tagline', 'paymentRule', 'preferredDrinks', 'currentMood',
+          'locationName', 'lat', 'lng', 'age', 'updatedAt', 'bio', 'favoriteBars', 'talkTopics',
+          'level', 'levelTitle', 'totalCheckIns'
+        ])
+        && d.id == uid
+        && str(d.name, 60) && d.name.size() > 0
+        && optStr(d, 'avatar', 500) && optStr(d, 'tagline', 140) && optStr(d, 'locationName', 120)
+        && optStr(d, 'bio', 500) && optStr(d, 'levelTitle', 60) && optStr(d, 'updatedAt', 40)
+        && optNum(d, 'lat', -90, 90) && optNum(d, 'lng', -180, 180) && optNum(d, 'age', 18, 120)
+        && optNum(d, 'level', 1, 100) && optNum(d, 'totalCheckIns', 0, 1000000)
+        && (!('paymentRule' in d) || d.paymentRule in ['split_50_50', 'each_for_themselves', 'i_treat', 'rounds'])
+        && (!('preferredDrinks' in d) || (d.preferredDrinks is list && d.preferredDrinks.size() <= 8))
+        && (!('favoriteBars' in d) || (d.favoriteBars is list && d.favoriteBars.size() <= 20))
+        && (!('talkTopics' in d) || (d.talkTopics is list && d.talkTopics.size() <= 20));
+    }
+
+    match /users/{uid} {
+      // Other users see a public profile; coordinates are rounded to ~1 km by the client.
+      // Opening a profile by id respects blocks; the discovery list cannot (see header note).
+      allow get: if verified() && (request.auth.uid == uid || !blockedBy(uid));
+      allow list: if verified();
+      allow create, update: if isOwner(uid) && verified() && validProfile(request.resource.data, uid);
+      allow delete: if isOwner(uid);
+
+      // Owner-only data: email, birth date, gamification. Never exposed to other users.
+      match /private/{docId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && (
+          (docId == 'profile'
+            && request.resource.data.keys().hasOnly(['email', 'birthDate'])
+            && optStr(request.resource.data, 'email', 254) && optStr(request.resource.data, 'birthDate', 10))
+          || (docId == 'gamification'
+            && request.resource.data.keys().hasOnly(['xp', 'level', 'totalMeetups', 'achievements', 'lastUpdated'])
+            && optNum(request.resource.data, 'xp', 0, 10000000)));
+      }
+
+      // Who this user has blocked. Only the owner can read or write it.
+      match /blocks/{blockedId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && verified()
+          && blockedId != uid
+          && request.resource.data.keys().hasOnly(['userId', 'userName', 'userAvatar', 'blockedAt', 'reason', 'autoBlocked'])
+          && request.resource.data.userId == blockedId
+          && optStr(request.resource.data, 'userName', 60) && optStr(request.resource.data, 'userAvatar', 500)
+          && optStr(request.resource.data, 'blockedAt', 40) && optStr(request.resource.data, 'reason', 200);
+      }
+
       match /favorites/{venueId} {
-        allow read, write: if isValidId(venueId);
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && verified()
+          && request.resource.data.keys().hasOnly(['id', 'userId', 'name', 'area', 'category', 'lat', 'lng', 'comment', 'createdAt'])
+          && request.resource.data.userId == uid
+          && str(request.resource.data.name, 100) && optStr(request.resource.data, 'comment', 300);
       }
 
-      // User's Friends Subcollection
       match /friends/{friendId} {
-        allow read, write: if isValidId(friendId);
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && verified()
+          && request.resource.data.keys().hasOnly([
+              'id', 'userId', 'friendId', 'friendName', 'friendAvatar', 'tagline', 'locationName', 'drinkPreference', 'addedAt'
+            ])
+          && request.resource.data.userId == uid
+          && request.resource.data.friendId == friendId;
       }
     }
 
-    // Hangout Alerts / Live Beacons
+    // ─── Hangouts (live "I'm at this bar" check-ins) ──────────────────────────
+
+    function validHangout(d) {
+      return d.keys().hasOnly([
+          'id', 'userId', 'userName', 'userAvatar', 'barName', 'locationArea', 'drinkPreference', 'description',
+          'createdAt', 'createdAtTimestamp', 'slotsAvailable', 'participantsCount', 'lat', 'lng', 'status',
+          'joinedUsers', 'updatedAt'
+        ])
+        && str(d.barName, 80) && d.barName.size() > 0
+        && str(d.userName, 60) && optStr(d, 'userAvatar', 500)
+        && optStr(d, 'locationArea', 120) && optStr(d, 'drinkPreference', 120) && optStr(d, 'description', 300)
+        && d.slotsAvailable is number && d.slotsAvailable >= 1 && d.slotsAvailable <= 6
+        && d.participantsCount is number && d.participantsCount >= 1
+        && d.joinedUsers is list && d.joinedUsers.size() <= 7;
+    }
+
+    // Anyone verified may take one free seat, exactly once, and may not touch anything else
+    function isSeatJoin(uid) {
+      let before = resource.data;
+      let after = request.resource.data;
+      return !blockedBy(before.userId)
+        && after.diff(before).affectedKeys().hasOnly(['participantsCount', 'joinedUsers', 'updatedAt'])
+        && after.joinedUsers.hasAll(before.joinedUsers)
+        && after.joinedUsers.size() == before.joinedUsers.size() + 1
+        && uid in after.joinedUsers && !(uid in before.joinedUsers)
+        && after.participantsCount == before.participantsCount + 1
+        && after.participantsCount <= before.slotsAvailable + 1;
+    }
+
     match /hangouts/{hangoutId} {
-      allow read: if true;
-      allow create, update: if isValidId(hangoutId);
-      allow delete: if isSignedIn() 
-        && resource.data.userId == request.auth.uid;
+      allow read: if verified();
+      allow create: if verified()
+        && request.resource.data.id == hangoutId
+        && request.resource.data.userId == request.auth.uid
+        && validHangout(request.resource.data)
+        && request.resource.data.participantsCount == 1
+        && request.resource.data.joinedUsers == [request.auth.uid];
+      allow update: if verified() && (
+        (resource.data.userId == request.auth.uid
+          && request.resource.data.userId == request.auth.uid
+          && validHangout(request.resource.data))
+        || isSeatJoin(request.auth.uid));
+      allow delete: if verified() && resource.data.userId == request.auth.uid;
     }
 
-    // Scheduled Group Meetups
+    // ─── Scheduled group meetups ──────────────────────────────────────────────
+    // `participants` is a map keyed by uid so a rule can confine each person to their own entry.
+
+    function validMeetup(d) {
+      return d.keys().hasOnly([
+          'id', 'title', 'description', 'venueName', 'venueAddress', 'scheduledDate', 'scheduledTime', 'dateTimeIso',
+          'drinkPreference', 'maxParticipants', 'participants', 'creatorId', 'creatorName', 'creatorAvatar', 'status',
+          'lat', 'lng', 'distanceKm', 'distanceFormatted', 'createdAt', 'topicTag', 'updatedAt'
+        ])
+        && str(d.title, 80) && d.title.size() > 0
+        && optStr(d, 'description', 300) && optStr(d, 'venueName', 100) && optStr(d, 'venueAddress', 160)
+        && d.maxParticipants is number && d.maxParticipants >= 2 && d.maxParticipants <= 30
+        && d.participants is map && d.participants.size() <= 60
+        && d.status in ['upcoming', 'ongoing', 'past', 'cancelled'];
+    }
+
+    // A non-creator may only add, change or remove their own entry, and only as a plain member
+    function isOwnParticipation(uid) {
+      let before = resource.data;
+      let after = request.resource.data;
+      return !blockedBy(before.creatorId)
+        && after.diff(before).affectedKeys().hasOnly(['participants', 'updatedAt'])
+        && after.participants.diff(before.participants).affectedKeys().hasOnly([uid])
+        && (!(uid in after.participants)
+          || (after.participants[uid].userId == uid
+            && after.participants[uid].role == 'member'
+            && after.participants[uid].status in ['going', 'declined']));
+    }
+
     match /group_meetups/{meetupId} {
-      allow read: if true;
-      allow create, update: if isValidId(meetupId);
-      allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
+      allow read: if verified();
+      allow create: if verified()
+        && request.resource.data.id == meetupId
+        && request.resource.data.creatorId == request.auth.uid
+        && validMeetup(request.resource.data);
+      allow update: if verified() && (
+        (resource.data.creatorId == request.auth.uid
+          && request.resource.data.creatorId == request.auth.uid
+          && validMeetup(request.resource.data))
+        || isOwnParticipation(request.auth.uid));
+      allow delete: if verified() && resource.data.creatorId == request.auth.uid;
     }
 
-    // Chat threads & messages
+    // ─── Chats ────────────────────────────────────────────────────────────────
+
+    function chatPath(chatId) {
+      return /databases/$(database)/documents/chats/$(chatId);
+    }
+
+    function isChatMember(chatId) {
+      return request.auth.uid in get(chatPath(chatId)).data.members;
+    }
+
+    function wasChatMember() {
+      return request.auth.uid in resource.data.members;
+    }
+
+    // Creating a chat: DM ids are derived from the two members (so nobody can squat someone else's id),
+    // group ids start with the creator's uid.
+    function memberOk(d, i) {
+      return d.members.size() <= i || d.members[i] == request.auth.uid || !blockedBy(d.members[i]);
+    }
+
+    function noMemberBlockedCreator(d) {
+      return memberOk(d, 0) && memberOk(d, 1) && memberOk(d, 2) && memberOk(d, 3) && memberOk(d, 4)
+        && memberOk(d, 5) && memberOk(d, 6) && memberOk(d, 7) && memberOk(d, 8) && memberOk(d, 9);
+    }
+
+    function validChatCreate(chatId, d) {
+      return d.keys().hasOnly([
+          'members', 'isGroup', 'createdBy', 'groupName', 'groupTopic', 'groupAvatar', 'participants', 'profiles',
+          'lastCipherPayload', 'lastSenderId', 'lastMessageTime', 'updatedAt'
+        ])
+        && d.members is list && d.members.size() >= 2 && d.members.size() <= 10
+        && request.auth.uid in d.members
+        && noMemberBlockedCreator(d)
+        && d.isGroup is bool
+        && d.lastSenderId == request.auth.uid
+        && ((d.isGroup == false
+              && d.members.size() == 2
+              && chatId in ['dm_' + d.members[0] + '_' + d.members[1], 'dm_' + d.members[1] + '_' + d.members[0]])
+            || (d.isGroup == true
+              && d.createdBy == request.auth.uid
+              && chatId.matches('grp_' + request.auth.uid + '_.*')));
+    }
+
+    // Any member may refresh the preview (and add their own profile line in a DM).
+    // Only a group's creator may change membership or the group's description.
+    function validChatUpdate() {
+      let before = resource.data;
+      let after = request.resource.data;
+      let changed = after.diff(before).affectedKeys();
+      return wasChatMember()
+        // The preview always names whoever actually wrote it: changing the text or the sender requires
+        // lastSenderId to be the caller, so nobody can put words in another member's mouth
+        && (!('lastSenderId' in changed) || after.lastSenderId == request.auth.uid)
+        && (!('lastCipherPayload' in changed) || after.lastSenderId == request.auth.uid)
+        && (
+          changed.hasOnly(['lastCipherPayload', 'lastSenderId', 'lastMessageTime', 'updatedAt'])
+          || (before.isGroup == false
+              && changed.hasOnly(['lastCipherPayload', 'lastSenderId', 'lastMessageTime', 'updatedAt', 'profiles'])
+              && after.profiles.diff(before.profiles).affectedKeys().hasOnly([request.auth.uid]))
+          || (before.isGroup == true
+              && before.createdBy == request.auth.uid
+              && changed.hasOnly([
+                  'members', 'participants', 'groupName', 'groupTopic', 'groupAvatar',
+                  'lastCipherPayload', 'lastSenderId', 'lastMessageTime', 'updatedAt'
+                ])
+              && after.members.size() <= 10 && after.members.hasAll(before.members)
+              && (after.members.size() == before.members.size()
+                  || (after.members.size() == before.members.size() + 1
+                      && !blockedBy(after.members[before.members.size()])))));
+    }
+
+    // In a direct chat, the other member must not have blocked the sender. (Groups are shared spaces: leaving or
+    // muting is the remedy there, and creating one with someone who blocked you is refused above.)
+    function notBlockedInDm(chatId) {
+      let chat = getAfter(chatPath(chatId)).data;
+      return chat.isGroup == true
+        || !blockedBy(chat.members[0] == request.auth.uid ? chat.members[1] : chat.members[0]);
+    }
+
+    // Messages are immutable, so a proposal's status is decided by an answer message. Its id is derived from the
+    // proposal (`resp_<proposalId>`), which makes "answered once" a database fact, and only the person who did
+    // NOT make the proposal may answer it.
+    function validProposalResponse(chatId, messageId) {
+      let d = request.resource.data;
+      let proposal = get(/databases/$(database)/documents/chats/$(chatId)/messages/$(d.proposalId)).data;
+      return d.proposalId is string
+        && messageId == 'resp_' + d.proposalId
+        && d.proposalStatus in ['accepted', 'declined']
+        && proposal.type == 'location_proposal'
+        && proposal.senderId != request.auth.uid;
+    }
+
     match /chats/{chatId} {
-      allow read, write: if isValidId(chatId);
+      // Listing "my chats" (where members array-contains uid) satisfies this per document
+      allow read: if verified() && wasChatMember();
+      allow create: if verified() && validChatCreate(chatId, request.resource.data);
+      allow update: if verified() && validChatUpdate();
+      allow delete: if false;
 
       match /messages/{messageId} {
-        allow read: if true;
-        allow create: if isValidId(messageId);
-        allow update, delete: if isSignedIn() 
-          && resource.data.senderId == request.auth.uid;
+        allow read: if verified() && isChatMember(chatId);
+        // getAfter(): the message may be created in the same batch as the chat document itself
+        allow create: if verified()
+          && request.auth.uid in getAfter(chatPath(chatId)).data.members
+          && notBlockedInDm(chatId)
+          && request.resource.data.keys().hasOnly([
+              'id', 'chatId', 'senderId', 'senderName', 'senderAvatar', 'cipherPayload', 'type', 'proposalData', 'proposalCipher',
+              'timestamp', 'isEncrypted', 'createdAt', 'audioUrl', 'audioDuration', 'proposalId', 'proposalStatus'
+            ])
+          && request.resource.data.id == messageId
+          && request.resource.data.chatId == chatId
+          && request.resource.data.senderId == request.auth.uid
+          && str(request.resource.data.cipherPayload, 8000) && request.resource.data.cipherPayload.size() > 0
+          && request.resource.data.type in ['text', 'cheers', 'location_proposal', 'audio', 'proposal_response']
+          // Proposal details travel encrypted: plaintext venue/address/time is refused, and a proposal needs the cipher
+          && (!('proposalData' in request.resource.data) || request.resource.data.proposalData == null)
+          && (request.resource.data.type == 'location_proposal'
+              ? (request.resource.data.proposalCipher is string && request.resource.data.proposalCipher.size() <= 4000)
+              : !('proposalCipher' in request.resource.data))
+          && (request.resource.data.type != 'proposal_response' || validProposalResponse(chatId, messageId))
+          && (request.resource.data.type == 'proposal_response'
+              || (!('proposalId' in request.resource.data) && !('proposalStatus' in request.resource.data)));
+        // Messages are immutable: no edits, no deletes (a conversation cannot be rewritten after the fact)
+        allow update, delete: if false;
       }
     }
 
-    // Abuse & Safety Reports
+    // ─── Push devices: one document per Expo push token; the Cloud Function reads them with the Admin SDK ──
+    // A token belongs to the phone, not the account: when someone else signs in on the same phone they take the
+    // document over (update allowed when the NEW uid is theirs), and the previous owner stops getting pushes.
+
+    match /devices/{deviceId} {
+      allow create, update: if verified()
+        && request.resource.data.keys().hasOnly(['uid', 'token', 'platform', 'language', 'updatedAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.token is string
+        && request.resource.data.token.matches('^Expo(nent)?PushToken\\[[A-Za-z0-9_-]{10,60}\\]$')
+        && deviceId == request.resource.data.token.replace('[^A-Za-z0-9_-]', '_')
+        && request.resource.data.platform in ['ios', 'android']
+        && request.resource.data.language in ['uk', 'en', 'pl', 'de']
+        && request.resource.data.updatedAt is string;
+      allow read, delete: if verified() && resource.data.uid == request.auth.uid;
+    }
+
+    // ─── Abuse reports: write-only for users, read by moderators through the Admin SDK ─────────────────
+
     match /reports/{reportId} {
-      allow read: if isSignedIn();
-      allow create: if isValidId(reportId);
+      allow create: if verified()
+        && request.resource.data.id == reportId
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+            'id', 'reporterId', 'reporterName', 'targetId', 'targetType', 'targetName', 'targetAvatar', 'category',
+            'categoryTitle', 'comment', 'timestamp', 'createdAt', 'status', 'syncedAt'
+          ])
+        && str(request.resource.data.comment, 500);
+      allow read, update, delete: if false;
+    }
+
+    // Everything else is closed
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

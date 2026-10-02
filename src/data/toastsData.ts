@@ -1,3 +1,4 @@
+import { ph } from '../services/i18nService';
 export interface ToastItem {
   id: string;
   text: string;
@@ -14,14 +15,14 @@ export interface ToastCategoryMeta {
 }
 
 export const TOAST_CATEGORIES: ToastCategoryMeta[] = [
-  { id: 'all', label: 'Всі тости', emoji: '🍻' },
-  { id: 'patriotic', label: 'За Перемогу & ЗСУ', emoji: '🇺🇦' },
-  { id: 'it_dev', label: 'IT, Код & Стартапи', emoji: '💻' },
-  { id: 'classic', label: 'Класичні & Компанія', emoji: '🍺' },
-  { id: 'humor', label: 'З гумором', emoji: '😂' },
-  { id: 'wine_love', label: 'Вино & Душевні', emoji: '🍷' },
-  { id: 'adventure', label: 'Мандри & Пригоди', emoji: '🧭' },
-  { id: 'craft_beer', label: 'Крафт & Хміль', emoji: '🌾' },
+  { id: 'all', label: ph('Всі тости'), emoji: '🍻' },
+  { id: 'patriotic', label: ph('За Перемогу & ЗСУ'), emoji: '🇺🇦' },
+  { id: 'it_dev', label: ph('IT, Код & Стартапи'), emoji: '💻' },
+  { id: 'classic', label: ph('Класичні & Компанія'), emoji: '🍺' },
+  { id: 'humor', label: ph('З гумором'), emoji: '😂' },
+  { id: 'wine_love', label: ph('Вино & Душевні'), emoji: '🍷' },
+  { id: 'adventure', label: ph('Мандри & Пригоди'), emoji: '🧭' },
+  { id: 'craft_beer', label: ph('Крафт & Хміль'), emoji: '🌾' },
 ];
 
 export const ALL_TOASTS: ToastItem[] = [

@@ -23,56 +23,42 @@ export interface VenuePlace {
 
 export const CATEGORY_CONFIG: Record<
   VenueCategory,
-  { label: string; icon: string; pinColor: string; bg: string; text: string }
+  { label: string; icon: string; pinColor: string }
 > = {
   craft: {
     label: 'Крафтове пиво',
     icon: '🍺',
     pinColor: '#f59e0b', // amber
-    bg: 'bg-amber-950/60 border-amber-800/40',
-    text: 'text-amber-400',
   },
   cocktail: {
     label: 'Коктейль-бар',
     icon: '🍸',
     pinColor: '#10b981', // emerald
-    bg: 'bg-emerald-950/60 border-emerald-800/40',
-    text: 'text-emerald-400',
   },
   wine: {
     label: 'Винний бар',
     icon: '🍷',
     pinColor: '#f43f5e', // rose
-    bg: 'bg-rose-950/60 border-rose-800/40',
-    text: 'text-rose-400',
   },
   pub: {
     label: 'Паб / Лагер',
     icon: '🍻',
     pinColor: '#eab308', // yellow
-    bg: 'bg-yellow-950/60 border-yellow-800/40',
-    text: 'text-yellow-400',
   },
   cider: {
     label: 'Сидерія',
     icon: '🍏',
     pinColor: '#84cc16', // lime
-    bg: 'bg-lime-950/60 border-lime-800/40',
-    text: 'text-lime-400',
   },
   cultural: {
     label: 'Арт-простір / Сквот',
     icon: '🎨',
     pinColor: '#a855f7', // purple
-    bg: 'bg-purple-950/60 border-purple-800/40',
-    text: 'text-purple-400',
   },
   shots: {
     label: 'Настоянки / Шоти',
     icon: '🍶',
     pinColor: '#ec4899', // pink
-    bg: 'bg-pink-950/60 border-pink-800/40',
-    text: 'text-pink-400',
   },
 };
 

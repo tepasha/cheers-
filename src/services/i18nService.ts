@@ -1,4 +1,7 @@
 import { AppLanguage, LanguageMeta, GeoBlockInfo } from '../types';
+import { en } from '../i18n/phrases/en';
+import { pl } from '../i18n/phrases/pl';
+import { de } from '../i18n/phrases/de';
 
 export const SUPPORTED_LANGUAGES: LanguageMeta[] = [
   {
@@ -30,9 +33,6 @@ export const SUPPORTED_LANGUAGES: LanguageMeta[] = [
     regionHint: 'Deutschland (DE)',
   },
 ];
-
-const LANG_STORAGE_KEY = 'budmo_app_lang';
-const RU_BLOCK_TEST_KEY = 'budmo_simulate_ru_block';
 
 // All official Russian timezones according to IANA database
 export const RUSSIAN_TIMEZONES = [
@@ -69,10 +69,12 @@ export const RUSSIAN_TIMEZONES = [
  * Checks whether user coordinates or environment indicate the Russian Federation.
  * The application enforces a strict, permanent block on Russian territory.
  */
-export function checkRussianTerritoryRestriction(coords?: { lat: number; lng: number } | null): GeoBlockInfo {
-  // Check if simulated block is active for testing
-  const simulated = typeof window !== 'undefined' && localStorage.getItem(RU_BLOCK_TEST_KEY) === 'true';
-  if (simulated) {
+export function checkRussianTerritoryRestriction(
+  coords?: { lat: number; lng: number } | null,
+  simulateBlock = false
+): GeoBlockInfo {
+  // Simulated block is toggled from the settings slice for testing
+  if (simulateBlock) {
     return {
       isBlocked: true,
       reason: 'СИМУЛЯЦІЯ: Тестове виявлення локації на території РФ (Тестовий режим)',
@@ -135,21 +137,31 @@ export function checkRussianTerritoryRestriction(coords?: { lat: number; lng: nu
  * Detects the best matching language based on user's geographic location & browser settings.
  * Russian language is intentionally NOT supported and will be filtered out.
  */
-export function detectLanguageFromGeo(coords?: { lat: number; lng: number } | null): {
+export function getDeviceLocales(): string[] {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+    return locale ? [locale] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function detectLanguageFromGeo(
+  coords?: { lat: number; lng: number } | null,
+  options: { storedLang?: AppLanguage | null; deviceLocales?: string[] } = {}
+): {
   lang: AppLanguage;
   source: 'stored' | 'geo' | 'browser' | 'default';
   locationHint: string;
 } {
   // 1. Check if user already manually selected a language
-  if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem(LANG_STORAGE_KEY) as AppLanguage | null;
-    if (stored && ['uk', 'en', 'pl', 'de'].includes(stored)) {
-      return {
-        lang: stored,
-        source: 'stored',
-        locationHint: 'Збережено користувачем',
-      };
-    }
+  const stored = options.storedLang;
+  if (stored && ['uk', 'en', 'pl', 'de'].includes(stored)) {
+    return {
+      lang: stored,
+      source: 'stored',
+      locationHint: ph('Збережено користувачем'),
+    };
   }
 
   let userTz = '';
@@ -164,15 +176,15 @@ export function detectLanguageFromGeo(coords?: { lat: number; lng: number } | nu
     const { lat, lng } = coords;
     // Ukraine approximate bounds
     if (lat >= 44.0 && lat <= 52.5 && lng >= 22.0 && lng <= 40.5) {
-      return { lang: 'uk', source: 'geo', locationHint: 'Україна (Київ / Гео-координати)' };
+      return { lang: 'uk', source: 'geo', locationHint: ph('Україна (Київ / Гео-координати)') };
     }
     // Poland approximate bounds
     if (lat >= 49.0 && lat <= 55.0 && lng >= 14.0 && lng <= 24.2) {
-      return { lang: 'pl', source: 'geo', locationHint: 'Польща (Гео-координати)' };
+      return { lang: 'pl', source: 'geo', locationHint: ph('Польща (Гео-координати)') };
     }
     // Germany approximate bounds
     if (lat >= 47.2 && lat <= 55.1 && lng >= 5.8 && lng <= 15.1) {
-      return { lang: 'de', source: 'geo', locationHint: 'Німеччина (Гео-координати)' };
+      return { lang: 'de', source: 'geo', locationHint: ph('Німеччина (Гео-координати)') };
     }
   }
 
@@ -183,55 +195,29 @@ export function detectLanguageFromGeo(coords?: { lat: number; lng: number } | nu
     userTz.includes('Uzhgorod') ||
     userTz.includes('Zaporozhye')
   ) {
-    return { lang: 'uk', source: 'geo', locationHint: 'Україна (Таймзона Київ)' };
+    return { lang: 'uk', source: 'geo', locationHint: ph('Україна (Таймзона Київ)') };
   }
 
   if (userTz.includes('Warsaw')) {
-    return { lang: 'pl', source: 'geo', locationHint: 'Польща (Таймзона Варшава)' };
+    return { lang: 'pl', source: 'geo', locationHint: ph('Польща (Таймзона Варшава)') };
   }
 
   if (userTz.includes('Berlin') || userTz.includes('Vienna') || userTz.includes('Zurich')) {
-    return { lang: 'de', source: 'geo', locationHint: 'Німеччина / DACH (Таймзона Берлін)' };
+    return { lang: 'de', source: 'geo', locationHint: ph('Німеччина / DACH (Таймзона Берлін)') };
   }
 
-  // 4. Check navigator language preferences
-  if (typeof navigator !== 'undefined') {
-    const navLangs = navigator.languages || [navigator.language || ''];
-    for (const raw of navLangs) {
-      const code = raw.toLowerCase().slice(0, 2);
-      if (code === 'uk') return { lang: 'uk', source: 'browser', locationHint: 'Мова браузера (Українська)' };
-      if (code === 'pl') return { lang: 'pl', source: 'browser', locationHint: 'Мова браузера (Polski)' };
-      if (code === 'de') return { lang: 'de', source: 'browser', locationHint: 'Мова браузера (Deutsch)' };
-      if (code === 'en') return { lang: 'en', source: 'browser', locationHint: 'Мова браузера (English)' };
-      // Note: 'ru' is explicitly ignored and blocked from setting language to Russian
-    }
+  // 4. Check device language preferences
+  for (const raw of options.deviceLocales ?? getDeviceLocales()) {
+    const code = raw.toLowerCase().slice(0, 2);
+    if (code === 'uk') return { lang: 'uk', source: 'browser', locationHint: ph('Мова пристрою (Українська)') };
+    if (code === 'pl') return { lang: 'pl', source: 'browser', locationHint: ph('Мова пристрою (Polski)') };
+    if (code === 'de') return { lang: 'de', source: 'browser', locationHint: ph('Мова пристрою (Deutsch)') };
+    if (code === 'en') return { lang: 'en', source: 'browser', locationHint: ph('Мова пристрою (English)') };
+    // Note: 'ru' is explicitly ignored and blocked from setting language to Russian
   }
 
   // Default domestic fallback
-  return { lang: 'uk', source: 'default', locationHint: 'За замовченням (Україна)' };
-}
-
-export function saveAppLanguage(lang: AppLanguage): void {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(LANG_STORAGE_KEY, lang);
-  }
-}
-
-export function setSimulateRuBlock(enable: boolean): void {
-  if (typeof window !== 'undefined') {
-    if (enable) {
-      localStorage.setItem(RU_BLOCK_TEST_KEY, 'true');
-    } else {
-      localStorage.removeItem(RU_BLOCK_TEST_KEY);
-    }
-  }
-}
-
-export function getSimulateRuBlock(): boolean {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem(RU_BLOCK_TEST_KEY) === 'true';
-  }
-  return false;
+  return { lang: 'uk', source: 'default', locationHint: ph('За замовчуванням (Україна)') };
 }
 
 // Translations dictionary
@@ -478,3 +464,30 @@ export function t(key: string, lang?: string | AppLanguage): string {
   const safeLang = (lang as AppLanguage) || 'uk';
   return TRANSLATIONS[safeLang]?.[key] || TRANSLATIONS['uk']?.[key] || key;
 }
+
+// ─── Phrase translation ─────────────────────────────────────────────────────
+// Screens and thunks write the Ukrainian text in code and wrap it: tr('Скарга на {name}', lang, { name }).
+// The Ukrainian text doubles as the lookup key; a unit test guarantees every key exists in en/pl/de and
+// that no Ukrainian UI literal is left outside tr()/ph().
+
+const PHRASES: Record<Exclude<AppLanguage, 'uk'>, Record<string, string>> = { en, pl, de };
+
+export type TrParams = Record<string, string | number>;
+
+const interpolate = (text: string, params?: TrParams) =>
+  params ? text.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match)) : text;
+
+export function tr(text: string, lang: AppLanguage | string | undefined, params?: TrParams): string {
+  const dictionary = lang && lang !== 'uk' ? PHRASES[lang as Exclude<AppLanguage, 'uk'>] : undefined;
+  return interpolate(dictionary?.[text] ?? text, params);
+}
+
+/**
+ * Marks a Ukrainian phrase that lives in data (labels, level names, validation messages) and is translated
+ * where it is displayed: `tr(item.label, lang)`. It returns the text unchanged; its job is to make the
+ * phrase discoverable so the tests can demand translations for it.
+ */
+export const ph = (text: string): string => text;
+
+/** BCP 47 locale for date/number formatting in the given UI language */
+export const LOCALE_BY_LANG: Record<AppLanguage, string> = { uk: 'uk-UA', en: 'en-GB', pl: 'pl-PL', de: 'de-DE' };
