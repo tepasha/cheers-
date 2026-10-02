@@ -1,6 +1,7 @@
 import { deleteApp, initializeApp } from 'firebase-admin/app';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { sendToExpo } from './expo';
+import type { CleanupDeps } from './lifecycle';
 import type { ChatDoc, Device, ExpoMessage, ExpoTicket, PushDeps } from './push';
 
 /** Firestore `in` queries accept up to 30 values */
@@ -52,4 +53,18 @@ export function createDeps(
 export function adminFirestoreFor(projectId: string): { db: Firestore; close: () => Promise<void> } {
   const app = initializeApp({ projectId }, projectId);
   return { db: getFirestore(app), close: () => deleteApp(app) };
+}
+
+export function createCleanupDeps(db: Firestore): CleanupDeps {
+  return {
+    async findBefore(collection, field, before, limit) {
+      const snap = await db.collection(collection).where(field, '<', before).limit(limit).get();
+      return snap.docs.map((d) => d.id);
+    },
+    async deleteMany(collection, ids) {
+      const batch = db.batch();
+      ids.forEach((id) => batch.delete(db.doc(`${collection}/${id}`)));
+      await batch.commit();
+    },
+  };
 }

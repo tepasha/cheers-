@@ -530,4 +530,10 @@ export const pl: Record<string, string> = {
   "Умови користування": "Regulamin",
   "Політика конфіденційності": "Polityka prywatności",
   "Реєструючись, ти погоджуєшся з Умовами користування та Політикою конфіденційності. Образливий контент і переслідування заборонені: на такі акаунти можна поскаржитися, їх буде заблоковано.": "Rejestrując się, akceptujesz Regulamin i Politykę prywatności. Obraźliwe treści i nękanie są zabronione: takie konta można zgłaszać, zostaną zablokowane.",
+  "Ця зустріч закінчилась": "To spotkanie się zakończyło",
+  "Столик у «{barName}» завершився: столики живуть 4 години.": "Stolik w „{barName}” się zakończył: stoliki trwają 4 godziny.",
+  "Ви можете відновити столик ще на 4 години.": "Możesz przywrócić stolik na kolejne 4 godziny.",
+  "Відновити столик": "Przywróć stolik",
+  "Не активний": "Nieaktywny",
+  "Не активний: давно не заходив(ла)": "Nieaktywny: dawno go nie było",
 };

@@ -1,5 +1,6 @@
 import { ph, tr } from '../services/i18nService';
 import type { AppLanguage } from '../types';
+import { meetupEndsAt } from './lifecycle';
 import { GroupMeetup, MeetupParticipant, BuddyProfile } from '../types';
 
 export interface CreateMeetupInput {
@@ -58,6 +59,7 @@ export function buildMeetup(params: CreateMeetupInput, now = Date.now()): GroupM
     scheduledDate: params.scheduledDate.trim(),
     scheduledTime: params.scheduledTime.trim(),
     dateTimeIso: params.dateTimeIso,
+    endsAt: meetupEndsAt(params.dateTimeIso, now),
     drinkPreference: params.drinkPreference?.trim() || ph('Келих за смаком'),
     maxParticipants: params.maxParticipants || 6,
     participants,

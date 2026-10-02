@@ -1,15 +1,15 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInUp, FadeOutUp } from 'react-native-reanimated';
+import React, { useEffect, useState } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors, radius, spacing, typography } from '../theme';
-import { Avatar, Icon, IconButton } from './ui';
+import { Avatar, Button, Icon, IconButton, Sheet } from './ui';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectActiveBanner, selectIsOnline, selectUnreadNotificationsCount } from '../store/selectors';
 import { notificationRead } from '../store/slices/notificationsSlice';
 import { dismissBanner } from '../store/thunks/notifications';
 import { navigateFromNotification } from '../navigation/ref';
+import { acknowledgeEndedTable, renewHangout } from '../store/thunks/lifecycle';
 import { useTr } from '../hooks/useT';
 
 export const OfflineBanner = () => {
@@ -51,8 +51,19 @@ export const ScreenHeader = ({ title, subtitle, right }: { title: string; subtit
 export const PushBanner = () => {
   const tr = useTr();
   const dispatch = useAppDispatch();
-  const banner = useAppSelector(selectActiveBanner);
+  const active = useAppSelector(selectActiveBanner);
   const insets = useSafeAreaInsets();
+
+  // The banner stays mounted while it slides out, so what is shown lags `active` by one animation
+  const [banner, setBanner] = useState(active);
+  const [progress] = useState(() => new Animated.Value(0));
+  if (active && active !== banner) setBanner(active); // adopting a new banner while rendering is the supported pattern
+  useEffect(() => {
+    Animated.timing(progress, { toValue: active ? 1 : 0, duration: active ? 200 : 160, useNativeDriver: true }).start(({ finished }) => {
+      if (finished && !active) setBanner(null);
+    });
+  }, [active, progress]);
+
   if (!banner) return null;
 
   const open = () => {
@@ -63,9 +74,10 @@ export const PushBanner = () => {
 
   return (
     <Animated.View
-      entering={FadeInUp.duration(200)}
-      exiting={FadeOutUp.duration(160)}
-      style={[styles.banner, { top: insets.top + spacing.sm }]}
+      style={[
+        styles.banner,
+        { top: insets.top + spacing.sm, opacity: progress, transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [-24, 0] }) }] },
+      ]}
       pointerEvents="box-none"
     >
       <Pressable accessibilityRole="button" accessibilityLabel={banner.title} onPress={open} style={styles.bannerInner}>
@@ -123,3 +135,41 @@ const styles = StyleSheet.create({
   bannerTitle: { color: colors.text, fontWeight: '700', fontSize: 13 },
   bannerBody: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
 });
+
+/**
+ * "This meetup has ended": shown when a table the user hosted or joined runs out of its 4 hours.
+ * The host can bring it back; guests just acknowledge.
+ */
+export const EndedTableModal = () => {
+  const tr = useTr();
+  const dispatch = useAppDispatch();
+  const table = useAppSelector((s) => s.ui.endedTables[0] ?? null);
+  const myId = useAppSelector((s) => s.auth.user.id);
+  const [renewing, setRenewing] = useState(false);
+  const isHost = !!table && table.userId === myId;
+
+  return (
+    <Sheet visible={!!table} onClose={() => table && dispatch(acknowledgeEndedTable(table.id))} title={tr('Ця зустріч закінчилась')}>
+      {table && (
+        <View style={{ gap: spacing.md }}>
+          <Text style={typography.body}>{tr('Столик у «{barName}» завершився: столики живуть 4 години.', { barName: table.barName })}</Text>
+          {isHost && <Text style={typography.small}>{tr('Ви можете відновити столик ще на 4 години.')}</Text>}
+          {isHost && (
+            <Button
+              label={tr('Відновити столик')}
+              icon="rotate-ccw"
+              loading={renewing}
+              onPress={async () => {
+                setRenewing(true);
+                const ok = await dispatch(renewHangout(table));
+                setRenewing(false);
+                if (!ok) dispatch(acknowledgeEndedTable(table.id));
+              }}
+            />
+          )}
+          <Button label={isHost ? tr('Закрити') : tr('Зрозуміло')} variant="secondary" onPress={() => dispatch(acknowledgeEndedTable(table.id))} />
+        </View>
+      )}
+    </Sheet>
+  );
+};

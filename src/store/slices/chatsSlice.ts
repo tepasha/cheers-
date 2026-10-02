@@ -12,7 +12,8 @@ interface ChatsState {
 const initialState: ChatsState = { threads: [], hiddenIds: [] };
 
 /** Keeps the persisted store bounded: only the newest messages live on the device */
-export const MAX_MESSAGES_PER_THREAD = 300;
+// The open chat only streams the newest 100 messages, so keeping more would just make every save slower
+export const MAX_MESSAGES_PER_THREAD = 100;
 
 const trim = (messages: Message[]) => {
   if (messages.length > MAX_MESSAGES_PER_THREAD) messages.splice(0, messages.length - MAX_MESSAGES_PER_THREAD);

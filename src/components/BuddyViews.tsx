@@ -42,6 +42,7 @@ export const BuddyCard = React.memo(({ buddy, actions }: { buddy: BuddyProfile; 
             </Text>
             {buddy.isFriend && <Icon name="user-check" size={14} color={colors.green} />}
           </Row>
+          {buddy.inactive && <Text style={[typography.tiny, { color: colors.textDim }]}>{tr('Не активний')}</Text>}
           <Text style={typography.small} numberOfLines={1}>
             📍 {buddy.locationName} • {formatDistance(buddy.distanceKm)}
           </Text>
@@ -90,6 +91,7 @@ export const BuddyTile = React.memo(({ buddy, actions }: { buddy: BuddyProfile; 
     <Text style={typography.tiny} numberOfLines={1}>
       {formatDistance(buddy.distanceKm)} • {buddy.locationName}
     </Text>
+    {buddy.inactive && <Text style={[typography.tiny, { color: colors.textDim }]}>{tr('Не активний')}</Text>}
     <Button label={tr('Будьмо!')} small onPress={() => actions.onToast(buddy)} style={{ alignSelf: 'stretch' }} />
   </Pressable>
 );
@@ -109,6 +111,7 @@ export const BuddySheet = ({ buddy, actions, onClose }: { buddy: BuddyProfile | 
               {buddy.name}, {buddy.age}
             </Text>
             <Text style={typography.small}>📍 {buddy.locationName}</Text>
+            {buddy.inactive && <Text style={[typography.tiny, { color: colors.textDim }]}>{tr('Не активний: давно не заходив(ла)')}</Text>}
             {buddy.levelTitle && <Badge label={tr('Рівень {level} • {levelTitle}', { level: buddy.level ?? 1, levelTitle: buddy.levelTitle })} />}
           </View>
         </Row>

@@ -530,4 +530,10 @@ export const en: Record<string, string> = {
   "Умови користування": "Terms of use",
   "Політика конфіденційності": "Privacy policy",
   "Реєструючись, ти погоджуєшся з Умовами користування та Політикою конфіденційності. Образливий контент і переслідування заборонені: на такі акаунти можна поскаржитися, їх буде заблоковано.": "By signing up you agree to the Terms of use and the Privacy policy. Offensive content and harassment are prohibited: such accounts can be reported and will be blocked.",
+  "Ця зустріч закінчилась": "This meetup has ended",
+  "Столик у «{barName}» завершився: столики живуть 4 години.": "The table at “{barName}” has ended: tables last 4 hours.",
+  "Ви можете відновити столик ще на 4 години.": "You can bring the table back for another 4 hours.",
+  "Відновити столик": "Bring the table back",
+  "Не активний": "Inactive",
+  "Не активний: давно не заходив(ла)": "Inactive: has not been around for a while",
 };

@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { personalDataReset } from '../actions';
 import { GroupMeetup } from '../../types';
+import { isMeetupArchived } from '../../logic/lifecycle';
 
 const meetupsSlice = createSlice({
   name: 'meetups',
@@ -17,11 +18,16 @@ const meetupsSlice = createSlice({
       action.payload.forEach((m) => byId.set(m.id, m));
       state.items = Array.from(byId.values());
     },
+    /** Drops meetups that are over (24 h after the start). They stay in the cloud archive for 30 days. */
+    archivedMeetupsPruned(state, action: PayloadAction<number>) {
+      const live = state.items.filter((m) => !isMeetupArchived(m, action.payload));
+      if (live.length !== state.items.length) state.items = live;
+    },
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, () => ({ items: [] as GroupMeetup[] }));
   },
 });
 
-export const { meetupUpserted, meetupsMerged } = meetupsSlice.actions;
+export const { meetupUpserted, meetupsMerged, archivedMeetupsPruned } = meetupsSlice.actions;
 export default meetupsSlice.reducer;

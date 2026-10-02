@@ -53,12 +53,13 @@ service cloud.firestore {
       return d.keys().hasOnly([
           'id', 'name', 'avatar', 'tagline', 'paymentRule', 'preferredDrinks', 'currentMood',
           'locationName', 'lat', 'lng', 'age', 'updatedAt', 'bio', 'favoriteBars', 'talkTopics',
-          'level', 'levelTitle', 'totalCheckIns'
+          'level', 'levelTitle', 'totalCheckIns', 'geohash', 'lastSeenAt'
         ])
         && d.id == uid
         && str(d.name, 60) && d.name.size() > 0
         && optStr(d, 'avatar', 500) && optStr(d, 'tagline', 140) && optStr(d, 'locationName', 120)
         && optStr(d, 'bio', 500) && optStr(d, 'levelTitle', 60) && optStr(d, 'updatedAt', 40)
+        && optStr(d, 'geohash', 12) && optStr(d, 'lastSeenAt', 40)
         && optNum(d, 'lat', -90, 90) && optNum(d, 'lng', -180, 180) && optNum(d, 'age', 18, 120)
         && optNum(d, 'level', 1, 100) && optNum(d, 'totalCheckIns', 0, 1000000)
         && (!('paymentRule' in d) || d.paymentRule in ['split_50_50', 'each_for_themselves', 'i_treat', 'rounds'])
@@ -68,7 +69,7 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      // Other users see a public profile; coordinates are rounded to ~1 km by the client.
+      // Other users see a public profile; coordinates are rounded to a ~20 m grid by the client (see logic/privacy).
       // Opening a profile by id respects blocks; the discovery list cannot (see header note).
       allow get: if verified() && (request.auth.uid == uid || !blockedBy(uid));
       allow list: if verified();
@@ -122,9 +123,10 @@ service cloud.firestore {
     function validHangout(d) {
       return d.keys().hasOnly([
           'id', 'userId', 'userName', 'userAvatar', 'barName', 'locationArea', 'drinkPreference', 'description',
-          'createdAt', 'createdAtTimestamp', 'slotsAvailable', 'participantsCount', 'lat', 'lng', 'status',
+          'createdAt', 'createdAtTimestamp', 'expiresAt', 'slotsAvailable', 'participantsCount', 'lat', 'lng', 'status',
           'joinedUsers', 'updatedAt'
         ])
+        && d.expiresAt is number
         && str(d.barName, 80) && d.barName.size() > 0
         && str(d.userName, 60) && optStr(d, 'userAvatar', 500)
         && optStr(d, 'locationArea', 120) && optStr(d, 'drinkPreference', 120) && optStr(d, 'description', 300)
@@ -153,11 +155,18 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid
         && validHangout(request.resource.data)
         && request.resource.data.participantsCount == 1
-        && request.resource.data.joinedUsers == [request.auth.uid];
+        && request.resource.data.joinedUsers == [request.auth.uid]
+        // A table lives 4 hours (+5 min of clock skew) from now: nobody can post one that never expires
+        && request.resource.data.expiresAt > request.time.toMillis()
+        && request.resource.data.expiresAt <= request.time.toMillis() + 14700000;
       allow update: if verified() && (
         (resource.data.userId == request.auth.uid
           && request.resource.data.userId == request.auth.uid
-          && validHangout(request.resource.data))
+          && validHangout(request.resource.data)
+          // The host may renew the table: a new expiry is accepted only up to 4 h (+ clock skew) from now
+          && (request.resource.data.expiresAt == resource.data.expiresAt
+            || (request.resource.data.expiresAt > request.time.toMillis()
+              && request.resource.data.expiresAt <= request.time.toMillis() + 14700000)))
         || isSeatJoin(request.auth.uid));
       allow delete: if verified() && resource.data.userId == request.auth.uid;
     }
@@ -169,8 +178,10 @@ service cloud.firestore {
       return d.keys().hasOnly([
           'id', 'title', 'description', 'venueName', 'venueAddress', 'scheduledDate', 'scheduledTime', 'dateTimeIso',
           'drinkPreference', 'maxParticipants', 'participants', 'creatorId', 'creatorName', 'creatorAvatar', 'status',
-          'lat', 'lng', 'distanceKm', 'distanceFormatted', 'createdAt', 'topicTag', 'updatedAt'
+          'lat', 'lng', 'distanceKm', 'distanceFormatted', 'createdAt', 'endsAt', 'topicTag', 'updatedAt'
         ])
+        // Listed until 24 h after the start, planned at most 90 days ahead (91 days = 7862400000 ms): `endsAt` cannot park a document forever
+        && d.endsAt is number && d.endsAt <= request.time.toMillis() + 7862400000
         && str(d.title, 80) && d.title.size() > 0
         && optStr(d, 'description', 300) && optStr(d, 'venueName', 100) && optStr(d, 'venueAddress', 160)
         && d.maxParticipants is number && d.maxParticipants >= 2 && d.maxParticipants <= 30

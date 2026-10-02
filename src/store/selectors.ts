@@ -4,6 +4,7 @@ import { BuddyProfile, HangoutAlert, GroupMeetup, UserGamificationState } from '
 import { calculateDistanceKm, formatDistance } from '../services/geoService';
 import { checkRussianTerritoryRestriction, ph } from '../services/i18nService';
 import { EMPTY_GAMIFICATION_STATE, getLevelInfo } from '../logic/gamification';
+import { NEARBY_MAX_PROFILES, NEARBY_RADIUS_KM } from '../logic/nearby';
 
 export const selectUser = (s: RootState) => s.auth.user;
 export const selectLocation = (s: RootState) => s.location.current;
@@ -23,18 +24,33 @@ export const selectGeoBlock = createSelector(
   (location, simulate) => checkRussianTerritoryRestriction(location, simulate)
 );
 
-/** Live buddies with distance recomputed from the current position, blocked users hidden */
+/**
+ * Live buddies with distance recomputed from the current position, blocked users hidden.
+ * A buddy whose source object, distance and friend flag are unchanged keeps the very same output object, so the
+ * memoized list rows (BuddyCard / BuddyTile) do not re-render when only something else in the list moved.
+ */
+const derivedBuddies = new Map<string, { source: BuddyProfile; out: BuddyProfile }>();
 export const selectBuddies = createSelector(
   [(s: RootState) => s.buddies.items, selectLocation, selectBlockedIds, selectFriendIds],
-  (items, location, blocked, friendIds): BuddyProfile[] =>
-    items
+  (items, location, blocked, friendIds): BuddyProfile[] => {
+    const seen = new Set<string>();
+    const result = items
       .filter((b) => !blocked.has(b.id))
-      .map((b) => ({
-        ...b,
-        distanceKm: calculateDistanceKm(location.lat, location.lng, b.coordinates.lat, b.coordinates.lng),
-        isFriend: friendIds.has(b.id),
-      }))
-      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .map((b) => {
+        const distanceKm = calculateDistanceKm(location.lat, location.lng, b.coordinates.lat, b.coordinates.lng);
+        const isFriend = friendIds.has(b.id);
+        seen.add(b.id);
+        const cached = derivedBuddies.get(b.id);
+        if (cached && cached.source === b && cached.out.distanceKm === distanceKm && cached.out.isFriend === isFriend) return cached.out;
+        const out = { ...b, distanceKm, isFriend };
+        derivedBuddies.set(b.id, { source: b, out });
+        return out;
+      })
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+    for (const id of derivedBuddies.keys()) if (!seen.has(id)) derivedBuddies.delete(id);
+    // The stream is already limited to the area; this applies the exact 3 km from the current position and the cap
+    return result.filter((b) => b.distanceKm <= NEARBY_RADIUS_KM).slice(0, NEARBY_MAX_PROFILES);
+  }
 );
 
 export const selectHangouts = createSelector(

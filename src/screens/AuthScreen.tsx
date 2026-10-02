@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
-import appIcon from '../../assets/icon.png';
+import appIcon from '../../assets/logo.png'; // 256 px copy: the 1024 px store icon would cost 1 MB of bundle
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Field, SegmentedControl } from '../components/ui';
 import { colors, radius, spacing, typography } from '../theme';

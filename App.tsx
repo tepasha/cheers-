@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DarkTheme, NavigationContainer, type Theme } from '@react-navigation/native';
 import { Provider } from 'react-redux';
@@ -11,7 +10,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 import { persistor, store } from './src/store';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/ref';
-import { PushBanner } from './src/components/shell';
+import { EndedTableModal, PushBanner } from './src/components/shell';
 import { useAppLifecycle, usePendingChatOpen } from './src/hooks/useAppLifecycle';
 import { useAppSelector } from './src/store/hooks';
 import { analyticsService } from './src/services/analyticsService';
@@ -59,6 +58,7 @@ const AppShell = () => {
     >
       <RootNavigator />
       <PushBanner />
+      <EndedTableModal />
     </NavigationContainer>
   );
 };
@@ -71,7 +71,7 @@ export default function App() {
   }, []);
 
   return (
-    <GestureHandlerRootView style={styles.root}>
+    <View style={styles.root}>
       <SafeAreaProvider>
         <Provider store={store}>
           <PersistGate
@@ -87,7 +87,7 @@ export default function App() {
           </PersistGate>
         </Provider>
       </SafeAreaProvider>
-    </GestureHandlerRootView>
+    </View>
   );
 }
 

@@ -1,12 +1,21 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, original, PayloadAction } from '@reduxjs/toolkit';
 import { HangoutAlert } from '../../types';
+import { reuseUnchanged } from '../../utils/reuse';
+import { isHangoutExpired } from '../../logic/lifecycle';
 
 const hangoutsSlice = createSlice({
   name: 'hangouts',
   initialState: { items: [] as HangoutAlert[] },
   reducers: {
     hangoutsSynced(state, action: PayloadAction<HangoutAlert[]>) {
-      state.items = action.payload;
+      const prev = original(state.items) ?? [];
+      const next = reuseUnchanged(prev, action.payload, ['distanceKm', 'distanceFormatted']) as HangoutAlert[];
+      if (next !== prev) state.items = next;
+    },
+    /** Drops tables whose 4 hours are over; the snapshot only filters when it arrives, and a quiet feed sends none */
+    expiredHangoutsPruned(state, action: PayloadAction<number>) {
+      const live = state.items.filter((h) => !isHangoutExpired(h, action.payload));
+      if (live.length !== state.items.length) state.items = live;
     },
     hangoutPublished(state, action: PayloadAction<HangoutAlert>) {
       state.items = [action.payload, ...state.items.filter((h) => h.id !== action.payload.id)];
@@ -25,5 +34,5 @@ const hangoutsSlice = createSlice({
   },
 });
 
-export const { hangoutsSynced, hangoutPublished, hangoutJoined, hangoutClosed } = hangoutsSlice.actions;
+export const { hangoutsSynced, expiredHangoutsPruned, hangoutPublished, hangoutJoined, hangoutClosed } = hangoutsSlice.actions;
 export default hangoutsSlice.reducer;

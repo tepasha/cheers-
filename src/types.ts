@@ -42,6 +42,10 @@ export interface BuddyProfile {
   favoriteBars: string[];
   talkTopics: string[];
   online: boolean;
+  /** ISO time the person last had the app open; drives the online dot and the "inactive" mark */
+  lastSeenAt?: string;
+  /** No visit for a week (computed when the profile arrives): shown as "inactive" instead of being hidden */
+  inactive?: boolean;
   activeCheckIn?: {
     barName: string;
     note: string;
@@ -127,6 +131,8 @@ export interface HangoutAlert {
   distanceKm?: number;
   distanceFormatted?: string;
   isLive?: boolean;
+  /** Epoch ms after which the table is gone (4 hours after posting, see logic/lifecycle) */
+  expiresAt?: number;
   status?: 'active' | 'closed';
   joinedUsers?: string[];
 }
@@ -161,6 +167,8 @@ export interface GroupMeetup {
   distanceKm?: number;
   distanceFormatted?: string;
   createdAt: string;
+  /** Epoch ms when the meetup leaves the lists: 24 h after it starts (see logic/lifecycle) */
+  endsAt?: number;
   topicTag?: string;
 }
 

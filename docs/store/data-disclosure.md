@@ -10,7 +10,8 @@
 | Імʼя | Contact Info → Name | Personal info → Name | профіль | так |
 | Дата народження | не має точної категорії: Other User Content / Other Data Types | Personal info → Other (дата народження) | перевірка 18+ | так |
 | Приблизне місцезнаходження | Location → Coarse Location | Location → Approximate location | показ людей і закладів поруч | ні (можна відмовити) |
-| Точне місцезнаходження | Location → Precise Location (використовується на пристрої, на сервер у публічному профілі йдуть округлені координати; уточніть у консолі, чи потрібно декларувати) | Location → Precise location | пошук поруч | ні |
+| Час останнього візиту | Usage Data → Product Interaction | App activity → App interactions | онлайн-статус, позначка «Не активний» | так |
+| Точне місцезнаходження | **Location → Precise Location: так, декларуйте.** У публічному профілі координати з точністю ~20 м і їх бачать інші користувачі | **Location → Precise location: так** (збирається й ділиться з іншими користувачами) | показ людей поруч | ні (можна відмовити) |
 | Повідомлення | User Content → Other User Content (повідомлення) | Messages → Other in-app messages | чати | так (функція) |
 | Фото профілю | User Content → Photos or Videos | Photos and videos | аватар | ні |
 | Ідентифікатор пристрою (push-токен) | Identifiers → Device ID | Device or other IDs | push-сповіщення | ні |

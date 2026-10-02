@@ -10,12 +10,14 @@ import { auth } from '../services/firebase';
 import { enforceSessionExpiry, handleFirebaseUser, touchSession } from '../store/thunks/auth';
 import { syncChatInbox } from '../store/thunks/inbox';
 import { buddiesSynced } from '../store/slices/buddiesSlice';
-import { hangoutsSynced } from '../store/slices/hangoutsSlice';
+import { pruneExpiredContent, syncHangouts } from '../store/thunks/lifecycle';
 import { meetupsMerged } from '../store/slices/meetupsSlice';
 import { languageAutoDetected } from '../store/slices/settingsSlice';
 import { locationUpdated } from '../store/slices/locationSlice';
 import { networkStatusChanged } from '../store/slices/uiSlice';
 import { getBatterySaverConfig } from '../logic/batterySaver';
+import { coarseCoordinate } from '../logic/privacy';
+import { PRESENCE_INTERVAL_MS, snapToQueryGrid } from '../logic/nearby';
 import { detectLanguageFromGeo } from '../services/i18nService';
 import { firestoreSyncService } from '../services/firestoreSyncService';
 import { toUserGeoLocation } from '../services/locationService';
@@ -27,6 +29,7 @@ import { navigationRef } from '../navigation/ref';
 import { configureNotifications, onPushTokenChanged, subscribeToNotificationTaps } from '../services/systemNotifications';
 
 const SESSION_CHECK_MS = 60_000;
+const EXPIRY_PRUNE_MS = 60_000;
 const PROFILE_SYNC_DEBOUNCE_MS = 1_500;
 const MIN_MOVE_DEGREES = 0.0003; // ~30 m
 
@@ -90,17 +93,18 @@ export function useFirestoreStreams() {
     const { realtimeSyncIntervalMs } = getBatterySaverConfig(batterySaver);
     return firestoreSyncService.subscribeToLiveHangouts(
       store.getState().location.current,
-      (items) => dispatch(hangoutsSynced(items)),
+      (items) => dispatch(syncHangouts(items)),
       { throttleMs: batterySaver ? realtimeSyncIntervalMs : 0 }
     );
   }, [dispatch, store, isLoggedIn, batterySaver]);
 
+  // "People nearby" is a query around the position, on a ~550 m grid so that walking does not re-subscribe each step
+  const gridLat = useAppSelector((s) => snapToQueryGrid(s.location.current.lat));
+  const gridLng = useAppSelector((s) => snapToQueryGrid(s.location.current.lng));
   useEffect(() => {
     if (!isLoggedIn) return;
-    return firestoreSyncService.subscribeToPublicBuddies(userId, store.getState().location.current, (items) =>
-      dispatch(buddiesSynced(items))
-    );
-  }, [dispatch, store, isLoggedIn, userId]);
+    return firestoreSyncService.subscribeToPublicBuddies(userId, { lat: gridLat, lng: gridLng }, (items) => dispatch(buddiesSynced(items)));
+  }, [dispatch, isLoggedIn, userId, gridLat, gridLng]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -121,10 +125,51 @@ export function useFirestoreStreams() {
   }, [dispatch, isLoggedIn, userId]);
 }
 
+/** Lets other people see that this person is around: once on launch, on every return to the app, and every 10 minutes */
+export function usePresence() {
+  const userId = useAppSelector((s) => s.auth.user.id);
+  const verified = useAppSelector((s) => s.auth.user.isLoggedIn && s.auth.user.emailVerified === true);
+
+  useEffect(() => {
+    if (!verified || !userId) return;
+    const touch = () => void firestoreSyncService.touchPresence(userId);
+    touch();
+    const timer = setInterval(() => AppState.currentState === 'active' && touch(), PRESENCE_INTERVAL_MS);
+    const sub = AppState.addEventListener('change', (state) => state === 'active' && touch());
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [verified, userId]);
+}
+
+/**
+ * Tables live 4 hours and meetups leave the lists a day after they start. The Firestore queries already exclude the
+ * expired ones, but a feed that stays quiet sends no snapshot, so what is on screen is pruned on a timer as well.
+ */
+export function useExpiryPruning() {
+  const dispatch = useAppDispatch();
+  useEffect(() => {
+    const prune = () => {
+      dispatch(pruneExpiredContent());
+    };
+    prune();
+    const timer = setInterval(prune, EXPIRY_PRUNE_MS);
+    const sub = AppState.addEventListener('change', (state) => state === 'active' && prune());
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [dispatch]);
+}
+
 /** Publishes identity + position to the public profile (debounced; never touches other fields) */
 export function useProfileSync() {
   const user = useAppSelector((s) => s.auth.user);
   const location = useAppSelector((s) => s.location.current);
+  // Only ~1 km steps are ever published, so a 30 m GPS move must not cause a Firestore write
+  const lat = coarseCoordinate(location.lat);
+  const lng = coarseCoordinate(location.lng);
 
   useEffect(() => {
     if (!user.isLoggedIn || !user.emailVerified || !user.id) return;
@@ -134,13 +179,13 @@ export function useProfileSync() {
         name: user.name,
         avatar: user.avatar,
         locationName: location.locationName,
-        lat: location.lat,
-        lng: location.lng,
+        lat,
+        lng,
         age: user.age,
       });
     }, PROFILE_SYNC_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [user.isLoggedIn, user.emailVerified, user.id, user.name, user.avatar, user.age, location.locationName, location.lat, location.lng]);
+  }, [user.isLoggedIn, user.emailVerified, user.id, user.name, user.avatar, user.age, location.locationName, lat, lng]);
 }
 
 /** Follows the device position while the user has opted in to real GPS (not a simulated preset) */
@@ -253,6 +298,8 @@ export function useAppLifecycle() {
   useSessionLifecycle();
   useNetworkStatus();
   useFirestoreStreams();
+  useExpiryPruning();
+  usePresence();
   useProfileSync();
   useLocationTracking();
   useLanguageAutoDetect();

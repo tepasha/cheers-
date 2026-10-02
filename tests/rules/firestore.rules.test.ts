@@ -52,6 +52,10 @@ describe('users', () => {
     await assertSucceeds(getDoc(doc(verifiedUser('alice'), 'users/bob')));
     await assertSucceeds(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice')));
     await assertFails(setDoc(doc(verifiedUser('alice'), 'users/bob'), profile('bob', { name: 'Hacked' })));
+    // the fields behind "people nearby" and presence
+    await assertSucceeds(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice', { geohash: 'u8vxn80js', lastSeenAt: '2026-10-10T12:00:00.000Z' })));
+    await assertFails(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice', { geohash: 'x'.repeat(40) })));
+    await assertFails(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice', { lastSeenAt: 12345 })));
     await assertFails(updateDoc(doc(verifiedUser('alice'), 'users/bob'), { name: 'Hacked' }));
     await assertFails(deleteDoc(doc(verifiedUser('alice'), 'users/bob')));
   });
@@ -94,7 +98,47 @@ describe('hangouts', () => {
   const hangout = (uid: string, over: Record<string, unknown> = {}) => ({
     id: 'h1', userId: uid, userName: 'Host', userAvatar: '', barName: 'Squat 17b', locationArea: 'Київ', drinkPreference: 'craft',
     description: '', createdAt: 'Щойно', createdAtTimestamp: 1, slotsAvailable: 2, participantsCount: 1, lat: 50.4, lng: 30.5,
-    status: 'active', joinedUsers: [uid], ...over,
+    status: 'active', joinedUsers: [uid], expiresAt: Date.now() + 4 * 3600_000, ...over,
+  });
+
+  describe('table lifetime (4 hours)', () => {
+    const HOUR = 3600_000;
+
+    it('accepts an expiry up to 4 hours ahead and refuses one that is in the past or too far ahead', async () => {
+      const db = verifiedUser('alice');
+      await assertSucceeds(setDoc(doc(db, 'hangouts/ok'), hangout('alice', { id: 'ok', expiresAt: Date.now() + 4 * HOUR })));
+      await assertFails(setDoc(doc(db, 'hangouts/past'), hangout('alice', { id: 'past', expiresAt: Date.now() - 1000 })));
+      await assertFails(setDoc(doc(db, 'hangouts/far'), hangout('alice', { id: 'far', expiresAt: Date.now() + 5 * HOUR })));
+      await assertFails(setDoc(doc(db, 'hangouts/forever'), hangout('alice', { id: 'forever', expiresAt: Date.now() + 365 * 24 * HOUR })));
+    });
+
+    it('requires a numeric expiry', async () => {
+      const db = verifiedUser('alice');
+      const { expiresAt: _omit, ...without } = hangout('alice', { id: 'none' });
+      await assertFails(setDoc(doc(db, 'hangouts/none'), without));
+      await assertFails(setDoc(doc(db, 'hangouts/str'), hangout('alice', { id: 'str', expiresAt: 'tomorrow' })));
+    });
+
+    it('lets the host renew the table, but only for at most 4 hours from now', async () => {
+      await seed((db) => setDoc(doc(db, 'hangouts/h1'), hangout('alice', { expiresAt: Date.now() - HOUR })));
+      const alice = verifiedUser('alice');
+      await assertFails(updateDoc(doc(alice, 'hangouts/h1'), { expiresAt: Date.now() + 8 * HOUR }));
+      await assertFails(updateDoc(doc(alice, 'hangouts/h1'), { expiresAt: Date.now() - 1000 }));
+      await assertSucceeds(updateDoc(doc(alice, 'hangouts/h1'), { expiresAt: Date.now() + 4 * HOUR }));
+      await assertSucceeds(updateDoc(doc(alice, 'hangouts/h1'), { description: 'Ще є місце' }));
+    });
+
+    it("nobody else can renew another person's table", async () => {
+      await seed((db) => setDoc(doc(db, 'hangouts/h1'), hangout('alice', { expiresAt: Date.now() - HOUR })));
+      await assertFails(updateDoc(doc(verifiedUser('bob'), 'hangouts/h1'), { expiresAt: Date.now() + 4 * HOUR }));
+    });
+
+    it('a seat join leaves the expiry untouched and cannot change it', async () => {
+      await seed((db) => setDoc(doc(db, 'hangouts/h1'), hangout('alice')));
+      const bob = verifiedUser('bob');
+      await assertFails(updateDoc(doc(bob, 'hangouts/h1'), { participantsCount: increment(1), joinedUsers: arrayUnion('bob'), expiresAt: Date.now() + 9 * HOUR }));
+      await assertSucceeds(updateDoc(doc(bob, 'hangouts/h1'), { participantsCount: increment(1), joinedUsers: arrayUnion('bob') }));
+    });
   });
 
   it('lets verified users create their own hangout only', async () => {
@@ -137,7 +181,29 @@ describe('group meetups', () => {
   const meetup = (creator: string, over: Record<string, unknown> = {}) => ({
     id: 'm1', title: 'Настілки', description: '', venueName: 'Squat', venueAddress: '', scheduledDate: '01.10.2026', scheduledTime: '19:00',
     maxParticipants: 6, participants: { [creator]: entry(creator, 'host') }, creatorId: creator, creatorName: creator, creatorAvatar: '',
-    status: 'upcoming', createdAt: 'x', ...over,
+    status: 'upcoming', createdAt: 'x', endsAt: Date.now() + 2 * 24 * 3600_000, ...over,
+  });
+
+  describe('meetup archive time', () => {
+    const DAY = 24 * 3600_000;
+
+    it('requires endsAt and caps how far ahead a meetup can be planned', async () => {
+      const db = verifiedUser('alice');
+      await assertSucceeds(setDoc(doc(db, 'group_meetups/ok'), meetup('alice', { id: 'ok', endsAt: Date.now() + 30 * DAY })));
+      await assertSucceeds(setDoc(doc(db, 'group_meetups/edge'), meetup('alice', { id: 'edge', endsAt: Date.now() + 90 * DAY })));
+      await assertFails(setDoc(doc(db, 'group_meetups/far'), meetup('alice', { id: 'far', endsAt: Date.now() + 400 * DAY })));
+      await assertFails(setDoc(doc(db, 'group_meetups/never'), meetup('alice', { id: 'never', endsAt: Number.MAX_SAFE_INTEGER })));
+      const { endsAt: _omit, ...without } = meetup('alice', { id: 'none' });
+      await assertFails(setDoc(doc(db, 'group_meetups/none'), without));
+      await assertFails(setDoc(doc(db, 'group_meetups/str'), meetup('alice', { id: 'str', endsAt: 'later' })));
+    });
+
+    it('the creator can reschedule within the same bounds, and not beyond them', async () => {
+      await seed((db) => setDoc(doc(db, 'group_meetups/m1'), meetup('alice')));
+      const alice = verifiedUser('alice');
+      await assertSucceeds(setDoc(doc(alice, 'group_meetups/m1'), meetup('alice', { endsAt: Date.now() + 10 * DAY })));
+      await assertFails(setDoc(doc(alice, 'group_meetups/m1'), meetup('alice', { endsAt: Date.now() + 500 * DAY })));
+    });
   });
 
   it('creates only as yourself', async () => {

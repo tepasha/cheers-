@@ -5,12 +5,12 @@ import auth, { loggedIn, loggedOut, sessionTouched, profileUpdated } from '@/sto
 import settings, { languageAutoDetected, languageChosen } from '@/store/slices/settingsSlice';
 import location, { locationUpdated } from '@/store/slices/locationSlice';
 import buddies, { buddiesSynced } from '@/store/slices/buddiesSlice';
-import hangouts, { hangoutClosed, hangoutJoined, hangoutPublished, hangoutsSynced } from '@/store/slices/hangoutsSlice';
+import hangouts, { expiredHangoutsPruned, hangoutClosed, hangoutJoined, hangoutPublished, hangoutsSynced } from '@/store/slices/hangoutsSlice';
 import chats, { MAX_MESSAGES_PER_THREAD, inboxSynced, chatDeleted, chatRead, directChatEnsured, groupChatCreated, messageAppended, messagesReceived, participantsAdded } from '@/store/slices/chatsSlice';
 import friends, { friendAdded, friendRemoved } from '@/store/slices/friendsSlice';
 import notifications, { allNotificationsRead, notificationReceived, notificationRead } from '@/store/slices/notificationsSlice';
 import gamification from '@/store/slices/gamificationSlice';
-import meetups, { meetupUpserted, meetupsMerged } from '@/store/slices/meetupsSlice';
+import meetups, { archivedMeetupsPruned, meetupUpserted, meetupsMerged } from '@/store/slices/meetupsSlice';
 import safety, { blocksSynced, reportFiled, userBlocked, userUnblocked } from '@/store/slices/safetySlice';
 import favorites, { favoriteRemoved, favoriteSaved } from '@/store/slices/favoritesSlice';
 import ui, { bannerDismissed, bannerShown } from '@/store/slices/uiSlice';
@@ -417,16 +417,46 @@ describe('selectors', () => {
     store.dispatch(friendAdded(buddy('near')));
 
     const list = selectBuddies(state(store));
-    expect(list.map((b) => b.id)).toEqual(['near', 'far']);
+    expect(list.map((b) => b.id)).toEqual(['near']); // `far` is 400 km away: outside the 3 km "nearby" radius
     expect(list[0].distanceKm).toBeLessThan(0.1);
     expect(list[0].isFriend).toBe(true);
-    expect(list[1].distanceKm).toBeGreaterThan(400);
   });
 
   it('memoizes derived lists', () => {
     const store = makeStore();
     store.dispatch(buddiesSynced([buddy('a')]));
     expect(selectBuddies(state(store))).toBe(selectBuddies(state(store)));
+  });
+
+  it('keeps the identity of buddies that did not change when a snapshot arrives', () => {
+    const store = makeStore();
+    store.dispatch(buddiesSynced([buddy('a'), buddy('b')]));
+    const first = selectBuddies(state(store));
+    const itemsBefore = state(store).buddies.items;
+
+    // A snapshot rebuilds every object; only b really changed
+    store.dispatch(buddiesSynced([buddy('a'), buddy('b', { tagline: 'new tagline' })]));
+    const second = selectBuddies(state(store));
+    const byId = (list: typeof first, id: string) => list.find((x) => x.id === id)!;
+    expect(byId(second, 'a')).toBe(byId(first, 'a')); // the memoized row for `a` does not re-render
+    expect(byId(second, 'b')).not.toBe(byId(first, 'b'));
+    expect(byId(second, 'b').tagline).toBe('new tagline');
+
+    // An identical snapshot changes nothing at all, not even the list
+    store.dispatch(buddiesSynced([buddy('a'), buddy('b', { tagline: 'new tagline' })]));
+    expect(state(store).buddies.items).toBe(state(store).buddies.items);
+    expect(selectBuddies(state(store))).toBe(second);
+    expect(itemsBefore).not.toBe(state(store).buddies.items);
+  });
+
+  it('recomputes a buddy when the distance or the friend flag changes', () => {
+    const store = makeStore();
+    store.dispatch(buddiesSynced([buddy('a')]));
+    const before = selectBuddies(state(store))[0];
+    store.dispatch(friendAdded(buddy('a')));
+    const after = selectBuddies(state(store))[0];
+    expect(after).not.toBe(before);
+    expect(after.isFriend).toBe(true);
   });
 
   it('falls back to the stored profile for friends who are offline', () => {
@@ -535,5 +565,46 @@ describe('proposal answers', () => {
     store.dispatch(messagesReceived({ chatId: 'chat-a', messages: [proposal(), response()] }));
     expect(status(store)).toBe('accepted');
     expect(state(store).chats.threads[0].messages).toHaveLength(2);
+  });
+});
+
+describe('expiry pruning', () => {
+  const HOUR = 3600_000;
+  const NOW = Date.UTC(2026, 9, 10, 12);
+
+  it('removes tables whose 4 hours are over, and tables that carry no expiry at all', () => {
+    const store = makeStore();
+    store.dispatch(
+      hangoutsSynced([
+        { id: 'live', expiresAt: NOW + HOUR } as HangoutAlert,
+        { id: 'over', expiresAt: NOW - 1 } as HangoutAlert,
+        { id: 'legacy' } as HangoutAlert,
+      ])
+    );
+    store.dispatch(expiredHangoutsPruned(NOW));
+    expect(state(store).hangouts.items.map((h) => h.id)).toEqual(['live']);
+  });
+
+  it('leaves the list untouched (same identity) when nothing expired', () => {
+    const store = makeStore();
+    store.dispatch(hangoutsSynced([{ id: 'live', expiresAt: NOW + HOUR } as HangoutAlert]));
+    const before = state(store).hangouts.items;
+    store.dispatch(expiredHangoutsPruned(NOW));
+    expect(state(store).hangouts.items).toBe(before);
+  });
+
+  it('drops a meetup 24 hours after it started, keeps a running one, and keeps one whose time is unknown', () => {
+    const store = makeStore();
+    const start = (h: number) => new Date(NOW + h * HOUR).toISOString();
+    store.dispatch(
+      meetupsMerged([
+        { id: 'tonight', creatorId: 'c', endsAt: NOW + 5 * HOUR } as never,
+        { id: 'yesterday', creatorId: 'c', dateTimeIso: start(-25) } as never,
+        { id: 'ended', creatorId: 'c', endsAt: NOW - 1 } as never,
+        { id: 'unknown', creatorId: 'c' } as never,
+      ])
+    );
+    store.dispatch(archivedMeetupsPruned(NOW));
+    expect(state(store).meetups.items.map((m) => m.id).sort()).toEqual(['tonight', 'unknown']);
   });
 });

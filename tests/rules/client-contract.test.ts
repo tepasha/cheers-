@@ -72,12 +72,13 @@ const message = (id: string, senderId: string, chatId: string, text = 'Прив�
 });
 
 describe('profiles', () => {
-  it('publishes a public profile with coarse coordinates and without email or birth date', async () => {
+  it('publishes a public profile with coordinates on the 20 m grid, a geohash, and without email or birth date', async () => {
     as('alice');
     await svc.saveUserProfile({ id: 'alice', name: 'Alice', avatar: 'https://x.test/a.png', locationName: 'Київ', lat: 50.4635123, lng: 30.5180456, age: 27 });
     expect(warned()).toBe(0);
     const data = (await admin((db) => getDoc(doc(db, 'users/alice')))).data()!;
-    expect(data).toMatchObject({ id: 'alice', name: 'Alice', lat: 50.46, lng: 30.52 });
+    expect(data).toMatchObject({ id: 'alice', name: 'Alice', lat: 50.4636, lng: 30.518 }); // the 0.0002 degree (~20 m) grid
+    expect(data.geohash).toMatch(/^u8vx/);
     expect(data).not.toHaveProperty('email');
     expect(data).not.toHaveProperty('birthDate');
   });

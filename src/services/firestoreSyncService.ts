@@ -12,6 +12,8 @@ import {
   updateDoc,
   arrayUnion as arrayUnionFs,
   orderBy,
+  startAt,
+  endAt,
   limit,
   writeBatch,
   runTransaction,
@@ -22,8 +24,6 @@ import {
 
 /** Newest messages loaded per chat; older history is not streamed */
 const CHAT_PAGE_SIZE = 100;
-/** Upper bound for the public-profiles stream until geo-queries replace it */
-const BUDDIES_LIMIT = 200;
 import { db } from './firebase';
 import { FavoriteVenueItem, PaymentEtiquette, DrinkType, Message, HangoutAlert, UserGamificationState, BuddyProfile, GroupMeetup, ChatThread, ChatParticipant } from '../types';
 import type { CloudChat } from '../logic/chats';
@@ -33,6 +33,9 @@ import { omitUndefined } from '../utils/firestoreData';
 import type { BlockedUserRecord } from '../types';
 import { cryptoService } from './cryptoService';
 import { deviceIdFor } from '../logic/push';
+import { hangoutExpiresAt, isHangoutExpired } from '../logic/lifecycle';
+import { coarseCoordinate as coarse } from '../logic/privacy';
+import { isInactive, isOnline, nearbyQueryBounds, PER_RANGE_LIMIT, pickNearby, publicGeohash, type GeoPoint } from '../logic/nearby';
 import { UserGeoLocation, calculateDistanceKm, formatDistance } from './geoService';
 
 export interface FirestoreUserProfile {
@@ -47,6 +50,9 @@ export interface FirestoreUserProfile {
   lng?: number;
   updatedAt?: string;
   age?: number;
+  /** Added on save from the coarsened coordinates; used for the "nearby" range queries */
+  geohash?: string;
+  lastSeenAt?: string;
 }
 
 /** Data only the owner may read: never shown to other users */
@@ -55,9 +61,6 @@ export interface PrivateProfile {
   birthDate?: string;
 }
 
-/** Public coordinates are rounded to 2 decimals (~1 km) so a profile never reveals an exact position */
-export const PUBLIC_COORD_PRECISION = 100;
-const coarse = (n: number) => Math.round(n * PUBLIC_COORD_PRECISION) / PUBLIC_COORD_PRECISION;
 
 /** Decrypts the details of a meetup proposal; a proposal starts out pending until an answer message says otherwise */
 async function readProposal(cipher: string, chatId: string): Promise<Message['proposalData']> {
@@ -78,6 +81,7 @@ export const firestoreSyncService = {
       const fields = Object.fromEntries(Object.entries(profile).filter(([, v]) => v !== undefined));
       if (typeof fields.lat === 'number') fields.lat = coarse(fields.lat);
       if (typeof fields.lng === 'number') fields.lng = coarse(fields.lng);
+      if (typeof fields.lat === 'number' && typeof fields.lng === 'number') fields.geohash = publicGeohash(fields.lat, fields.lng);
       await setDoc(doc(db, 'users', profile.id), { ...fields, updatedAt: new Date().toISOString() }, { merge: true });
     } catch (error) {
       console.warn('Firestore sync failed, local state preserved:', error);
@@ -219,6 +223,7 @@ export const firestoreSyncService = {
         description: hangout.description,
         createdAt: hangout.createdAt,
         createdAtTimestamp: Date.now(),
+        expiresAt: hangout.expiresAt ?? hangoutExpiresAt(Date.now()),
         slotsAvailable: Number(hangout.slotsAvailable ?? 2),
         participantsCount: Number(hangout.participantsCount ?? 1),
         lat: typeof hangout.lat === 'number' ? hangout.lat : null,
@@ -242,7 +247,8 @@ export const firestoreSyncService = {
     options: { throttleMs?: number } = {}
   ): () => void {
     try {
-      const hangoutsCol = collection(db, 'hangouts');
+      // Only tables that are still live: expired ones are never read (and never billed), whoever forgot to close them
+      const hangoutsCol = query(collection(db, 'hangouts'), where('expiresAt', '>', Date.now()));
       let lastEmissionTimestamp = 0;
 
       const unsubscribe = onSnapshot(
@@ -258,7 +264,7 @@ export const firestoreSyncService = {
           const liveFirestoreItems: HangoutAlert[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data();
-            if (data.status === 'closed') return;
+            if (data.status === 'closed' || isHangoutExpired(data, now)) return;
 
             let distKm: number | undefined = undefined;
             let distFormatted: string | undefined = undefined;
@@ -291,6 +297,7 @@ export const firestoreSyncService = {
               distanceKm: distKm,
               distanceFormatted: distFormatted,
               isLive: true,
+              expiresAt: data.expiresAt,
               status: data.status || 'active',
               joinedUsers: Array.isArray(data.joinedUsers) ? data.joinedUsers : [],
             });
@@ -347,6 +354,22 @@ export const firestoreSyncService = {
   /**
    * Закрити / завершити активний чекін у барі
    */
+  /**
+   * The host brings their table back for another 4 hours. While the document still exists only the expiry changes
+   * (guests keep their seats); once the cleanup removed it, a fresh table is posted without guests.
+   */
+  async renewHangout(hangout: HangoutAlert): Promise<number> {
+    const expiresAt = hangoutExpiresAt(Date.now());
+    const ref = doc(db, 'hangouts', hangout.id);
+    const existing = await getDoc(ref);
+    if (existing.exists()) {
+      await updateDoc(ref, { expiresAt, updatedAt: new Date().toISOString() });
+    } else {
+      await this.publishHangout({ ...hangout, expiresAt, participantsCount: 1, joinedUsers: [hangout.userId] });
+    }
+    return expiresAt;
+  },
+
   async closeLiveHangout(hangoutId: string): Promise<void> {
     try {
       const hangoutRef = doc(db, 'hangouts', hangoutId);
@@ -386,8 +409,9 @@ export const firestoreSyncService = {
    */
   subscribeToMeetups(callback: (meetups: GroupMeetup[]) => void): () => void {
     try {
+      // Meetups are listed until 24 h after their start; the archive (30 more days) is not loaded
       return onSnapshot(
-        collection(db, 'group_meetups'),
+        query(collection(db, 'group_meetups'), where('endsAt', '>', Date.now())),
         (snapshot) => {
           const meetups: GroupMeetup[] = [];
           snapshot.forEach((d) => {
@@ -699,77 +723,80 @@ export const firestoreSyncService = {
   },
 
   /**
-   * Subscribes to real registered users in Cloud Firestore (excluding current user)
+   * "People nearby": registered users within ~3 km of `center`, nearest first, at most 50. Firestore cannot filter by
+   * distance, so the circle is covered by a few geohash ranges (one listener each) and the exact distance is applied
+   * here. Users without a location carry no geohash and are never returned.
    */
   subscribeToPublicBuddies(
     currentUserId: string,
-    userLocation: UserGeoLocation,
+    center: GeoPoint,
     callback: (buddies: BuddyProfile[]) => void
   ): () => void {
     try {
-      const usersQuery = query(collection(db, 'users'), limit(BUDDIES_LIMIT));
-      const unsubscribe = onSnapshot(
-        usersQuery,
-        (snapshot) => {
-          if (snapshot.empty) {
-            callback([]);
-            return;
-          }
+      const bounds = nearbyQueryBounds(center);
+      const byRange = new Map<number, BuddyProfile[]>();
+      const emit = () => callback(pickNearby(Array.from(byRange.values()).flat(), center));
 
-          const liveBuddies: BuddyProfile[] = [];
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            const uid = docSnap.id;
-            // Skip current user or empty records
-            if (uid === currentUserId || !data.name) return;
+      const unsubscribes = bounds.map(([start, end], index) =>
+        onSnapshot(
+          query(collection(db, 'users'), orderBy('geohash'), startAt(start), endAt(end), limit(PER_RANGE_LIMIT)),
+          (snapshot) => {
+            const now = Date.now();
+            const found: BuddyProfile[] = [];
+            snapshot.forEach((docSnap) => {
+              const data = docSnap.data();
+              const uid = docSnap.id;
+              if (uid === currentUserId || !data.name) return;
+              if (typeof data.lat !== 'number' || typeof data.lng !== 'number') return; // no location: not "nearby"
 
-            const lat = typeof data.lat === 'number' ? data.lat : 50.45;
-            const lng = typeof data.lng === 'number' ? data.lng : 30.52;
-            const distKm =
-              userLocation && typeof userLocation.lat === 'number'
-                ? calculateDistanceKm(userLocation.lat, userLocation.lng, lat, lng)
-                : 1.0;
-
-            liveBuddies.push({
-              id: uid,
-              name: data.name,
-              age: typeof data.age === 'number' ? data.age : 26,
-              avatar:
-                data.avatar || '',
-              tagline: data.tagline || ph('Радий знайомству за келихом 🍻'),
-              bio: data.bio || '',
-              locationName: data.locationName || ph('Київ'),
-              distanceKm: distKm,
-              coordinates: { lat, lng },
-              preferredDrinks: Array.isArray(data.preferredDrinks) && data.preferredDrinks.length > 0
-                ? data.preferredDrinks
-                : ['craft'],
-              paymentRule: data.paymentRule || 'split_50_50',
-              currentMood: data.currentMood || 'chill_talk',
-              favoriteBars: Array.isArray(data.favoriteBars) ? data.favoriteBars : [],
-              talkTopics: Array.isArray(data.talkTopics) ? data.talkTopics : [],
-              online: Boolean(data.online ?? true),
-              activeCheckIn: data.activeCheckIn || undefined,
-              level: data.level || 1,
-              levelTitle: data.levelTitle,
-              totalCheckIns: data.totalCheckIns,
+              found.push({
+                id: uid,
+                name: data.name,
+                age: typeof data.age === 'number' ? data.age : 26,
+                avatar: data.avatar || '',
+                tagline: data.tagline || ph('Радий знайомству за келихом 🍻'),
+                bio: data.bio || '',
+                locationName: data.locationName || ph('Київ'),
+                distanceKm: 0, // set by pickNearby, recomputed from the live position in selectors
+                coordinates: { lat: data.lat, lng: data.lng },
+                preferredDrinks: Array.isArray(data.preferredDrinks) && data.preferredDrinks.length > 0 ? data.preferredDrinks : ['craft'],
+                paymentRule: data.paymentRule || 'split_50_50',
+                currentMood: data.currentMood || 'chill_talk',
+                favoriteBars: Array.isArray(data.favoriteBars) ? data.favoriteBars : [],
+                talkTopics: Array.isArray(data.talkTopics) ? data.talkTopics : [],
+                online: isOnline(data.lastSeenAt, now),
+                inactive: isInactive(data.lastSeenAt, now),
+                lastSeenAt: typeof data.lastSeenAt === 'string' ? data.lastSeenAt : undefined,
+                activeCheckIn: data.activeCheckIn || undefined,
+                level: data.level || 1,
+                levelTitle: data.levelTitle,
+                totalCheckIns: data.totalCheckIns,
+              });
             });
-          });
-
-          // Sort by distance
-          liveBuddies.sort((a, b) => a.distanceKm - b.distanceKm);
-          callback(liveBuddies);
-        },
-        (error) => {
-          console.warn('[Firestore] Error subscribing to public buddies:', error);
-          callback([]);
-        }
+            byRange.set(index, found);
+            emit();
+          },
+          (error) => {
+            console.warn('[Firestore] Error subscribing to nearby profiles:', error);
+            byRange.set(index, []);
+            emit();
+          }
+        )
       );
 
-      return unsubscribe;
+      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
     } catch (err) {
-      console.warn('[Firestore] Failed to establish public buddies listener:', err);
+      console.warn('[Firestore] Failed to establish nearby profiles listener:', err);
       return () => {};
+    }
+  },
+
+  /** Tells other users this person has the app open (the online dot, and the "inactive" mark after a week away) */
+  async touchPresence(userId: string): Promise<void> {
+    try {
+      await setDoc(doc(db, 'users', userId), { id: userId, lastSeenAt: new Date().toISOString() }, { merge: true });
+    } catch (error) {
+      console.warn('Could not update presence:', error);
     }
   },
 

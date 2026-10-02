@@ -40,6 +40,12 @@ const base = () =>
   );
 
 describe('meetup logic', () => {
+  it('is archived 24 hours after its start, or 24 hours after creation when no time was chosen', () => {
+    expect(base().endsAt).toBe(Date.parse('2026-10-01T16:00:00.000Z') + 24 * 3600_000);
+    const undated = buildMeetup({ title: 'x', description: '', venueName: '', venueAddress: '', scheduledDate: '', scheduledTime: '', maxParticipants: 2, creatorId: 'h', creatorName: 'H', creatorAvatar: '' }, 5000);
+    expect(undated.endsAt).toBe(5000 + 24 * 3600_000);
+  });
+
   it('builds a meetup with the host going and invitees invited', () => {
     const m = base();
     expect(m.id).toBe('meetup-1000');

@@ -1,3 +1,4 @@
+import { hangoutExpiresAt } from '../../logic/lifecycle';
 import { BuddyProfile, ChatParticipant, ChatThread, HangoutAlert, Message } from '../../types';
 import type { AppThunk } from '../hooks';
 import {
@@ -291,8 +292,9 @@ export const toggleFriend =
 // ─── Hangouts (live bar check-ins) ──────────────────────────────────────────
 
 export const publishHangout =
-  (hangout: HangoutAlert): AppThunk<Promise<void>> =>
+  (posted: HangoutAlert): AppThunk<Promise<void>> =>
   async (dispatch) => {
+    const hangout = { ...posted, expiresAt: posted.expiresAt ?? hangoutExpiresAt(Date.now()) };
     analyticsService.trackMeetupAction('create', hangout.id, {
       bar_name: hangout.barName,
       created_at: hangout.createdAt,

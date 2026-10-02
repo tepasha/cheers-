@@ -56,7 +56,7 @@ import { firestoreSyncService } from '@/services/firestoreSyncService';
 import { createUser, SESSION_DURATION_MS } from '@/logic/session';
 import { languageChosen } from '@/store/slices/settingsSlice';
 import { authService } from '@/services/authService';
-import { addFriend, addGroupParticipants, closeHangout, createGroupChat, deleteChat, joinHangout, matchWithBuddy, openDirectChat, respondToProposal, sendMessage, toggleFriend } from '@/store/thunks/social';
+import { addFriend, addGroupParticipants, closeHangout, createGroupChat, deleteChat, joinHangout, matchWithBuddy, openDirectChat, publishHangout, respondToProposal, sendMessage, toggleFriend } from '@/store/thunks/social';
 import { dismissBanner, pushNotification } from '@/store/thunks/notifications';
 import { blockUser, submitReport, syncBlocksFromCloud, triggerSosAlert, unblockUser } from '@/store/thunks/safety';
 import { cancelMeetup, createMeetup, joinMeetup, inviteToMeetup, leaveMeetup } from '@/store/thunks/meetups';
@@ -748,5 +748,24 @@ describe('answering a meetup proposal', () => {
     s.dispatch(languageChosen('en'));
     run(s, respondToProposal('dm_a_me', 'p1', 'declined'));
     expect(st(s).chats.threads[0].lastMessage).toBe('Not this time 🙏');
+  });
+});
+
+describe('publishing a table', () => {
+  it('gives it a 4 hour lifetime, locally and in the cloud', async () => {
+    const s = makeStore();
+    const before = Date.now();
+    await run<Promise<void>>(s, publishHangout({ id: 'h1', userId: 'me', userName: 'Me', userAvatar: '', barName: 'Squat', locationArea: '', drinkPreference: '', description: '', createdAt: 'x', slotsAvailable: 2, participantsCount: 1, joinedUsers: ['me'] }));
+
+    const local = st(s).hangouts.items[0];
+    expect(local.expiresAt).toBeGreaterThanOrEqual(before + 4 * 3600_000);
+    expect(local.expiresAt).toBeLessThanOrEqual(Date.now() + 4 * 3600_000);
+    expect(sync.publishHangout).toHaveBeenCalledWith(expect.objectContaining({ id: 'h1', expiresAt: local.expiresAt }));
+  });
+
+  it('keeps an expiry that was already set', async () => {
+    const s = makeStore();
+    await run<Promise<void>>(s, publishHangout({ id: 'h2', userId: 'me', userName: 'Me', userAvatar: '', barName: 'Squat', locationArea: '', drinkPreference: '', description: '', createdAt: 'x', slotsAvailable: 2, participantsCount: 1, joinedUsers: ['me'], expiresAt: 12345 }));
+    expect(st(s).hangouts.items[0].expiresAt).toBe(12345);
   });
 });

@@ -530,4 +530,10 @@ export const de: Record<string, string> = {
   "Умови користування": "Nutzungsbedingungen",
   "Політика конфіденційності": "Datenschutzerklärung",
   "Реєструючись, ти погоджуєшся з Умовами користування та Політикою конфіденційності. Образливий контент і переслідування заборонені: на такі акаунти можна поскаржитися, їх буде заблоковано.": "Mit der Registrierung stimmst du den Nutzungsbedingungen und der Datenschutzerklärung zu. Anstößige Inhalte und Belästigung sind verboten: solche Konten können gemeldet werden und werden gesperrt.",
+  "Ця зустріч закінчилась": "Dieses Treffen ist beendet",
+  "Столик у «{barName}» завершився: столики живуть 4 години.": "Der Tisch in „{barName}“ ist beendet: Tische bestehen 4 Stunden.",
+  "Ви можете відновити столик ще на 4 години.": "Du kannst den Tisch für weitere 4 Stunden wiederherstellen.",
+  "Відновити столик": "Tisch wiederherstellen",
+  "Не активний": "Inaktiv",
+  "Не активний: давно не заходив(ла)": "Inaktiv: war länger nicht da",
 };

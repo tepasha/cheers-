@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(randomBytes(n)) }));
 
-import { createEncryptedStorage, type KeyVault, type StringStorage } from '@/store/secureStorage';
+import { createEncryptedStorage, createSplitStorage, type KeyVault, type StringStorage } from '@/store/secureStorage';
 
 const memory = (): StringStorage & { data: Map<string, string> } => {
   const data = new Map<string, string>();
@@ -82,5 +82,107 @@ describe('encrypted persistence storage', () => {
     await storage.setItem('a', '1');
     await storage.removeItem('a');
     expect(await storage.getItem('a')).toBeNull();
+  });
+});
+
+describe('split persistence storage', () => {
+  /** What redux-persist writes: every slice already stringified */
+  const state = (slices: Record<string, unknown>) => JSON.stringify(Object.fromEntries(Object.entries(slices).map(([k, v]) => [k, JSON.stringify(v)])));
+  const counting = () => {
+    const inner = memory();
+    const writes: string[] = [];
+    const wrapped: StringStorage = { ...inner, setItem: async (k, v) => (writes.push(k), inner.setItem(k, v)) };
+    return { inner, writes, wrapped };
+  };
+
+  it('round-trips the state and keeps every slice under its own key', async () => {
+    const { inner, wrapped } = counting();
+    const storage = createSplitStorage(wrapped);
+    const value = state({ chats: { threads: [1, 2] }, auth: { id: 'u' }, _persist: { version: 1, rehydrated: true } });
+    await storage.setItem('root', value);
+
+    expect([...inner.data.keys()].sort()).toEqual(['root', 'root._persist', 'root.auth', 'root.chats']);
+    expect(JSON.parse((await storage.getItem('root'))!)).toEqual(JSON.parse(value));
+  });
+
+  it('rewrites only the slices that changed', async () => {
+    const { writes, wrapped } = counting();
+    const storage = createSplitStorage(wrapped);
+    await storage.setItem('root', state({ chats: { n: 1 }, location: { lat: 1 } }));
+    writes.length = 0;
+
+    await storage.setItem('root', state({ chats: { n: 1 }, location: { lat: 2 } }));
+    expect(writes).toEqual(['root.location']); // the (large) chats slice was not touched
+
+    writes.length = 0;
+    await storage.setItem('root', state({ chats: { n: 1 }, location: { lat: 2 } }));
+    expect(writes).toEqual([]);
+  });
+
+  it('skips unchanged slices right after a restart too (cache primed by the read)', async () => {
+    const { inner, wrapped } = counting();
+    const before = createSplitStorage(wrapped);
+    await before.setItem('root', state({ chats: { n: 1 }, location: { lat: 1 } }));
+
+    const writes: string[] = [];
+    const restarted = createSplitStorage({ ...inner, setItem: async (k, v) => (writes.push(k), inner.setItem(k, v)) });
+    await restarted.getItem('root');
+    await restarted.setItem('root', state({ chats: { n: 1 }, location: { lat: 2 } }));
+    expect(writes).toEqual(['root.location']);
+  });
+
+  it('drops the keys of slices that are gone', async () => {
+    const { inner, wrapped } = counting();
+    const storage = createSplitStorage(wrapped);
+    await storage.setItem('root', state({ a: 1, b: 2 }));
+    await storage.setItem('root', state({ a: 1 }));
+    expect(inner.data.has('root.b')).toBe(false);
+    expect(JSON.parse((await storage.getItem('root'))!)).toEqual({ a: '1' });
+  });
+
+  it('reads a value written before the split existed, and converts it on the next write', async () => {
+    const { inner, wrapped } = counting();
+    const legacy = state({ chats: { n: 1 } });
+    inner.data.set('root', legacy);
+    const storage = createSplitStorage(wrapped);
+
+    expect(await storage.getItem('root')).toBe(legacy);
+    await storage.setItem('root', state({ chats: { n: 2 } }));
+    expect(inner.data.has('root.chats')).toBe(true);
+    expect(JSON.parse((await storage.getItem('root'))!)).toEqual({ chats: '{"n":2}' });
+  });
+
+  it('survives a missing slice (interrupted write): the rest still loads', async () => {
+    const { inner, wrapped } = counting();
+    const storage = createSplitStorage(wrapped);
+    await storage.setItem('root', state({ a: 1, b: 2 }));
+    inner.data.delete('root.b');
+    expect(JSON.parse((await createSplitStorage(wrapped).getItem('root'))!)).toEqual({ a: '1' });
+  });
+
+  it('passes through anything that is not a map of strings', async () => {
+    const { inner, wrapped } = counting();
+    const storage = createSplitStorage(wrapped);
+    await storage.setItem('raw', 'not json');
+    expect(inner.data.get('raw')).toBe('not json');
+    expect(await storage.getItem('raw')).toBe('not json');
+  });
+
+  it('removes the index and every slice', async () => {
+    const { inner, wrapped } = counting();
+    const storage = createSplitStorage(wrapped);
+    await storage.setItem('root', state({ a: 1, b: 2 }));
+    await storage.removeItem('root');
+    expect([...inner.data.keys()]).toEqual([]);
+    expect(await storage.getItem('root')).toBeNull();
+  });
+
+  it('composes with encryption: nothing readable lands in the underlying store', async () => {
+    const inner = memory();
+    const storage = createSplitStorage(createEncryptedStorage(inner, vault()));
+    const value = state({ chats: { text: 'Секретне 🍻' } });
+    await storage.setItem('root', value);
+    expect([...inner.data.values()].join('')).not.toContain('Секретне');
+    expect(await storage.getItem('root')).toBe(value);
   });
 });
