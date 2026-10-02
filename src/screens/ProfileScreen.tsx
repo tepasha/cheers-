@@ -18,6 +18,7 @@ import { SUPPORTED_LANGUAGES } from '../services/i18nService';
 import { analyticsService } from '../services/analyticsService';
 import { requestDeviceLocation } from '../services/locationService';
 import { disablePush, registerPush } from '../store/thunks/push';
+import { LegalLinks } from '../components/LegalLinks';
 import { formatJoinedAt, formatRemainingSession } from '../logic/session';
 import { calculateAge } from '../utils/ageUtils';
 import { isoToDateInput, parseBirthDateInput } from '../logic/dateInput';
@@ -162,6 +163,10 @@ export const ProfileScreen = () => {
           {SUPPORT_LINKS.map((l) => (
             <Button key={l.url} label={tr(l.label)} icon={l.icon} variant="secondary" onPress={() => Linking.openURL(l.url)} />
           ))}
+        </View>
+
+        <View style={{ marginTop: spacing.sm }}>
+          <LegalLinks />
         </View>
 
         {__DEV__ && (

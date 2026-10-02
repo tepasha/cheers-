@@ -1,0 +1,108 @@
+name: ☁️ Backend deploy (Firestore rules + Cloud Functions)
+
+# Deploys firestore.rules and functions/ to one Firebase project. The target comes from the GitHub *Environment*:
+#   staging     variables FIREBASE_PROJECT_ID, FIRESTORE_DATABASE_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+#   production  the same variables, plus required reviewers (Settings → Environments)
+# Authentication is Workload Identity Federation (no long-lived key in GitHub). A staging environment that is not
+# configured is skipped; an unconfigured production fails loudly.
+#
+# Order matters: the backend is released BEFORE the apps and must keep working for the app versions already in the
+# stores, so rule changes must be additive (old builds stay in use for weeks).
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+    secrets:
+      EXPO_ACCESS_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Середовище'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ☁️ Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation
+    env:
+      TARGET: ${{ inputs.environment }}
+      PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
+      WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      WIF_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+    steps:
+      - name: 🔎 Is this environment configured?
+        id: cfg
+        run: |
+          if [ -n "$PROJECT_ID" ] && [ -n "$DATABASE_ID" ] && [ -n "$WIF_PROVIDER" ] && [ -n "$WIF_SERVICE_ACCOUNT" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          elif [ "$TARGET" = "production" ]; then
+            echo "::error::Environment 'production' lacks FIREBASE_PROJECT_ID / FIRESTORE_DATABASE_ID / GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT"
+            exit 1
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Environment '$TARGET' is not configured: backend deploy skipped"
+          fi
+
+      - name: 📥 Checkout
+        if: steps.cfg.outputs.configured == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 🟢 Setup Node.js 22
+        if: steps.cfg.outputs.configured == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🔐 Authenticate to Google Cloud
+        if: steps.cfg.outputs.configured == 'true'
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: 📦 Install Cloud Functions dependencies
+        if: steps.cfg.outputs.configured == 'true'
+        run: npm ci
+        working-directory: functions
+
+      # firebase.json in the repository points at the production database; each environment names its own
+      - name: ⚙️ Point firebase.json and the function at this environment's database
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          EXPO_ACCESS_TOKEN: ${{ secrets.EXPO_ACCESS_TOKEN }}
+        run: |
+          jq --arg db "$DATABASE_ID" '.firestore[0].database = $db' firebase.json > "$RUNNER_TEMP/firebase.json"
+          mv "$RUNNER_TEMP/firebase.json" firebase.json
+          {
+            echo "FIRESTORE_DATABASE_ID=$DATABASE_ID"
+            if [ -n "$EXPO_ACCESS_TOKEN" ]; then echo "EXPO_ACCESS_TOKEN=$EXPO_ACCESS_TOKEN"; fi
+          } > "functions/.env.$PROJECT_ID"
+
+      - name: 🚀 Deploy rules and functions
+        if: steps.cfg.outputs.configured == 'true'
+        run: npx --yes firebase-tools@15.32.1 deploy --only firestore:rules,functions --project "$PROJECT_ID" --non-interactive
+
+      - name: 🧹 Remove generated env file
+        if: always()
+        run: rm -f functions/.env.*

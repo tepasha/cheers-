@@ -527,4 +527,7 @@ export const de: Record<string, string> = {
   "Увімкнути": "Einschalten",
   "Сповіщення недоступні": "Benachrichtigungen nicht verfügbar",
   "На цьому пристрої або в цій збірці push-сповіщення поки не працюють.": "Push-Benachrichtigungen funktionieren auf diesem Gerät oder in dieser Version noch nicht.",
+  "Умови користування": "Nutzungsbedingungen",
+  "Політика конфіденційності": "Datenschutzerklärung",
+  "Реєструючись, ти погоджуєшся з Умовами користування та Політикою конфіденційності. Образливий контент і переслідування заборонені: на такі акаунти можна поскаржитися, їх буде заблоковано.": "Mit der Registrierung stimmst du den Nutzungsbedingungen und der Datenschutzerklärung zu. Anstößige Inhalte und Belästigung sind verboten: solche Konten können gemeldet werden und werden gesperrt.",
 };

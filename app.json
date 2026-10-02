@@ -33,6 +33,11 @@
         "ACCESS_COARSE_LOCATION",
         "VIBRATE",
         "INTERNET"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
       ]
     },
     "plugins": [
@@ -61,6 +66,14 @@
           "color": "#f59e0b"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "legal": {},
+      "firebase": {},
+      "eas": {
+        "projectId": "2f273810-1fe3-4c2e-91d6-d6bc6e3d7738"
+      }
+    },
+    "owner": "tepasha"
   }
 }

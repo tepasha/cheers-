@@ -1,0 +1,59 @@
+name: 🚀 Release (tag vX.Y.Z)
+
+# Pushing a tag `vX.Y.Z` runs the whole release line:
+#   CI gate → tag/version check → backend to production (needs approval) → Android AAB → Play internal track
+#                                                                         → iOS IPA   → TestFlight
+# Taking the build further (Play production rollout, App Store review) is a separate, approved step: promote.yml.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ✅ CI gate
+    uses: ./.github/workflows/ci-check.yml
+
+  verify:
+    name: 🏷️ Tag matches the app version
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: 🏷️ release-check
+        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME" --project
+
+  backend:
+    name: ☁️ Backend → production
+    needs: verify
+    uses: ./.github/workflows/deploy-backend.yml
+    with:
+      environment: production
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+
+  android:
+    name: 🤖 Android → Play internal
+    needs: backend
+    uses: ./.github/workflows/build-android.yml
+    with:
+      profile: production
+      submit: true
+    secrets: inherit
+
+  ios:
+    name: 🍏 iOS → TestFlight
+    needs: backend
+    uses: ./.github/workflows/build-ios.yml
+    with:
+      profile: production
+      submit: true
+    secrets: inherit

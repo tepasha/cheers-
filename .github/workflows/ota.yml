@@ -1,0 +1,67 @@
+name: 📡 OTA update (EAS Update)
+
+# Ships JavaScript and asset changes to installed apps without a store review. The runtime version is the native
+# fingerprint (app.config.ts), so an update only reaches binaries whose native code it was built against.
+#   preview     (from main)   tested by internal builds
+#   production  (by hand)     real users: requires approval of the GitHub Environment `production`
+on:
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        default: 'preview'
+    secrets:
+      EXPO_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Канал'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ota-${{ inputs.channel }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: 📡 Publish to ${{ inputs.channel }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.channel == 'production' && 'production' || 'staging' }}
+    env:
+      CHANNEL: ${{ inputs.channel }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 🟢 Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🚀 Setup EAS & Expo CLI
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8
+        with:
+          eas-version: 24.8.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🏷️ Project is linked to EAS
+        run: node scripts/release-check.mjs --project
+
+      # `--environment` makes EAS inject the same variables the store build used, so the fingerprint matches
+      - name: 📡 Publish the update
+        run: |
+          MESSAGE="$(git log -1 --pretty=%s)"
+          eas update --channel "$CHANNEL" --environment "$CHANNEL" --message "$MESSAGE" --non-interactive

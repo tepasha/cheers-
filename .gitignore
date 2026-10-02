@@ -20,6 +20,7 @@ web-build/
 
 # Store credentials (written by CI from secrets, never committed)
 google-service-account.json
+google-services.json
 private_keys/
 *.p8
 *.jks

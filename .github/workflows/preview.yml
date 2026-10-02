@@ -1,0 +1,69 @@
+name: 🧪 Preview (main)
+
+# Every merge to main: CI gate, then the staging backend (only when it changed), and, once the repository variable
+# PREVIEW_BUILDS is 'true' (set it after `eas init` and the EAS variables exist), an internal Android build and a
+# preview OTA update. iOS preview builds need registered test devices, so they stay a manual run of build-ios.yml.
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ✅ CI gate
+    uses: ./.github/workflows/ci-check.yml
+
+  changes:
+    name: 🔎 What changed
+    needs: ci
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.diff.outputs.backend }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A first push or an unreachable "before" commit counts as changed
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+             || git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -qE '^(firestore\.rules|firebase\.json|functions/)'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  backend:
+    name: ☁️ Backend → staging
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    uses: ./.github/workflows/deploy-backend.yml
+    with:
+      environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+
+  android:
+    name: 🤖 Android preview build
+    needs: ci
+    if: vars.PREVIEW_BUILDS == 'true'
+    uses: ./.github/workflows/build-android.yml
+    with:
+      profile: preview
+      submit: false
+    secrets: inherit
+
+  ota:
+    name: 📡 OTA → preview channel
+    needs: ci
+    if: vars.PREVIEW_BUILDS == 'true'
+    uses: ./.github/workflows/ota.yml
+    with:
+      channel: preview
+    secrets: inherit

@@ -527,4 +527,7 @@ export const pl: Record<string, string> = {
   "Увімкнути": "Włącz",
   "Сповіщення недоступні": "Powiadomienia niedostępne",
   "На цьому пристрої або в цій збірці push-сповіщення поки не працюють.": "Powiadomienia push nie działają jeszcze na tym urządzeniu ani w tej wersji.",
+  "Умови користування": "Regulamin",
+  "Політика конфіденційності": "Polityka prywatności",
+  "Реєструючись, ти погоджуєшся з Умовами користування та Політикою конфіденційності. Образливий контент і переслідування заборонені: на такі акаунти можна поскаржитися, їх буде заблоковано.": "Rejestrując się, akceptujesz Regulamin i Politykę prywatności. Obraźliwe treści i nękanie są zabronione: takie konta można zgłaszać, zostaną zablokowane.",
 };

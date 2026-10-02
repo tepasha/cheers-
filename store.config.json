@@ -1,0 +1,114 @@
+{
+  "configVersion": 0,
+  "apple": {
+    "copyright": "2026 REPLACE_ME (правовласник)",
+    "categories": [
+      "SOCIAL_NETWORKING",
+      "LIFESTYLE"
+    ],
+    "release": {
+      "automaticRelease": false
+    },
+    "advisory": {
+      "alcoholTobaccoOrDrugUseOrReferences": "FREQUENT_OR_INTENSE",
+      "contests": "NONE",
+      "gambling": false,
+      "gamblingSimulated": "NONE",
+      "horrorOrFearThemes": "NONE",
+      "matureOrSuggestiveThemes": "NONE",
+      "medicalOrTreatmentInformation": "NONE",
+      "profanityOrCrudeHumor": "NONE",
+      "sexualContentGraphicAndNudity": "NONE",
+      "sexualContentOrNudity": "NONE",
+      "unrestrictedWebAccess": false,
+      "violenceCartoonOrFantasy": "NONE",
+      "violenceRealistic": "NONE",
+      "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+      "kidsAgeBand": null,
+      "ageRatingOverride": "NONE",
+      "koreaAgeRatingOverride": "NONE"
+    },
+    "review": {
+      "firstName": "REPLACE_ME",
+      "lastName": "REPLACE_ME",
+      "email": "REPLACE_ME@example.com",
+      "phone": "REPLACE_ME",
+      "demoRequired": true,
+      "demoUsername": "REPLACE_ME",
+      "demoPassword": "REPLACE_ME",
+      "notes": "Sign-in needs a verified email, so the demo account above is already verified. Every user must be 18+ (date of birth is asked at sign-up). User-generated content safeguards: every profile and chat has a Report action (menu in the chat, report sheet on profiles), users can block others (Profile → Blocked users, enforced by server-side security rules), reports are stored for moderators, and accounts can be deleted in Profile (requires the password). Location is used only while the app is open, to show people and venues nearby. Terms of use and Privacy policy are linked on the sign-up screen and in Profile."
+    },
+    "info": {
+      "uk": {
+        "title": "Будьмо! Компанія на вечір",
+        "subtitle": "Бари, зустрічі, знайомства",
+        "description": "«Будьмо!» допомагає знайти компанію для вечора в барі чи кав'ярні поруч.\n\n• Мапа та радар: заклади та люди поблизу, які шукають компанію\n• Столики: приєднуйтесь до відкритого столика або запросіть інших\n• Зустрічі: плануйте групові зустрічі в обраному закладі\n• Чати: особисті та групові, повідомлення зберігаються зашифрованими\n• Тости й бали: підіймайте келихи, отримуйте нагороди за активність\n• Безпека: скарги, блокування, SOS-довідка, підтвердження email\n\nЗастосунок призначений для користувачів від 18 років. Місцезнаходження використовується лише під час роботи застосунку.",
+        "keywords": [
+          "бар",
+          "компанія",
+          "зустрічі",
+          "знайомства",
+          "друзі",
+          "пиво",
+          "мапа",
+          "чат"
+        ],
+        "releaseNotes": "Перший випуск.",
+        "supportUrl": "https://t.me/cheers_support_bot",
+        "privacyPolicyUrl": "REPLACE_ME"
+      },
+      "en-US": {
+        "title": "Budmo! Company for the evening",
+        "subtitle": "Bars, meetups, new friends",
+        "description": "Budmo! helps you find company for an evening at a bar or café nearby.\n\n• Map and radar: venues and people nearby who are looking for company\n• Tables: join an open table or invite others\n• Meetups: plan group meetups at a venue of your choice\n• Chats: private and group, messages are stored encrypted\n• Toasts and points: raise a glass, earn rewards for being active\n• Safety: reports, blocking, an SOS help screen, email verification\n\nFor users aged 18 and over. Location is used only while the app is open.",
+        "keywords": [
+          "bar",
+          "company",
+          "meetup",
+          "friends",
+          "beer",
+          "map",
+          "chat",
+          "social"
+        ],
+        "releaseNotes": "First release.",
+        "supportUrl": "https://t.me/cheers_support_bot",
+        "privacyPolicyUrl": "REPLACE_ME"
+      },
+      "pl": {
+        "title": "Budmo! Towarzystwo na wieczór",
+        "subtitle": "Bary, spotkania, znajomości",
+        "description": "Budmo! pomaga znaleźć towarzystwo na wieczór w pobliskim barze lub kawiarni.\n\n• Mapa i radar: lokale i osoby w pobliżu, które szukają towarzystwa\n• Stoliki: dołącz do otwartego stolika lub zaproś innych\n• Spotkania: planuj grupowe spotkania w wybranym lokalu\n• Czaty: prywatne i grupowe, wiadomości są przechowywane w postaci zaszyfrowanej\n• Toasty i punkty: wznoś toasty, zdobywaj nagrody za aktywność\n• Bezpieczeństwo: zgłoszenia, blokowanie, ekran pomocy SOS, weryfikacja e-mail\n\nDla użytkowników w wieku 18 lat i więcej. Lokalizacja jest używana tylko, gdy aplikacja jest otwarta.",
+        "keywords": [
+          "bar",
+          "towarzystwo",
+          "spotkania",
+          "znajomi",
+          "piwo",
+          "mapa",
+          "czat"
+        ],
+        "releaseNotes": "Pierwsze wydanie.",
+        "supportUrl": "https://t.me/cheers_support_bot",
+        "privacyPolicyUrl": "REPLACE_ME"
+      },
+      "de-DE": {
+        "title": "Budmo! Gesellschaft am Abend",
+        "subtitle": "Bars, Treffen, neue Kontakte",
+        "description": "Budmo! hilft dir, Gesellschaft für einen Abend in einer Bar oder einem Café in deiner Nähe zu finden.\n\n• Karte und Radar: Lokale und Leute in der Nähe, die Gesellschaft suchen\n• Tische: setz dich an einen offenen Tisch oder lade andere ein\n• Treffen: plane Gruppentreffen in einem Lokal deiner Wahl\n• Chats: privat und in Gruppen, Nachrichten werden verschlüsselt gespeichert\n• Toasts und Punkte: stoß an und sammle Belohnungen für Aktivität\n• Sicherheit: Meldungen, Blockieren, SOS-Hilfe, E-Mail-Bestätigung\n\nFür Nutzer ab 18 Jahren. Der Standort wird nur verwendet, solange die App geöffnet ist.",
+        "keywords": [
+          "Bar",
+          "Gesellschaft",
+          "Treffen",
+          "Freunde",
+          "Bier",
+          "Karte",
+          "Chat"
+        ],
+        "releaseNotes": "Erste Veröffentlichung.",
+        "supportUrl": "https://t.me/cheers_support_bot",
+        "privacyPolicyUrl": "REPLACE_ME"
+      }
+    }
+  }
+}

@@ -13,6 +13,7 @@ import { calculateAge } from '../utils/ageUtils';
 import { parseBirthDateInput } from '../logic/dateInput';
 import { MIN_AGE, isValidEmail, validatePassword } from '../logic/session';
 import { useTr } from '../hooks/useT';
+import { LegalLinks } from '../components/LegalLinks';
 
 const SUPPORT_URL = 'https://t.me/cheers_support_bot';
 
@@ -183,6 +184,12 @@ export const AuthScreen = () => {
             ? tr('Ми надішлемо лист для підтвердження email. Реєструючись, ти підтверджуєш, що тобі виповнилось {MIN_AGE} років.', { MIN_AGE })
             : tr('Вхід захищений Firebase Authentication. Пароль не зберігається на пристрої.')}
         </Text>
+        {registering && (
+          <Text style={[typography.tiny, { textAlign: 'center', marginTop: spacing.sm, marginBottom: spacing.sm, lineHeight: 15 }]}>
+            {tr('Реєструючись, ти погоджуєшся з Умовами користування та Політикою конфіденційності. Образливий контент і переслідування заборонені: на такі акаунти можна поскаржитися, їх буде заблоковано.')}
+          </Text>
+        )}
+        <LegalLinks />
         <Button label={tr('Підтримка в Telegram')} variant="ghost" icon="send" small onPress={() => Linking.openURL(SUPPORT_URL)} style={{ marginTop: spacing.sm }} />
       </ScrollView>
     </KeyboardAvoidingView>
