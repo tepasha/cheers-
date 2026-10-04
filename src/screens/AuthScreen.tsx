@@ -8,6 +8,7 @@ import { colors, radius, spacing, typography } from '../theme';
 import { useAppDispatch } from '../store/hooks';
 import { profileUpdated } from '../store/slices/authSlice';
 import { authService, describeAuthError } from '../services/authService';
+import { firebaseConfigured } from '../services/firebase';
 import { analyticsService } from '../services/analyticsService';
 import { calculateAge } from '../utils/ageUtils';
 import { parseBirthDateInput } from '../logic/dateInput';
@@ -58,6 +59,10 @@ export const AuthScreen = () => {
     setError(null);
     setInfo(null);
     if (hasErrors) return;
+    if (!firebaseConfigured) {
+      setError(tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).'));
+      return;
+    }
 
     setBusy(true);
     try {
@@ -167,6 +172,12 @@ export const AuthScreen = () => {
             {age !== null && age >= MIN_AGE && <Text style={styles.hint}>{tr('Вік: {age}', { age })}</Text>}
             {(submitted || (birthIso && age !== null && age < MIN_AGE)) && errors.birth && <Text style={styles.error}>{tr(errors.birth)}</Text>}
           </>
+        )}
+
+        {!firebaseConfigured && (
+          <Text style={[styles.hint, { color: colors.amberSoft, marginTop: 0, marginBottom: spacing.md }]} accessibilityRole="alert">
+            {tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).')}
+          </Text>
         )}
 
         {!!error && (

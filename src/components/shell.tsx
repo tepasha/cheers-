@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors, radius, spacing, typography } from '../theme';
@@ -59,7 +59,7 @@ export const PushBanner = () => {
   const [progress] = useState(() => new Animated.Value(0));
   if (active && active !== banner) setBanner(active); // adopting a new banner while rendering is the supported pattern
   useEffect(() => {
-    Animated.timing(progress, { toValue: active ? 1 : 0, duration: active ? 200 : 160, useNativeDriver: true }).start(({ finished }) => {
+    Animated.timing(progress, { toValue: active ? 1 : 0, duration: active ? 200 : 160, useNativeDriver: Platform.OS !== 'web' }).start(({ finished }) => {
       if (finished && !active) setBanner(null);
     });
   }, [active, progress]);

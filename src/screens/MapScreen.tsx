@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
-import MapView, { Circle, Marker, Region } from 'react-native-maps';
+import { Circle, MapView, Marker, type Region } from '../components/map';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors, radius, spacing, typography } from '../theme';
@@ -116,6 +116,7 @@ export const MapScreen = () => {
           {GOOGLE_MAPS_VENUES.map((v) => (
             <Marker
               key={v.id}
+              identifier={v.name}
               coordinate={{ latitude: v.lat, longitude: v.lng }}
               pinColor={CATEGORY_CONFIG[v.category].pinColor}
               onPress={(e) => {
@@ -129,6 +130,7 @@ export const MapScreen = () => {
           {buddies.map((b) => (
             <Marker
               key={`b-${b.id}`}
+              identifier={b.name}
               coordinate={{ latitude: b.coordinates.lat, longitude: b.coordinates.lng }}
               pinColor="green"
               onPress={(e) => {
@@ -145,6 +147,7 @@ export const MapScreen = () => {
               typeof h.lng === 'number' && (
                 <Marker
                   key={`h-${h.id}`}
+                  identifier={h.barName}
                   coordinate={{ latitude: h.lat, longitude: h.lng }}
                   pinColor="orange"
                   onPress={(e) => {

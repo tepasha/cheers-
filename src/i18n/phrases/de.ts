@@ -536,4 +536,7 @@ export const de: Record<string, string> = {
   "Відновити столик": "Tisch wiederherstellen",
   "Не активний": "Inaktiv",
   "Не активний: давно не заходив(ла)": "Inaktiv: war länger nicht da",
+  "Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).": "Demo-Modus: Firebase ist nicht konfiguriert, die Anmeldung ist nicht möglich. Fülle .env aus (siehe .env.example).",
+  "🗺️ Інтерактивна мапа доступна в мобільному застосунку (iOS / Android). Нижче: точки поруч.": "🗺️ Die interaktive Karte gibt es in der mobilen App (iOS / Android). Unten: Orte in der Nähe.",
+  "Точка на мапі": "Ort auf der Karte",
 };

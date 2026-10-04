@@ -21,20 +21,29 @@ interface FirebaseExtra {
 const extra = (Constants.expoConfig?.extra?.firebase ?? {}) as FirebaseExtra;
 
 const missing = (['apiKey', 'projectId', 'appId'] as const).filter((k) => !extra[k]);
-if (missing.length > 0) {
-  throw new Error(
-    `Firebase is not configured (missing: ${missing.join(', ')}). Fill in .env (see .env.example) and restart with \`npx expo start -c\`.`
-  );
+
+/**
+ * False when the environment holds no Firebase config (a fresh checkout, a web preview without secrets). The app then
+ * still starts, in demo mode: the sign-in screen explains what is missing and no request ever reaches a real project.
+ */
+export const firebaseConfigured = missing.length === 0;
+if (!firebaseConfigured) {
+  console.warn(`Firebase is not configured (missing: ${missing.join(', ')}). Fill in .env (see .env.example) and restart with \`npx expo start -c\`.`);
 }
 
-export const firebaseConfig = {
-  apiKey: extra.apiKey,
-  authDomain: extra.authDomain,
-  projectId: extra.projectId,
-  appId: extra.appId,
-  storageBucket: extra.storageBucket,
-  messagingSenderId: extra.messagingSenderId,
-};
+// Inert placeholders so the SDK objects exist; sign-in is refused before any call is made (see AuthScreen)
+const DEMO_CONFIG = { apiKey: 'demo-not-configured', projectId: 'demo-not-configured', appId: '1:0:web:demo' };
+
+export const firebaseConfig = firebaseConfigured
+  ? {
+      apiKey: extra.apiKey,
+      authDomain: extra.authDomain,
+      projectId: extra.projectId,
+      appId: extra.appId,
+      storageBucket: extra.storageBucket,
+      messagingSenderId: extra.messagingSenderId,
+    }
+  : DEMO_CONFIG;
 
 const firestoreDatabaseId = extra.firestoreDatabaseId || '(default)';
 

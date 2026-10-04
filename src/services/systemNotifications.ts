@@ -22,7 +22,7 @@ let configured = false;
  * nothing in the foreground. Pushes that arrive while the app is in the background are shown by the OS itself.
  */
 export function configureNotifications(): void {
-  if (configured) return;
+  if (configured || Platform.OS === 'web') return;
   configured = true;
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -35,6 +35,7 @@ export function configureNotifications(): void {
 }
 
 export async function getSystemNotificationPermission(): Promise<SystemNotificationPermission> {
+  if (Platform.OS === 'web') return 'denied'; // the browser build has no push registration
   try {
     const { status } = await Notifications.getPermissionsAsync();
     return status;
@@ -80,6 +81,7 @@ export async function registerForPush(ask: boolean): Promise<PushRegistration> {
 
 /** Called when the OS rotates the device push token; the caller registers again */
 export function onPushTokenChanged(callback: () => void): () => void {
+  if (Platform.OS === 'web') return () => {};
   const sub = Notifications.addPushTokenListener(() => callback());
   return () => sub.remove();
 }
@@ -89,6 +91,7 @@ export function onPushTokenChanged(callback: () => void): () => void {
  * Each notification is reported once, whichever of the two paths sees it first.
  */
 export function subscribeToNotificationTaps(onChat: (chatId: string) => void): () => void {
+  if (Platform.OS === 'web') return () => {};
   const handled = new Set<string>();
   const handle = (response: Notifications.NotificationResponse | null) => {
     if (!response) return;
