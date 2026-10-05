@@ -6,10 +6,12 @@ import {
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  getAdditionalUserInfo,
   signOut,
   updateProfile,
   type User,
 } from 'firebase/auth';
+import { signInWithGoogle } from './googleSignIn';
 import { auth } from './firebase';
 import { firestoreSyncService } from './firestoreSyncService';
 import { ph } from './i18nService';
@@ -37,6 +39,14 @@ export function describeAuthError(err: unknown): string {
       return ph('Підтвердіть пароль ще раз');
     case 'auth/operation-not-allowed':
       return ph('Вхід за email вимкнений у проєкті Firebase');
+    case 'auth/account-exists-with-different-credential':
+      return ph('Акаунт із таким email уже існує. Увійдіть за паролем');
+    case 'google/not-configured':
+      return ph('Вхід через Google не налаштовано (потрібен GOOGLE_WEB_CLIENT_ID)');
+    case 'google/development-build':
+      return ph('Вхід через Google працює лише в зібраному застосунку, не в Expo Go');
+    case 'google/play-services':
+      return ph('Потрібні служби Google Play');
     default:
       return ph('Не вдалося виконати дію. Спробуйте пізніше');
   }
@@ -63,6 +73,32 @@ export const authService = {
   async login(email: string, password: string): Promise<User> {
     const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
     return cred.user;
+  },
+
+  /**
+   * Google sign-in. A person who has no account yet gets one automatically (Firebase creates it on the first sign-in).
+   * Returns null when the user closed the Google dialog. The age check happens after sign-in, in the app.
+   */
+  async loginWithGoogle(): Promise<{ user: User; isNewUser: boolean } | null> {
+    const cred = await signInWithGoogle(auth);
+    if (!cred) return null;
+    return { user: cred.user, isNewUser: getAdditionalUserInfo(cred)?.isNewUser === true };
+  },
+
+  /**
+   * Removes the account that has just signed in and turned out to be too young: its data and the Firebase user.
+   * The sign-in is seconds old, so no re-authentication is needed; if deleting still fails, the session is ended.
+   */
+  async removeAccountAfterAgeRejection(): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      await firestoreSyncService.deleteAccountData(user.uid);
+      await deleteUser(user);
+    } catch (err) {
+      console.warn('Could not remove the underage account, signing out instead:', err);
+      await signOut(auth);
+    }
   },
 
   async logout(): Promise<void> {

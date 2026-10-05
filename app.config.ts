@@ -6,6 +6,8 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  *   FIREBASE_*            Firebase web config, handed to the app through `extra.firebase`
  *   GOOGLE_MAPS_API_KEY   Google Maps SDK key for the Android build (iOS uses Apple Maps)
  *   PRIVACY_POLICY_URL, TERMS_URL  Public https pages the stores require; the app links to them when set
+ *   GOOGLE_WEB_CLIENT_ID  Web OAuth client of the Firebase project (falls back to FIREBASE_OAUTH_CLIENT_ID); needed for Google sign-in
+ *   GOOGLE_IOS_CLIENT_ID  iOS OAuth client; also registers its reversed URL scheme in the iOS app
  *   GOOGLE_SERVICES_JSON  Path to google-services.json (FCM, Android push). On EAS: a file environment variable.
  * OTA updates (expo-updates) switch on by themselves once `extra.eas.projectId` exists (`eas init`); until then the
  * app is built with updates disabled, so nothing tries to reach a project that is not there yet.
@@ -18,6 +20,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const appId = clean(env.FIREBASE_APP_ID);
   const mapsKey = clean(env.GOOGLE_MAPS_API_KEY);
   const servicesFile = clean(env.GOOGLE_SERVICES_JSON);
+  const googleWebClientId = clean(env.GOOGLE_WEB_CLIENT_ID) ?? clean(env.FIREBASE_OAUTH_CLIENT_ID);
+  const googleIosClientId = clean(env.GOOGLE_IOS_CLIENT_ID);
+  // The sign-in plugin refuses to run without a valid reversed client id, so it is only added when one is given
+  const googleIosScheme = googleIosClientId ? `com.googleusercontent.apps.${googleIosClientId.replace(/\.apps\.googleusercontent\.com$/, '')}` : undefined;
   const projectId: string | undefined = config.extra?.eas?.projectId;
 
   return {
@@ -29,6 +35,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     updates: projectId
       ? { url: `https://u.expo.dev/${projectId}`, checkAutomatically: 'ON_LOAD', fallbackToCacheTimeout: 0 }
       : { enabled: false },
+    plugins: [...(config.plugins ?? []), ...(googleIosScheme ? [['@react-native-google-signin/google-signin', { iosUrlScheme: googleIosScheme }] as [string, object]] : [])],
     android: {
       ...config.android,
       ...(servicesFile ? { googleServicesFile: servicesFile } : {}),
@@ -36,6 +43,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     extra: {
       ...config.extra,
+      google: { webClientId: googleWebClientId, iosClientId: googleIosClientId },
       legal: { privacyPolicyUrl: clean(env.PRIVACY_POLICY_URL), termsUrl: clean(env.TERMS_URL) },
       firebase: {
         apiKey: clean(env.FIREBASE_API_KEY),

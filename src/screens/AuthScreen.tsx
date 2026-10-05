@@ -5,7 +5,8 @@ import appIcon from '../../assets/logo.png'; // 256 px copy: the 1024 px store i
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Field, SegmentedControl } from '../components/ui';
 import { colors, radius, spacing, typography } from '../theme';
-import { useAppDispatch } from '../store/hooks';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { authNoticeSet } from '../store/slices/uiSlice';
 import { profileUpdated } from '../store/slices/authSlice';
 import { authService, describeAuthError } from '../services/authService';
 import { firebaseConfigured } from '../services/firebase';
@@ -54,10 +55,33 @@ export const AuthScreen = () => {
   };
   const hasErrors = Object.values(errors).some(Boolean);
 
+  const underageNotice = useAppSelector((s) => s.ui.authNotice === 'underage');
+
+  const googleSignIn = async () => {
+    setError(null);
+    setInfo(null);
+    dispatch(authNoticeSet(null));
+    if (!firebaseConfigured) {
+      setError(tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).'));
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await authService.loginWithGoogle();
+      if (result) analyticsService.trackEvent(result.isNewUser ? 'sign_up' : 'login', { method: 'google' });
+      // The auth listener signs the person in; a new account is asked for its birth date next (BirthDateScreen)
+    } catch (err) {
+      setError(tr(describeAuthError(err)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async () => {
     setSubmitted(true);
     setError(null);
     setInfo(null);
+    dispatch(authNoticeSet(null));
     if (hasErrors) return;
     if (!firebaseConfigured) {
       setError(tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).'));
@@ -174,6 +198,12 @@ export const AuthScreen = () => {
           </>
         )}
 
+        {underageNotice && (
+          <Text style={[styles.error, { marginTop: 0, marginBottom: spacing.md, fontSize: 14, fontWeight: '600' }]} accessibilityRole="alert">
+            {tr('Ще трохи треба почекати, вік користування застосунком {MIN_AGE}', { MIN_AGE })}
+          </Text>
+        )}
+
         {!firebaseConfigured && (
           <Text style={[styles.hint, { color: colors.amberSoft, marginTop: 0, marginBottom: spacing.md }]} accessibilityRole="alert">
             {tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).')}
@@ -188,6 +218,7 @@ export const AuthScreen = () => {
         {!!info && <Text style={[styles.hint, { marginBottom: spacing.md }]}>{info}</Text>}
 
         <Button label={registering ? tr('Створити акаунт') : tr('Увійти')} icon="arrow-right" onPress={submit} loading={busy} />
+        <Button label={tr('Увійти через Google')} icon="log-in" variant="secondary" onPress={googleSignIn} disabled={busy} style={{ marginTop: spacing.sm }} />
         {!registering && <Button label={tr('Забули пароль?')} variant="ghost" small onPress={forgotPassword} disabled={busy} style={{ marginTop: spacing.sm }} />}
 
         <Text style={[typography.tiny, { textAlign: 'center', marginTop: spacing.lg, lineHeight: 15 }]}>

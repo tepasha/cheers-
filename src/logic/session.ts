@@ -6,8 +6,18 @@ import type { AppLanguage } from '../types';
 export const SESSION_DURATION_HOURS = 36;
 export const SESSION_DURATION_MS = SESSION_DURATION_HOURS * 60 * 60 * 1000;
 
-export const MIN_AGE = 18;
+/** The app is for people aged 21 and over (alcohol-themed meetups); the same limit applies to every way of signing up */
+export const MIN_AGE = 21;
 export const MIN_PASSWORD_LENGTH = 8;
+
+export type AgeCheck = 'ok' | 'too_young' | 'invalid';
+
+/** Decides from a stored birth date ("YYYY-MM-DD") whether the person may use the app */
+export function checkAge(birthIso: string | null | undefined, now = new Date()): AgeCheck {
+  const age = birthIso ? calculateAge(birthIso, now) : null;
+  if (age === null) return 'invalid';
+  return age >= MIN_AGE ? 'ok' : 'too_young';
+}
 
 export function createGuestUser(): AuthUser {
   return {
@@ -31,6 +41,7 @@ export function createUser(
     name?: string;
     avatar?: string;
     emailVerified?: boolean;
+    provider?: 'google' | 'email';
     birthDate?: string;
     joinedAt?: string;
   },
@@ -48,7 +59,7 @@ export function createUser(
     // Empty on purpose: <Avatar> draws the initials on the device. A hosted placeholder (e.g. DiceBear) would send
     // the user's name to a third party and let it log the IP of everyone who views the profile.
     avatar: input.avatar ?? '',
-    provider: 'email',
+    provider: input.provider ?? 'email',
     isLoggedIn: true,
     emailVerified: !!input.emailVerified,
     joinedAt: input.joinedAt ?? new Date(now).toISOString(),

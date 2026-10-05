@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { MIN_AGE } from '../logic/session';
 import { Alert, Linking, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -219,7 +220,7 @@ const EditProfileSheet = ({ onClose }: { onClose: () => void }) => {
 
   const birthIso = birth.trim() ? parseBirthDateInput(birth) : user.birthDate ?? null;
   const age = birthIso ? calculateAge(birthIso) : null;
-  const birthError = birth.trim() && (!birthIso || age === null || age < 18) ? tr('Вкажіть дату як ДД.ММ.РРРР (18+)') : null;
+  const birthError = birth.trim() && (!birthIso || age === null || age < MIN_AGE) ? tr('Вкажіть дату як ДД.ММ.РРРР ({MIN_AGE}+)', { MIN_AGE }) : null;
 
   const save = () => {
     if (birthError) return;

@@ -2,7 +2,7 @@
  * Utilities for calculating and formatting age from a date of birth
  */
 
-export function calculateAge(birthDateStr?: string | null): number | null {
+export function calculateAge(birthDateStr?: string | null, now: Date = new Date()): number | null {
   if (!birthDateStr) return null;
   const parts = birthDateStr.split('-');
   if (parts.length === 3) {
@@ -11,15 +11,14 @@ export function calculateAge(birthDateStr?: string | null): number | null {
     const day = parseInt(parts[2], 10);
     if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
     const birthDate = new Date(year, month, day);
-    return calculateFromDate(birthDate);
+    return calculateFromDate(birthDate, now);
   }
   const d = new Date(birthDateStr);
   if (isNaN(d.getTime())) return null;
-  return calculateFromDate(d);
+  return calculateFromDate(d, now);
 }
 
-function calculateFromDate(birthDate: Date): number | null {
-  const today = new Date();
+function calculateFromDate(birthDate: Date, today: Date): number | null {
   let age = today.getFullYear() - birthDate.getFullYear();
   const monthDiff = today.getMonth() - birthDate.getMonth();
   if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {

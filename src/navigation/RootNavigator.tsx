@@ -21,6 +21,7 @@ import { BlockedUsersScreen } from '../screens/BlockedUsersScreen';
 import { AuthScreen } from '../screens/AuthScreen';
 import { VerifyEmailScreen } from '../screens/VerifyEmailScreen';
 import { RussiaBlockScreen } from '../screens/RussiaBlockScreen';
+import { BirthDateScreen } from '../screens/BirthDateScreen';
 import { GamificationTour } from '../components/GamificationTour';
 import { useTr } from '../hooks/useT';
 
@@ -76,8 +77,14 @@ const headerOptions = {
   contentStyle: { backgroundColor: colors.bg },
 };
 
+const Splash = () => (
+  <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+    <ActivityIndicator color={colors.amber} />
+  </View>
+);
+
 /**
- * Flow: sanctioned-territory block  →  (wait for Firebase) →  sign-in  →  verify email  →  main app.
+ * Flow: sanctioned-territory block  →  (wait for Firebase) →  sign-in  →  verify email  →  birth date (if unknown)  →  main app.
  * The block wins over everything, even for a signed-in user.
  */
 export const RootNavigator = () => {
@@ -85,19 +92,19 @@ export const RootNavigator = () => {
   const isLoggedIn = useAppSelector((s) => s.auth.user.isLoggedIn);
   const emailVerified = useAppSelector((s) => s.auth.user.emailVerified === true);
   const authReady = useAppSelector((s) => s.ui.authReady);
+  const hasBirthDate = useAppSelector((s) => !!s.auth.user.birthDate);
+  const birthDateChecked = useAppSelector((s) => s.auth.birthDateChecked);
   const geoBlocked = useAppSelector(selectGeoBlock).isBlocked;
 
   if (geoBlocked) return <RussiaBlockScreen />;
-  if (!authReady) {
-    // Firebase is restoring the saved session; avoid flashing the sign-in form at a signed-in user
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator color={colors.amber} />
-      </View>
-    );
-  }
+  // Firebase is restoring the saved session; avoid flashing the sign-in form at a signed-in user
+  if (!authReady) return <Splash />;
   if (!isLoggedIn) return <AuthScreen />;
   if (!emailVerified) return <VerifyEmailScreen />;
+  if (!hasBirthDate) {
+    // A first Google sign-in has no birth date yet: look it up, then ask. Nothing of the app is shown before that.
+    return birthDateChecked ? <BirthDateScreen /> : <Splash />;
+  }
 
   return (
     <Stack.Navigator screenOptions={headerOptions}>

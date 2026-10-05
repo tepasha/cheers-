@@ -14,11 +14,13 @@ interface UiState {
   pendingChatId: string | null;
   /** Tables the user hosted or joined that just ended, waiting for the "this meetup ended" modal (oldest first) */
   endedTables: HangoutAlert[];
+  /** Why the person is back on the sign-in screen (shown there once) */
+  authNotice: 'underage' | null;
 }
 
 const uiSlice = createSlice({
   name: 'ui',
-  initialState: { activeBanner: null, isOnline: true, authReady: false, openChatId: null, pendingChatId: null, endedTables: [] } as UiState,
+  initialState: { activeBanner: null, isOnline: true, authReady: false, openChatId: null, pendingChatId: null, endedTables: [], authNotice: null } as UiState,
   reducers: {
     bannerShown(state, action: PayloadAction<PushNotificationItem>) {
       state.activeBanner = action.payload;
@@ -28,6 +30,9 @@ const uiSlice = createSlice({
     },
     chatOpened(state, action: PayloadAction<string | null>) {
       state.openChatId = action.payload;
+    },
+    authNoticeSet(state, action: PayloadAction<'underage' | null>) {
+      state.authNotice = action.payload;
     },
     endedTablesNoticed(state, action: PayloadAction<HangoutAlert[]>) {
       const known = new Set(state.endedTables.map((h) => h.id));
@@ -54,5 +59,5 @@ const uiSlice = createSlice({
   },
 });
 
-export const { bannerShown, bannerDismissed, networkStatusChanged, authReady, chatOpened, chatOpenRequested, endedTablesNoticed, endedTableAcknowledged } = uiSlice.actions;
+export const { bannerShown, bannerDismissed, networkStatusChanged, authReady, chatOpened, chatOpenRequested, endedTablesNoticed, endedTableAcknowledged, authNoticeSet } = uiSlice.actions;
 export default uiSlice.reducer;

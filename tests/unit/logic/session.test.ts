@@ -147,3 +147,27 @@ describe('localized session text', () => {
     expect(formatJoinedAt('вересень 2026', 'en')).toBe('вересень 2026');
   });
 });
+
+import { MIN_AGE, checkAge } from '@/logic/session';
+
+describe('minimum age', () => {
+  it('is 21', () => {
+    expect(MIN_AGE).toBe(21);
+  });
+
+  it('turns away the day before the 21st birthday and lets in the birthday itself', () => {
+    const now = new Date(2026, 9, 5); // 5 October 2026
+    expect(checkAge('2005-10-06', now)).toBe('too_young'); // turns 21 tomorrow
+    expect(checkAge('2005-10-05', now)).toBe('ok'); // turns 21 today
+    expect(checkAge('2005-10-04', now)).toBe('ok');
+    expect(checkAge('2008-01-01', now)).toBe('too_young'); // 18: allowed by the old rule, not by this one
+  });
+
+  it('treats anything unreadable, missing or implausible as invalid', () => {
+    expect(checkAge(undefined)).toBe('invalid');
+    expect(checkAge('')).toBe('invalid');
+    expect(checkAge('not-a-date')).toBe('invalid');
+    expect(checkAge('1800-01-01')).toBe('invalid'); // over 120
+    expect(checkAge('2999-01-01')).toBe('invalid'); // in the future
+  });
+});

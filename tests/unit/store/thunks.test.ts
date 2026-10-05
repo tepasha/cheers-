@@ -15,6 +15,7 @@ vi.mock('@/services/authService', () => ({
     logout: vi.fn().mockResolvedValue(undefined),
     refreshVerification: vi.fn(),
     deleteAccount: vi.fn().mockResolvedValue(undefined),
+    removeAccountAfterAgeRejection: vi.fn().mockResolvedValue(undefined),
   },
 }));
 vi.mock('firebase/firestore', () => ({ doc: vi.fn(() => ({})), setDoc: vi.fn().mockResolvedValue(undefined) }));

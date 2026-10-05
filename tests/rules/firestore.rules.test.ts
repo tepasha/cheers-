@@ -69,6 +69,8 @@ describe('users', () => {
     await assertFails(setDoc(doc(db, 'users/alice'), profile('alice', { name: '' })));
     await assertFails(setDoc(doc(db, 'users/alice'), profile('alice', { lat: 123 })));
     await assertFails(setDoc(doc(db, 'users/alice'), profile('alice', { age: 12 })));
+    await assertFails(setDoc(doc(db, 'users/alice'), profile('alice', { age: 20 }))); // the minimum is 21
+    await assertSucceeds(setDoc(doc(db, 'users/alice'), profile('alice', { age: 21 })));
     await assertFails(setDoc(doc(db, 'users/alice'), profile('alice', { isAdmin: true })));
   });
 

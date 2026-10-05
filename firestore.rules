@@ -60,7 +60,7 @@ service cloud.firestore {
         && optStr(d, 'avatar', 500) && optStr(d, 'tagline', 140) && optStr(d, 'locationName', 120)
         && optStr(d, 'bio', 500) && optStr(d, 'levelTitle', 60) && optStr(d, 'updatedAt', 40)
         && optStr(d, 'geohash', 12) && optStr(d, 'lastSeenAt', 40)
-        && optNum(d, 'lat', -90, 90) && optNum(d, 'lng', -180, 180) && optNum(d, 'age', 18, 120)
+        && optNum(d, 'lat', -90, 90) && optNum(d, 'lng', -180, 180) && optNum(d, 'age', 21, 120)
         && optNum(d, 'level', 1, 100) && optNum(d, 'totalCheckIns', 0, 1000000)
         && (!('paymentRule' in d) || d.paymentRule in ['split_50_50', 'each_for_themselves', 'i_treat', 'rounds'])
         && (!('preferredDrinks' in d) || (d.preferredDrinks is list && d.preferredDrinks.size() <= 8))
