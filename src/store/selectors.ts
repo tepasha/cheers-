@@ -5,8 +5,20 @@ import { calculateDistanceKm, formatDistance } from '../services/geoService';
 import { checkRussianTerritoryRestriction, ph } from '../services/i18nService';
 import { EMPTY_GAMIFICATION_STATE, getLevelInfo } from '../logic/gamification';
 import { NEARBY_MAX_PROFILES, NEARBY_RADIUS_KM } from '../logic/nearby';
+import { checkAge } from '../logic/session';
 
 export const selectUser = (s: RootState) => s.auth.user;
+
+/**
+ * The one gate in front of everything that talks to other people: signed in, e-mail verified AND the birth date known
+ * and 21 or over. Until all three hold, the app reads nothing about other users and publishes nothing about this one
+ * (profile, position, presence, push device) - a first Google sign-in sits on the birth-date screen in that state, and
+ * a person who turns out to be too young is removed without ever having been visible. Memoized on its three inputs.
+ */
+export const selectCanUseApp = createSelector(
+  [(s: RootState) => s.auth.user.isLoggedIn, (s: RootState) => s.auth.user.emailVerified, (s: RootState) => s.auth.user.birthDate],
+  (isLoggedIn, emailVerified, birthDate): boolean => isLoggedIn === true && emailVerified === true && checkAge(birthDate) === 'ok'
+);
 export const selectLocation = (s: RootState) => s.location.current;
 export const selectSettings = (s: RootState) => s.settings;
 export const selectLanguage = (s: RootState) => s.settings.language;

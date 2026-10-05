@@ -47,7 +47,8 @@ const rootReducer = combineReducers({ auth, settings, location, buddies, hangout
 
 function makeStore(verified = true) {
   const store = configureStore({ reducer: rootReducer });
-  store.dispatch(loggedIn(createUser({ id: 'me', email: 'me@b.co', name: 'Me', emailVerified: verified })));
+  // An adult with a known birth date: registering a push device needs the age to be confirmed too
+  store.dispatch(loggedIn(createUser({ id: 'me', email: 'me@b.co', name: 'Me', emailVerified: verified, birthDate: '1990-01-01' })));
   return store;
 }
 type TestStore = ReturnType<typeof makeStore>;
@@ -80,6 +81,16 @@ describe('registerPush', () => {
   it('does nothing before the email is verified (the rules would refuse the write anyway)', async () => {
     const s = makeStore(false);
     expect(await run(s, registerPush({ ask: true }))).toBe('unavailable');
+    expect(register).not.toHaveBeenCalled();
+    expect(sync.saveDevice).not.toHaveBeenCalled();
+  });
+
+  it('does nothing before the age is confirmed (no birth date yet, or under 21)', async () => {
+    for (const birthDate of [undefined, new Date(Date.now() - 19 * 365.25 * 86400000).toISOString().slice(0, 10)]) {
+      const s = configureStore({ reducer: rootReducer });
+      s.dispatch(loggedIn(createUser({ id: 'me', email: 'me@b.co', emailVerified: true, birthDate })));
+      expect(await run(s, registerPush({ ask: true }))).toBe('unavailable');
+    }
     expect(register).not.toHaveBeenCalled();
     expect(sync.saveDevice).not.toHaveBeenCalled();
   });

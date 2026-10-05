@@ -3,6 +3,7 @@ import { pushSettingsUpdated } from '../slices/settingsSlice';
 import { chatOpenRequested } from '../slices/uiSlice';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { registerForPush, type PushRegistration } from '../../services/systemNotifications';
+import { selectCanUseApp } from '../selectors';
 
 /** Signing out must not hang on a flaky network; a device that could not be removed is cleaned up server-side later */
 const RELEASE_TIMEOUT_MS = 3000;
@@ -16,7 +17,7 @@ export const registerPush =
   (options: { ask: boolean }): AppThunk<Promise<PushRegistration['status']>> =>
   async (dispatch, getState) => {
     const { user } = getState().auth;
-    if (!user.isLoggedIn || user.emailVerified !== true) return 'unavailable';
+    if (!selectCanUseApp(getState())) return 'unavailable';
 
     const registration = await registerForPush(options.ask);
     if (registration.status !== 'registered') {

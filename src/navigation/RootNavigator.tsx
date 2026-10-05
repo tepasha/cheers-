@@ -6,7 +6,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { colors } from '../theme';
 import { useT } from '../hooks/useT';
 import { useAppSelector } from '../store/hooks';
-import { selectFriendsCount, selectGeoBlock, selectUnreadChatsCount, selectHangouts } from '../store/selectors';
+import { selectCanUseApp, selectFriendsCount, selectGeoBlock, selectUnreadChatsCount, selectHangouts } from '../store/selectors';
 import type { RootStackParamList, TabParamList } from './types';
 import { DiscoverScreen } from '../screens/DiscoverScreen';
 import { MapScreen } from '../screens/MapScreen';
@@ -22,6 +22,7 @@ import { AuthScreen } from '../screens/AuthScreen';
 import { VerifyEmailScreen } from '../screens/VerifyEmailScreen';
 import { RussiaBlockScreen } from '../screens/RussiaBlockScreen';
 import { BirthDateScreen } from '../screens/BirthDateScreen';
+import { checkAge } from '../logic/session';
 import { GamificationTour } from '../components/GamificationTour';
 import { useTr } from '../hooks/useT';
 
@@ -92,7 +93,8 @@ export const RootNavigator = () => {
   const isLoggedIn = useAppSelector((s) => s.auth.user.isLoggedIn);
   const emailVerified = useAppSelector((s) => s.auth.user.emailVerified === true);
   const authReady = useAppSelector((s) => s.ui.authReady);
-  const hasBirthDate = useAppSelector((s) => !!s.auth.user.birthDate);
+  const canUseApp = useAppSelector(selectCanUseApp);
+  const birthDate = useAppSelector((s) => s.auth.user.birthDate);
   const birthDateChecked = useAppSelector((s) => s.auth.birthDateChecked);
   const geoBlocked = useAppSelector(selectGeoBlock).isBlocked;
 
@@ -101,9 +103,11 @@ export const RootNavigator = () => {
   if (!authReady) return <Splash />;
   if (!isLoggedIn) return <AuthScreen />;
   if (!emailVerified) return <VerifyEmailScreen />;
-  if (!hasBirthDate) {
-    // A first Google sign-in has no birth date yet: look it up, then ask. Nothing of the app is shown before that.
-    return birthDateChecked ? <BirthDateScreen /> : <Splash />;
+  if (!canUseApp) {
+    // Verified, but the age is not confirmed. Nothing of the app is shown (and nothing is published: see
+    // selectCanUseApp) until it is. Not asked yet -> look it up, then ask; under 21 -> the account is being removed.
+    if (!birthDate) return birthDateChecked ? <BirthDateScreen /> : <Splash />;
+    return checkAge(birthDate) === 'invalid' ? <BirthDateScreen /> : <Splash />;
   }
 
   return (
