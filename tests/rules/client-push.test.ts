@@ -73,7 +73,7 @@ beforeEach(async () => {
 
 const storeFor = (uid: string, language: 'uk' | 'en' | 'pl' | 'de' = 'uk') => {
   const store = configureStore({ reducer: combineReducers({ auth, safety, notifications, settings, ui }) });
-  store.dispatch(loggedIn(createUser({ id: uid, email: `${uid}@example.com`, emailVerified: true })));
+  store.dispatch(loggedIn(createUser({ id: uid, email: `${uid}@example.com`, emailVerified: true, birthDate: '1990-01-01' })));
   store.dispatch(languageChosen(language));
   return store;
 };

@@ -11,6 +11,7 @@ import { persistor, store } from './src/store';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/ref';
 import { EndedTableModal, PushBanner } from './src/components/shell';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useAppLifecycle, usePendingChatOpen } from './src/hooks/useAppLifecycle';
 import { useAppSelector } from './src/store/hooks';
 import { analyticsService } from './src/services/analyticsService';
@@ -83,7 +84,10 @@ export default function App() {
             }
           >
             <StatusBar style="light" />
-            <AppShell />
+            {/* Outside the navigator: a retry mounts a fresh one, so a screen that crashed is not reopened */}
+            <ErrorBoundary>
+              <AppShell />
+            </ErrorBoundary>
           </PersistGate>
         </Provider>
       </SafeAreaProvider>

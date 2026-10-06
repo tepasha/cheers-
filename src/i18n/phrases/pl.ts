@@ -548,4 +548,7 @@ export const pl: Record<string, string> = {
   "Вхід через Google працює лише в зібраному застосунку, не в Expo Go": "Logowanie przez Google działa tylko w zbudowanej aplikacji, nie w Expo Go",
   "Потрібні служби Google Play": "Wymagane usługi Google Play",
   "Вкажіть дату як ДД.ММ.РРРР ({MIN_AGE}+)": "Podaj datę jako DD.MM.RRRR ({MIN_AGE}+)",
+  "Щось пішло не так": "Coś poszło nie tak",
+  "Застосунок натрапив на помилку. Ваші дані збережені, спробуйте ще раз.": "W aplikacji wystąpił błąd. Twoje dane są bezpieczne, spróbuj ponownie.",
+  "Спробувати ще раз": "Spróbuj ponownie",
 };

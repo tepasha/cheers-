@@ -175,10 +175,3 @@ export function meetupToCloud(meetup: GroupMeetup): CloudMeetup {
     participants: Object.fromEntries(meetup.participants.map((p) => [p.userId, p])),
   };
 }
-
-export function meetupFromCloud(data: CloudMeetup): GroupMeetup {
-  const participants = Object.values(data.participants ?? {});
-  // Host first, then in join order as stored; a stable order keeps the UI from jumping between snapshots
-  participants.sort((a, b) => Number(b.role === 'host') - Number(a.role === 'host'));
-  return { ...data, participants };
-}

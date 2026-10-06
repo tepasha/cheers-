@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { arrayUnion, deleteField, doc, getDoc, getDocs, collection, query, setDoc, updateDoc, where, writeBatch, deleteDoc, increment } from 'firebase/firestore';
+import { arrayUnion, deleteField, doc, getDoc, getDocs, collection, query, setDoc, updateDoc, where, writeBatch, deleteDoc, increment, serverTimestamp } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
 
@@ -245,7 +245,7 @@ describe('chats and messages', () => {
   });
   const msg = (uid: string, id = 'm1', over: Record<string, unknown> = {}) => ({
     id, chatId: dm, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text',
-    proposalData: null, timestamp: '12:00', isEncrypted: true, createdAt: 'now', ...over,
+    proposalData: null, timestamp: '12:00', isEncrypted: true, createdAt: serverTimestamp(), ...over,
   });
   const send = (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
     const batch = writeBatch(db);
@@ -372,5 +372,116 @@ describe('reports', () => {
     await assertFails(getDocs(collection(verifiedUser('alice'), 'reports')));
     await assertFails(deleteDoc(doc(verifiedUser('alice'), 'reports/r1')));
     await assertFails(updateDoc(doc(verifiedUser('alice'), 'reports/r1'), { status: 'resolved' }));
+  });
+});
+
+// Every client reads these collections, so one malformed document used to crash every reader (audit: security-1,
+// security-2, security-4, gap-clock-skew-2). The rules now type every field they can; the app validates the rest.
+describe('malformed shared documents are refused', () => {
+  const HOUR = 3600_000;
+  const hangout = (uid: string, over: Record<string, unknown> = {}) => ({
+    id: 'h1', userId: uid, userName: 'Host', userAvatar: '', barName: 'Squat 17b', locationArea: 'Київ', drinkPreference: 'craft',
+    description: '', createdAt: 'Щойно', createdAtTimestamp: 1, slotsAvailable: 2, participantsCount: 1, lat: 50.4, lng: 30.5,
+    status: 'active', joinedUsers: [uid], expiresAt: Date.now() + 4 * HOUR, ...over,
+  });
+  const entry = (uid: string, role = 'member', status = 'going') => ({ userId: uid, userName: uid, userAvatar: '', role, status, joinedAt: 'x' });
+  const meetup = (creator: string, over: Record<string, unknown> = {}) => ({
+    id: 'm1', title: 'Настілки', description: '', venueName: 'Squat', venueAddress: '', scheduledDate: '01.10.2026', scheduledTime: '19:00',
+    maxParticipants: 6, participants: { [creator]: entry(creator, 'host') }, creatorId: creator, creatorName: creator, creatorAvatar: '',
+    status: 'upcoming', createdAt: 'x', endsAt: Date.now() + 2 * 24 * HOUR, ...over,
+  });
+  const dm = 'dm_alice_bob';
+  const dmDoc = (over: Record<string, unknown> = {}) => ({
+    members: ['alice', 'bob'], isGroup: false, profiles: { alice: { name: 'Alice', avatar: '' } },
+    lastCipherPayload: 'enc:v1:a:b', lastSenderId: 'alice', lastMessageTime: '12:00', updatedAt: 'now', ...over,
+  });
+  const grp = 'grp_alice_1';
+  const grpDoc = (over: Record<string, unknown> = {}) => ({
+    members: ['alice', 'bob'], isGroup: true, createdBy: 'alice', groupName: 'Пʼятниця', groupTopic: '', groupAvatar: '🍻',
+    participants: [{ id: 'alice', name: 'Alice', avatar: '', role: 'admin' }], lastCipherPayload: 'x', lastSenderId: 'alice',
+    lastMessageTime: '1', updatedAt: 'n', ...over,
+  });
+  const msg = (uid: string, id = 'm1', over: Record<string, unknown> = {}) => ({
+    id, chatId: dm, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text',
+    proposalData: null, timestamp: '12:00', isEncrypted: true, createdAt: serverTimestamp(), ...over,
+  });
+  const send = (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
+    const batch = writeBatch(db);
+    batch.set(doc(db, `chats/${chatId}/messages/${m.id}`), m);
+    batch.set(doc(db, `chats/${chatId}`), chat, { merge: true });
+    return batch.commit();
+  };
+
+  it('tables: every field has its type', async () => {
+    const db = verifiedUser('alice');
+    await assertSucceeds(setDoc(doc(db, 'hangouts/ok'), hangout('alice', { id: 'ok' })));
+    await assertSucceeds(setDoc(doc(db, 'hangouts/noloc'), hangout('alice', { id: 'noloc', lat: null, lng: null })));
+    await assertFails(setDoc(doc(db, 'hangouts/a'), hangout('alice', { id: 'a', drinkPreference: { x: 1 } })));
+    await assertFails(setDoc(doc(db, 'hangouts/b'), hangout('alice', { id: 'b', lat: 'north' })));
+    await assertFails(setDoc(doc(db, 'hangouts/c'), hangout('alice', { id: 'c', createdAt: 12345 })));
+    await assertFails(setDoc(doc(db, 'hangouts/d'), hangout('alice', { id: 'd', status: 'weird' })));
+    await assertFails(setDoc(doc(db, 'hangouts/e'), hangout('alice', { id: 'e', userAvatar: 7 })));
+  });
+
+  it('tables: the host renews or closes, but cannot rewrite who sits at the table', async () => {
+    await seed((db) => setDoc(doc(db, 'hangouts/h1'), hangout('alice')));
+    const alice = verifiedUser('alice');
+    await assertFails(updateDoc(doc(alice, 'hangouts/h1'), { joinedUsers: ['alice', 42] }));
+    await assertFails(updateDoc(doc(alice, 'hangouts/h1'), { participantsCount: 7 }));
+    await assertFails(updateDoc(doc(alice, 'hangouts/h1'), { barName: 'Інший бар' }));
+    await assertSucceeds(updateDoc(doc(alice, 'hangouts/h1'), { expiresAt: Date.now() + 3 * HOUR, updatedAt: 'n' }));
+  });
+
+  it('meetups: every top-level field has its type', async () => {
+    const db = verifiedUser('alice');
+    await assertSucceeds(setDoc(doc(db, 'group_meetups/ok'), meetup('alice', { id: 'ok' })));
+    await assertFails(setDoc(doc(db, 'group_meetups/a'), meetup('alice', { id: 'a', venueName: ['x'] })));
+    await assertFails(setDoc(doc(db, 'group_meetups/b'), meetup('alice', { id: 'b', creatorName: { evil: true } })));
+    await assertFails(setDoc(doc(db, 'group_meetups/c'), meetup('alice', { id: 'c', scheduledTime: 1900 })));
+    await assertFails(setDoc(doc(db, 'group_meetups/d'), meetup('alice', { id: 'd', lat: 'x' })));
+    await assertFails(setDoc(doc(db, 'group_meetups/e'), meetup('alice', { id: 'e', description: 'x'.repeat(301) })));
+  });
+
+  it('chats: typed preview and description, distinct members, a well-formed profile line', async () => {
+    const alice = verifiedUser('alice');
+    await assertFails(setDoc(doc(alice, `chats/${dm}`), dmDoc({ lastCipherPayload: 12345 })));
+    await assertFails(setDoc(doc(alice, `chats/${dm}`), dmDoc({ lastMessageTime: { t: 1 } })));
+    await assertFails(setDoc(doc(alice, `chats/${dm}`), dmDoc({ profiles: { alice: 'Alice' } })));
+    await assertFails(setDoc(doc(alice, `chats/${dm}`), dmDoc({ profiles: { alice: { name: 'A', avatar: '', admin: true } } })));
+    await assertFails(setDoc(doc(alice, `chats/${dm}`), dmDoc({ profiles: { bob: { name: 'Fake Bob', avatar: '' } } })));
+    await assertFails(setDoc(doc(alice, `chats/${grp}`), grpDoc({ participants: 1 })));
+    await assertFails(setDoc(doc(alice, `chats/${grp}`), grpDoc({ groupName: ['x'] })));
+    await assertFails(setDoc(doc(alice, `chats/${grp}`), grpDoc({ members: ['alice', 'bob', 'bob'] })));
+    await assertFails(setDoc(doc(alice, `chats/${grp}`), grpDoc({ members: ['alice', 7] })));
+    await assertSucceeds(setDoc(doc(alice, `chats/${grp}`), grpDoc()));
+    // the same holds on update: no member can plant a malformed preview later
+    await assertFails(updateDoc(doc(verifiedUser('bob'), `chats/${grp}`), { lastCipherPayload: 99, lastSenderId: 'bob' }));
+  });
+
+  it('group member add: the newcomer is appended, so a blocked person cannot hide behind a reorder or a duplicate', async () => {
+    await seed(async (db) => {
+      await setDoc(doc(db, `chats/${grp}`), grpDoc());
+      await setDoc(doc(db, 'users/dave/blocks/alice'), { userId: 'alice' }); // dave blocked the creator
+    });
+    const alice = verifiedUser('alice');
+    await assertFails(updateDoc(doc(alice, `chats/${grp}`), { members: ['alice', 'dave', 'bob'] }));
+    await assertFails(updateDoc(doc(alice, `chats/${grp}`), { members: ['dave', 'alice', 'bob'] }));
+    await assertFails(updateDoc(doc(alice, `chats/${grp}`), { members: ['alice', 'bob', 'dave'] }));
+    await assertFails(updateDoc(doc(alice, `chats/${grp}`), { members: ['alice', 'bob', 'bob'] }));
+    await assertSucceeds(updateDoc(doc(alice, `chats/${grp}`), { members: ['alice', 'bob', 'carol'] }));
+  });
+
+  it('messages: createdAt is the server time, and sender fields are typed', async () => {
+    await seed((db) => setDoc(doc(db, `chats/${dm}`), dmDoc()));
+    const bob = verifiedUser('bob');
+    const preview = { lastCipherPayload: 'x', lastSenderId: 'bob', updatedAt: 'n' };
+    await assertSucceeds(send(bob, dm, preview, msg('bob', 'ok')));
+    await assertFails(send(bob, dm, preview, msg('bob', 'n1', { createdAt: 1 })));
+    await assertFails(send(bob, dm, preview, msg('bob', 'n2', { createdAt: '9999-12-31T23:59:59.999Z' })));
+    await assertFails(send(bob, dm, preview, msg('bob', 'n3', { createdAt: new Date(Date.now() + 365 * 24 * HOUR) })));
+    await assertFails(send(bob, dm, preview, msg('bob', 'n4', { senderName: { x: 1 } })));
+    await assertFails(send(bob, dm, preview, msg('bob', 'n5', { senderName: 'x'.repeat(61) })));
+    await assertFails(send(bob, dm, preview, msg('bob', 'n6', { senderAvatar: 5 })));
+    await assertFails(send(bob, dm, preview, msg('bob', 'n7', { timestamp: 5 })));
   });
 });

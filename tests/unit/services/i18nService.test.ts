@@ -4,7 +4,8 @@ import {
   SUPPORTED_LANGUAGES, 
   checkRussianTerritoryRestriction, 
   detectLanguageFromGeo, 
-  TRANSLATIONS 
+  TRANSLATIONS,
+  tr,
 } from '@/services/i18nService';
 
 describe('i18nService', () => {
@@ -84,5 +85,36 @@ describe('i18nService', () => {
       const result = detectLanguageFromGeo({ lat: 52.52, lng: 13.405 });
       expect(result.lang).toBe('de');
     });
+  });
+});
+
+// Translated text often comes from other users (a table's drink or area). A plain object lookup returned inherited
+// members for such keys: an object or a function instead of a string, and the render crashed for every en/pl/de
+// viewer while the table was live (audit gap-i18n-phrase-tables-1).
+describe('tr() and t() never return anything but text', () => {
+  const INHERITED = ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf', '__defineGetter__'];
+
+  it('returns the text itself for keys that only exist on Object.prototype, in every language', () => {
+    for (const lang of ['uk', 'en', 'pl', 'de']) {
+      for (const key of INHERITED) {
+        expect(tr(key, lang)).toBe(key);
+        expect(t(key, lang)).toBe(key);
+      }
+    }
+  });
+
+  it('still translates real phrases', () => {
+    expect(tr('Спробувати ще раз', 'en')).toBe('Try again');
+    expect(tr('Спробувати ще раз', 'uk')).toBe('Спробувати ще раз');
+  });
+
+  it('an unknown or inherited language name falls back to the text', () => {
+    expect(tr('Спробувати ще раз', '__proto__')).toBe('Спробувати ще раз');
+    expect(tr('Спробувати ще раз', 'xx')).toBe('Спробувати ще раз');
+  });
+
+  it('a non-string that slipped through as text comes back as a string', () => {
+    expect(typeof tr(42 as unknown as string, 'en')).toBe('string');
+    expect(tr(undefined as unknown as string, 'en')).toBe('');
   });
 });

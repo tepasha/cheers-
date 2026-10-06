@@ -47,6 +47,15 @@ service cloud.firestore {
       return !(k in d) || (d[k] is number && d[k] >= lo && d[k] <= hi);
     }
 
+    // Optional coordinate: absent, null (no location) or a number in range
+    function optCoord(d, k, lim) {
+      return !(k in d) || d[k] == null || (d[k] is number && d[k] >= -lim && d[k] <= lim);
+    }
+
+    // Everything in a shared collection is read by every other client, so every field has a type and a size here.
+    // What a rule cannot check (the entries of a map, the items of a list) is validated where the app reads it
+    // (src/logic/cloudData.ts), and a document that does not fit is skipped there instead of crashing the reader.
+
     // ─── Users ────────────────────────────────────────────────────────────────
 
     function validProfile(d, uid) {
@@ -126,12 +135,16 @@ service cloud.firestore {
           'createdAt', 'createdAtTimestamp', 'expiresAt', 'slotsAvailable', 'participantsCount', 'lat', 'lng', 'status',
           'joinedUsers', 'updatedAt'
         ])
+        && d.id is string && d.userId is string
         && d.expiresAt is number
         && str(d.barName, 80) && d.barName.size() > 0
         && str(d.userName, 60) && optStr(d, 'userAvatar', 500)
         && optStr(d, 'locationArea', 120) && optStr(d, 'drinkPreference', 120) && optStr(d, 'description', 300)
+        && optStr(d, 'createdAt', 40) && optStr(d, 'updatedAt', 40) && optNum(d, 'createdAtTimestamp', 0, 100000000000000)
+        && optCoord(d, 'lat', 90) && optCoord(d, 'lng', 180)
+        && (!('status' in d) || d.status in ['active', 'closed'])
         && d.slotsAvailable is number && d.slotsAvailable >= 1 && d.slotsAvailable <= 6
-        && d.participantsCount is number && d.participantsCount >= 1
+        && d.participantsCount is number && d.participantsCount >= 1 && d.participantsCount <= 7
         && d.joinedUsers is list && d.joinedUsers.size() <= 7;
     }
 
@@ -163,6 +176,8 @@ service cloud.firestore {
         (resource.data.userId == request.auth.uid
           && request.resource.data.userId == request.auth.uid
           && validHangout(request.resource.data)
+          // The host only renews or closes the table; who sits there is changed by the guests themselves (isSeatJoin)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['expiresAt', 'updatedAt', 'status', 'description'])
           // The host may renew the table: a new expiry is accepted only up to 4 h (+ clock skew) from now
           && (request.resource.data.expiresAt == resource.data.expiresAt
             || (request.resource.data.expiresAt > request.time.toMillis()
@@ -182,8 +197,14 @@ service cloud.firestore {
         ])
         // Listed until 24 h after the start, planned at most 90 days ahead (91 days = 7862400000 ms): `endsAt` cannot park a document forever
         && d.endsAt is number && d.endsAt <= request.time.toMillis() + 7862400000
+        && d.id is string && d.creatorId is string
         && str(d.title, 80) && d.title.size() > 0
         && optStr(d, 'description', 300) && optStr(d, 'venueName', 100) && optStr(d, 'venueAddress', 160)
+        && optStr(d, 'scheduledDate', 20) && optStr(d, 'scheduledTime', 20) && optStr(d, 'dateTimeIso', 40)
+        && optStr(d, 'drinkPreference', 120) && optStr(d, 'creatorName', 60) && optStr(d, 'creatorAvatar', 500)
+        && optStr(d, 'distanceFormatted', 20) && optStr(d, 'createdAt', 40) && optStr(d, 'topicTag', 60)
+        && optStr(d, 'updatedAt', 40)
+        && optCoord(d, 'lat', 90) && optCoord(d, 'lng', 180) && optNum(d, 'distanceKm', 0, 100000)
         && d.maxParticipants is number && d.maxParticipants >= 2 && d.maxParticipants <= 30
         && d.participants is map && d.participants.size() <= 60
         && d.status in ['upcoming', 'ongoing', 'past', 'cancelled'];
@@ -233,7 +254,22 @@ service cloud.firestore {
     // Creating a chat: DM ids are derived from the two members (so nobody can squat someone else's id),
     // group ids start with the creator's uid.
     function memberOk(d, i) {
-      return d.members.size() <= i || d.members[i] == request.auth.uid || !blockedBy(d.members[i]);
+      return d.members.size() <= i
+        || (d.members[i] is string && (d.members[i] == request.auth.uid || !blockedBy(d.members[i])));
+    }
+
+    // A profile line in a chat document: the member's display name and avatar, nothing else
+    function validChatProfile(p) {
+      return p is map && p.keys().hasOnly(['name', 'avatar']) && optStr(p, 'name', 60) && optStr(p, 'avatar', 500);
+    }
+
+    // Types and sizes of every chat field the inbox shows (the preview, the group's description)
+    function validChatFields(d) {
+      return optStr(d, 'lastCipherPayload', 8000) && optStr(d, 'lastMessageTime', 40) && optStr(d, 'updatedAt', 40)
+        && optStr(d, 'groupName', 60) && optStr(d, 'groupTopic', 120) && optStr(d, 'groupAvatar', 500)
+        && optStr(d, 'createdBy', 128)
+        && (!('participants' in d) || (d.participants is list && d.participants.size() <= 10))
+        && (!('profiles' in d) || (d.profiles is map && d.profiles.size() <= 2));
     }
 
     function noMemberBlockedCreator(d) {
@@ -247,8 +283,13 @@ service cloud.firestore {
           'lastCipherPayload', 'lastSenderId', 'lastMessageTime', 'updatedAt'
         ])
         && d.members is list && d.members.size() >= 2 && d.members.size() <= 10
+        // Distinct members: a duplicate would hide a newcomer from the per-index block check
+        && d.members.toSet().size() == d.members.size()
         && request.auth.uid in d.members
         && noMemberBlockedCreator(d)
+        && validChatFields(d)
+        // A DM carries the creator's own profile line only
+        && (!('profiles' in d) || (d.profiles.keys().hasOnly([request.auth.uid]) && validChatProfile(d.profiles[request.auth.uid])))
         && d.isGroup is bool
         && d.lastSenderId == request.auth.uid
         && ((d.isGroup == false
@@ -266,6 +307,7 @@ service cloud.firestore {
       let after = request.resource.data;
       let changed = after.diff(before).affectedKeys();
       return wasChatMember()
+        && validChatFields(after)
         // The preview always names whoever actually wrote it: changing the text or the sender requires
         // lastSenderId to be the caller, so nobody can put words in another member's mouth
         && (!('lastSenderId' in changed) || after.lastSenderId == request.auth.uid)
@@ -274,16 +316,23 @@ service cloud.firestore {
           changed.hasOnly(['lastCipherPayload', 'lastSenderId', 'lastMessageTime', 'updatedAt'])
           || (before.isGroup == false
               && changed.hasOnly(['lastCipherPayload', 'lastSenderId', 'lastMessageTime', 'updatedAt', 'profiles'])
-              && after.profiles.diff(before.profiles).affectedKeys().hasOnly([request.auth.uid]))
+              && after.profiles.diff(before.profiles).affectedKeys().hasOnly([request.auth.uid])
+              && validChatProfile(after.profiles[request.auth.uid]))
           || (before.isGroup == true
               && before.createdBy == request.auth.uid
               && changed.hasOnly([
                   'members', 'participants', 'groupName', 'groupTopic', 'groupAvatar',
                   'lastCipherPayload', 'lastSenderId', 'lastMessageTime', 'updatedAt'
                 ])
-              && after.members.size() <= 10 && after.members.hasAll(before.members)
+              && after.members.size() <= 10
+              // Existing members keep their places and nobody is listed twice, so the one newcomer is the last entry
+              // and is the person checked against the creator's blocks (a reordered or duplicated list would let a
+              // blocked person through under someone else's index)
+              && after.members.toSet().size() == after.members.size()
+              && after.members[0:before.members.size()] == before.members
               && (after.members.size() == before.members.size()
                   || (after.members.size() == before.members.size() + 1
+                      && after.members[before.members.size()] is string
                       && !blockedBy(after.members[before.members.size()])))));
     }
 
@@ -328,6 +377,15 @@ service cloud.firestore {
           && request.resource.data.id == messageId
           && request.resource.data.chatId == chatId
           && request.resource.data.senderId == request.auth.uid
+          // Server time only: createdAt is the ordering key of the conversation, so neither a skewed phone clock
+          // nor a forged value (a number, a far-future date) can reorder or break anyone's history
+          && request.resource.data.createdAt == request.time
+          && str(request.resource.data.senderName, 60)
+          && (!('senderAvatar' in request.resource.data) || request.resource.data.senderAvatar == null
+              || str(request.resource.data.senderAvatar, 500))
+          && optStr(request.resource.data, 'timestamp', 40)
+          && (!('isEncrypted' in request.resource.data) || request.resource.data.isEncrypted is bool)
+          && optStr(request.resource.data, 'audioUrl', 500) && optNum(request.resource.data, 'audioDuration', 0, 3600)
           && str(request.resource.data.cipherPayload, 8000) && request.resource.data.cipherPayload.size() > 0
           && request.resource.data.type in ['text', 'cheers', 'location_proposal', 'audio', 'proposal_response']
           // Proposal details travel encrypted: plaintext venue/address/time is refused, and a proposal needs the cipher

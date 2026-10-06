@@ -10,6 +10,8 @@ export default defineConfig({
     // One emulator instance, shared data: never run files/tests in parallel
     fileParallelism: false,
     testTimeout: 20000,
+    // The first file loads the rules into a cold emulator (JVM warm-up + rules compile), which can exceed 10 s
+    hookTimeout: 60000,
   },
   resolve: {
     alias: {

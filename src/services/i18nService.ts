@@ -460,9 +460,20 @@ export const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
   },
 };
 
+/**
+ * A table's OWN entry for `key`, or undefined. Translated text often comes from other users (a table's drink or
+ * area), and a plain object lookup would hand back inherited members for keys like "__proto__" or "constructor":
+ * an object or a function where the screen expects a string, which crashes the render for every viewer.
+ */
+function ownText(table: Record<string, string> | undefined, key: string): string | undefined {
+  if (!table || !Object.prototype.hasOwnProperty.call(table, key)) return undefined;
+  const value = table[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
 export function t(key: string, lang?: string | AppLanguage): string {
   const safeLang = (lang as AppLanguage) || 'uk';
-  return TRANSLATIONS[safeLang]?.[key] || TRANSLATIONS['uk']?.[key] || key;
+  return ownText(TRANSLATIONS[safeLang], key) || ownText(TRANSLATIONS['uk'], key) || key;
 }
 
 // ─── Phrase translation ─────────────────────────────────────────────────────
@@ -478,8 +489,11 @@ const interpolate = (text: string, params?: TrParams) =>
   params ? text.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match)) : text;
 
 export function tr(text: string, lang: AppLanguage | string | undefined, params?: TrParams): string {
-  const dictionary = lang && lang !== 'uk' ? PHRASES[lang as Exclude<AppLanguage, 'uk'>] : undefined;
-  return interpolate(dictionary?.[text] ?? text, params);
+  const dictionary =
+    lang && lang !== 'uk' && Object.prototype.hasOwnProperty.call(PHRASES, lang) ? PHRASES[lang as Exclude<AppLanguage, 'uk'>] : undefined;
+  // Remote data typed as string may still not be one: never let a non-string reach the screen
+  const source = typeof text === 'string' ? text : String(text ?? '');
+  return interpolate(ownText(dictionary, source) ?? source, params);
 }
 
 /**

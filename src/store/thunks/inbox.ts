@@ -2,6 +2,7 @@ import type { AppThunk } from '../hooks';
 import { inboxSynced } from '../slices/chatsSlice';
 import { CloudChat, otherMemberId, placeholderBuddy, threadFromCloudChat } from '../../logic/chats';
 import { cryptoService } from '../../services/cryptoService';
+import { asString } from '../../logic/cloudData';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { BuddyProfile } from '../../types';
 import { notifyChatMessage } from './notifications';
@@ -15,7 +16,8 @@ export const syncChatInbox =
   async (dispatch, getState) => {
     const myId = getState().auth.user.id;
 
-    const chats = await Promise.all(
+    // One chat that cannot be read is left out of this round; it never stops the others from syncing
+    const settled = await Promise.allSettled(
       cloudChats.map(async (chat) => {
         const known = getState().chats.threads.some((t) => t.id === chat.id);
         const lastText = chat.lastCipherPayload ? await cryptoService.decryptMessage(chat.lastCipherPayload, chat.id) : '';
@@ -27,13 +29,16 @@ export const syncChatInbox =
           if (live) other = live;
           else if (otherId) {
             const p = await firestoreSyncService.getUserProfile(otherId);
-            if (p?.name) other = { ...placeholderBuddy(otherId, p.name, p.avatar), tagline: p.tagline ?? '', locationName: p.locationName ?? '' };
+            const name = asString(p?.name);
+            if (name) other = { ...placeholderBuddy(otherId, name, asString(p?.avatar)), tagline: asString(p?.tagline), locationName: asString(p?.locationName) };
           }
         }
 
         return { thread: threadFromCloudChat(chat, myId, { other, lastText }), lastSenderId: chat.lastSenderId };
       })
     );
+    const chats = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+    settled.forEach((r) => r.status === 'rejected' && console.warn('[inbox] chat skipped:', r.reason));
 
     // Decide what counts as news against the state from BEFORE the reducer merges this snapshot
     const openChatId = getState().ui.openChatId;

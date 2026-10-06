@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, increment, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, increment, setDoc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
 const user = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
@@ -28,7 +28,7 @@ const dmChat = (members: string[], sender: string) => ({
   members, isGroup: false, profiles: { [sender]: { name: sender, avatar: '' } }, lastCipherPayload: 'enc:v1:a:b', lastSenderId: sender, lastMessageTime: '1', updatedAt: 'n',
 });
 const msg = (uid: string, chatId: string, id = 'm1') => ({
-  id, chatId, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text', proposalData: null, timestamp: '1', isEncrypted: true, createdAt: 'n',
+  id, chatId, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text', proposalData: null, timestamp: '1', isEncrypted: true, createdAt: serverTimestamp(),
 });
 const send = (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
   const batch = writeBatch(db);

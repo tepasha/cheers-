@@ -15,6 +15,7 @@ import {
   startAt,
   endAt,
   limit,
+  serverTimestamp,
   writeBatch,
   runTransaction,
   arrayUnion,
@@ -27,7 +28,8 @@ const CHAT_PAGE_SIZE = 100;
 import { db } from './firebase';
 import { FavoriteVenueItem, PaymentEtiquette, DrinkType, Message, HangoutAlert, UserGamificationState, BuddyProfile, GroupMeetup, ChatThread, ChatParticipant } from '../types';
 import type { CloudChat } from '../logic/chats';
-import { meetupFromCloud, meetupToCloud, type CloudMeetup } from '../logic/meetups';
+import { meetupToCloud } from '../logic/meetups';
+import { DRINK_TYPES, MOOD_TYPES, PAYMENT_RULES, asNumber, asOptString, asString, asStringList, oneOf, readCloudChat, readCloudHangout, readCloudMeetup, readEach, timeMillis } from '../logic/cloudData';
 import type { MeetupParticipant } from '../types';
 import { omitUndefined } from '../utils/firestoreData';
 import type { BlockedUserRecord } from '../types';
@@ -61,6 +63,22 @@ export interface PrivateProfile {
   birthDate?: string;
 }
 
+
+/**
+ * Wraps a snapshot callback. Firestore calls it from a timer, where an exception is uncaught and kills a release
+ * build, so a snapshot that cannot be processed is logged and skipped; the next one is processed normally.
+ */
+function guard<T>(what: string, onNext: (value: T) => void | Promise<void>): (value: T) => void {
+  const skip = (error: unknown) => console.warn(`[Firestore] ${what}: snapshot skipped`, error);
+  return (value) => {
+    try {
+      const result = onNext(value);
+      if (result instanceof Promise) result.catch(skip);
+    } catch (error) {
+      skip(error);
+    }
+  };
+}
 
 /** Decrypts the details of a meetup proposal; a proposal starts out pending until an answer message says otherwise */
 async function readProposal(cipher: string, chatId: string): Promise<Message['proposalData']> {
@@ -253,7 +271,7 @@ export const firestoreSyncService = {
 
       const unsubscribe = onSnapshot(
         hangoutsCol,
-        (snapshot) => {
+        guard('hangouts', (snapshot) => {
           const now = Date.now();
           // In Battery Saver mode the caller passes a throttle to conserve CPU & battery
           if (options.throttleMs && lastEmissionTimestamp > 0 && now - lastEmissionTimestamp < options.throttleMs) {
@@ -261,46 +279,29 @@ export const firestoreSyncService = {
           }
           lastEmissionTimestamp = now;
 
-          const liveFirestoreItems: HangoutAlert[] = [];
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            if (data.status === 'closed' || isHangoutExpired(data, now)) return;
+          const liveFirestoreItems = readEach(snapshot.docs, (d) => {
+            const data = readCloudHangout(d.id, d.data());
+            if (!data || data.status === 'closed' || isHangoutExpired(data, now)) return null;
 
             let distKm: number | undefined = undefined;
             let distFormatted: string | undefined = undefined;
-
-            if (
-              typeof data.lat === 'number' &&
-              typeof data.lng === 'number' &&
-              userLocation &&
-              typeof userLocation.lat === 'number'
-            ) {
+            if (typeof data.lat === 'number' && typeof data.lng === 'number' && userLocation && typeof userLocation.lat === 'number') {
               distKm = calculateDistanceKm(userLocation.lat, userLocation.lng, data.lat, data.lng);
               distFormatted = formatDistance(distKm);
             }
 
-            liveFirestoreItems.push({
-              id: docSnap.id,
-              userId: data.userId || 'guest',
+            const item: HangoutAlert = {
+              ...data,
               userName: data.userName || ph('Користувач'),
-              userAvatar:
-                data.userAvatar || '',
               barName: data.barName || ph('Бар'),
               locationArea: data.locationArea || ph('Київ'),
               drinkPreference: data.drinkPreference || ph('Келих за настроєм'),
-              description: data.description || '',
               createdAt: data.createdAt || ph('Щойно'),
-              slotsAvailable: Number(data.slotsAvailable ?? 2),
-              participantsCount: Number(data.participantsCount ?? 1),
-              lat: typeof data.lat === 'number' ? data.lat : undefined,
-              lng: typeof data.lng === 'number' ? data.lng : undefined,
               distanceKm: distKm,
               distanceFormatted: distFormatted,
               isLive: true,
-              expiresAt: data.expiresAt,
-              status: data.status || 'active',
-              joinedUsers: Array.isArray(data.joinedUsers) ? data.joinedUsers : [],
-            });
+            };
+            return item;
           });
 
           // Real live hangouts from Firestore only
@@ -314,7 +315,7 @@ export const firestoreSyncService = {
           });
 
           callback(merged);
-        },
+        }),
         (error) => {
           console.warn('[Firestore] Live Hangouts subscription warning:', error);
           callback([]);
@@ -412,14 +413,9 @@ export const firestoreSyncService = {
       // Meetups are listed until 24 h after their start; the archive (30 more days) is not loaded
       return onSnapshot(
         query(collection(db, 'group_meetups'), where('endsAt', '>', Date.now())),
-        (snapshot) => {
-          const meetups: GroupMeetup[] = [];
-          snapshot.forEach((d) => {
-            const data = d.data() as CloudMeetup;
-            if (data && data.id) meetups.push(meetupFromCloud(data));
-          });
-          callback(meetups);
-        },
+        guard('group_meetups', (snapshot) => {
+          callback(readEach(snapshot.docs, (d) => readCloudMeetup(d.data())));
+        }),
         (error) => console.warn('[Firestore] group_meetups sync warning:', error)
       );
     } catch (err) {
@@ -457,7 +453,7 @@ export const firestoreSyncService = {
       if (!chat.isGroup) {
         chatFields.members = members;
         chatFields.isGroup = false;
-        chatFields.profiles = { [me.id]: { name: me.name, avatar: me.avatar ?? '' } };
+        chatFields.profiles = { [me.id]: { name: me.name.slice(0, 60), avatar: me.avatar ?? '' } };
       } else if (chat.createdBy === me.id) {
         chatFields.members = members;
         chatFields.isGroup = true;
@@ -484,7 +480,7 @@ export const firestoreSyncService = {
         id: message.id,
         chatId: chat.id,
         senderId: message.senderId,
-        senderName: message.senderName,
+        senderName: message.senderName.slice(0, 60), // a Google display name can be longer than the rules allow
         senderAvatar: message.senderAvatar || null,
         cipherPayload,
         type: message.type || 'text',
@@ -493,7 +489,9 @@ export const firestoreSyncService = {
         ...(message.proposalId ? { proposalId: message.proposalId, proposalStatus: message.proposalStatus } : {}),
         timestamp: message.timestamp,
         isEncrypted: true,
-        createdAt: now,
+        // Server time, not the phone's: it is the only ordering key of a conversation, and the rules accept nothing
+        // else, so a skewed clock cannot misorder replies and nobody can pin a message to the top of the history
+        createdAt: serverTimestamp(),
       });
       batch.set(doc(db, 'chats', chat.id), chatFields, { merge: true });
       await batch.commit();
@@ -589,7 +587,9 @@ export const firestoreSyncService = {
       const q = query(collection(db, 'chats'), where('members', 'array-contains', userId));
       return onSnapshot(
         q,
-        (snapshot) => callback(snapshot.docs.map((d) => ({ ...(d.data() as Omit<CloudChat, 'id'>), id: d.id }))),
+        guard('chat inbox', (snapshot) => {
+          callback(readEach(snapshot.docs, (d) => readCloudChat(d.id, d.data(), userId)));
+        }),
         (err) => console.warn('[Firestore] chat inbox warning:', err)
       );
     } catch (err) {
@@ -609,45 +609,55 @@ export const firestoreSyncService = {
     try {
       const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(CHAT_PAGE_SIZE));
 
-      const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, async (snapshot) => {
+      const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, guard(`chat ${chatId}`, async (snapshot) => {
         // Only what changed since the last snapshot (incl. delivery-state changes); the initial
         // snapshot reports every loaded doc as "added". Avoids re-decrypting the whole history.
         const changed = snapshot.docChanges({ includeMetadataChanges: true }).filter((c) => c.type !== 'removed');
         if (changed.length === 0) return;
 
-        const messages = await Promise.all(
-          changed.map(async ({ doc: docSnap }): Promise<Message & { _createdAt: string }> => {
-            const data = docSnap.data();
-            const cipher = data.cipherPayload || data.text || '';
-            const proposalData = data.proposalCipher ? await readProposal(data.proposalCipher, chatId) : data.proposalData || undefined;
-            return {
-              id: data.id || docSnap.id,
-              chatId: data.chatId || chatId,
-              senderId: data.senderId,
-              senderName: data.senderName,
-              senderAvatar: data.senderAvatar || undefined,
-              text: await cryptoService.decryptMessage(cipher, chatId),
-              timestamp: data.timestamp || ph('Щойно'),
-              isMe: data.senderId === currentUserId || data.senderId === 'me',
-              type: data.type || 'text',
-              audioUrl: data.audioUrl || undefined,
-              audioDuration: typeof data.audioDuration === 'number' ? data.audioDuration : undefined,
-              isEncrypted: true,
-              cipherPayload: cipher,
-              proposalData,
-              proposalId: data.proposalId || undefined,
-              proposalStatus: data.proposalStatus || undefined,
-              isFromCache: snapshot.metadata.fromCache,
-              hasPendingWrites: docSnap.metadata.hasPendingWrites,
-              _createdAt: data.createdAt || '',
-            };
+        const read = await Promise.all(
+          changed.map(async ({ doc: docSnap }): Promise<(Message & { _createdAt: number }) | null> => {
+            try {
+              // A message still on its way has no server time yet: use the local estimate until the server answers
+              const data = docSnap.data({ serverTimestamps: 'estimate' });
+              const senderId = asString(data.senderId);
+              if (!senderId) return null;
+              const cipher = asString(data.cipherPayload);
+              const proposalCipher = asOptString(data.proposalCipher);
+              const type = asString(data.type, 'text');
+              return {
+                id: asString(data.id, docSnap.id),
+                chatId,
+                senderId,
+                senderName: asString(data.senderName),
+                senderAvatar: asOptString(data.senderAvatar) || undefined,
+                text: await cryptoService.decryptMessage(cipher, chatId),
+                timestamp: asString(data.timestamp) || ph('Щойно'),
+                isMe: senderId === currentUserId,
+                type: (['text', 'cheers', 'location_proposal', 'audio', 'proposal_response'].includes(type) ? type : 'text') as Message['type'],
+                audioUrl: asOptString(data.audioUrl) || undefined,
+                audioDuration: asNumber(data.audioDuration),
+                isEncrypted: true,
+                cipherPayload: cipher,
+                proposalData: proposalCipher ? await readProposal(proposalCipher, chatId) : undefined,
+                proposalId: asOptString(data.proposalId) || undefined,
+                proposalStatus: data.proposalStatus === 'accepted' || data.proposalStatus === 'declined' ? data.proposalStatus : undefined,
+                isFromCache: snapshot.metadata.fromCache,
+                hasPendingWrites: docSnap.metadata.hasPendingWrites,
+                _createdAt: timeMillis(data.createdAt),
+              };
+            } catch (error) {
+              console.warn('[Firestore] unreadable message skipped:', docSnap.id, error);
+              return null;
+            }
           })
         );
 
-        // The query is newest-first; deliver oldest-first so the thread appends in order
-        messages.sort((x, y) => x._createdAt.localeCompare(y._createdAt));
+        // The query is newest-first; deliver oldest-first (by server time) so the thread appends in order
+        const messages = read.filter((m): m is Message & { _createdAt: number } => m !== null);
+        messages.sort((x, y) => x._createdAt - y._createdAt);
         onMessages(messages.map(({ _createdAt, ...m }) => m));
-      }, (err) => {
+      }), (err) => {
         console.warn('Firestore snapshot listener notice (local state remains active):', err);
       });
 
@@ -740,42 +750,44 @@ export const firestoreSyncService = {
       const unsubscribes = bounds.map(([start, end], index) =>
         onSnapshot(
           query(collection(db, 'users'), orderBy('geohash'), startAt(start), endAt(end), limit(PER_RANGE_LIMIT)),
-          (snapshot) => {
+          guard('nearby profiles', (snapshot) => {
             const now = Date.now();
-            const found: BuddyProfile[] = [];
-            snapshot.forEach((docSnap) => {
+            const found = readEach(snapshot.docs, (docSnap): BuddyProfile | null => {
               const data = docSnap.data();
               const uid = docSnap.id;
-              if (uid === currentUserId || !data.name) return;
-              if (typeof data.lat !== 'number' || typeof data.lng !== 'number') return; // no location: not "nearby"
+              const name = asString(data.name);
+              const lat = asNumber(data.lat);
+              const lng = asNumber(data.lng);
+              if (uid === currentUserId || !name) return null;
+              if (lat === undefined || lng === undefined) return null; // no location: not "nearby"
+              const drinks = asStringList(data.preferredDrinks, 8).filter((x): x is DrinkType => (DRINK_TYPES as readonly string[]).includes(x));
 
-              found.push({
+              return {
                 id: uid,
-                name: data.name,
-                age: typeof data.age === 'number' ? data.age : 26,
-                avatar: data.avatar || '',
-                tagline: data.tagline || ph('Радий знайомству за келихом 🍻'),
-                bio: data.bio || '',
-                locationName: data.locationName || ph('Київ'),
+                name,
+                age: asNumber(data.age) ?? 26,
+                avatar: asString(data.avatar),
+                tagline: asString(data.tagline) || ph('Радий знайомству за келихом 🍻'),
+                bio: asString(data.bio),
+                locationName: asString(data.locationName) || ph('Київ'),
                 distanceKm: 0, // set by pickNearby, recomputed from the live position in selectors
-                coordinates: { lat: data.lat, lng: data.lng },
-                preferredDrinks: Array.isArray(data.preferredDrinks) && data.preferredDrinks.length > 0 ? data.preferredDrinks : ['craft'],
-                paymentRule: data.paymentRule || 'split_50_50',
-                currentMood: data.currentMood || 'chill_talk',
-                favoriteBars: Array.isArray(data.favoriteBars) ? data.favoriteBars : [],
-                talkTopics: Array.isArray(data.talkTopics) ? data.talkTopics : [],
-                online: isOnline(data.lastSeenAt, now),
-                inactive: isInactive(data.lastSeenAt, now),
-                lastSeenAt: typeof data.lastSeenAt === 'string' ? data.lastSeenAt : undefined,
-                activeCheckIn: data.activeCheckIn || undefined,
-                level: data.level || 1,
-                levelTitle: data.levelTitle,
-                totalCheckIns: data.totalCheckIns,
-              });
+                coordinates: { lat, lng },
+                preferredDrinks: drinks.length > 0 ? drinks : ['craft'],
+                paymentRule: oneOf(data.paymentRule, PAYMENT_RULES, 'split_50_50'),
+                currentMood: oneOf(data.currentMood, MOOD_TYPES, 'chill_talk'),
+                favoriteBars: asStringList(data.favoriteBars, 20),
+                talkTopics: asStringList(data.talkTopics, 20),
+                online: isOnline(asOptString(data.lastSeenAt), now),
+                inactive: isInactive(asOptString(data.lastSeenAt), now),
+                lastSeenAt: asOptString(data.lastSeenAt),
+                level: asNumber(data.level) ?? 1,
+                levelTitle: asOptString(data.levelTitle),
+                totalCheckIns: asNumber(data.totalCheckIns),
+              };
             });
             byRange.set(index, found);
             emit();
-          },
+          }),
           (error) => {
             console.warn('[Firestore] Error subscribing to nearby profiles:', error);
             byRange.set(index, []);

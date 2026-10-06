@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, setDoc, writeBatch } from 'firebase/firestore';
+import { doc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
 const user = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
@@ -21,7 +21,7 @@ afterAll(async () => env.cleanup());
 
 const dm = 'dm_alice_bob';
 const base = (uid: string, id: string, over: Record<string, unknown> = {}) => ({
-  id, chatId: dm, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text', proposalData: null, timestamp: '1', isEncrypted: true, createdAt: 'n', ...over,
+  id, chatId: dm, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text', proposalData: null, timestamp: '1', isEncrypted: true, createdAt: serverTimestamp(), ...over,
 });
 const proposal = (uid: string, id = 'p1') =>
   base(uid, id, { type: 'location_proposal', proposalCipher: 'enc:v1:iv:details' });
