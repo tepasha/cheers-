@@ -31,4 +31,8 @@ private_keys/
 # Cloud Functions build output
 functions/lib/
 functions/node_modules/
-.claude 
+
+# Other
+.claude
+features_claude
+features_codex

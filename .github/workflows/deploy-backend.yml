@@ -8,6 +8,8 @@ name: ☁️ Backend deploy (Firestore rules + Cloud Functions)
 #
 # Order matters: the backend is released BEFORE the apps and must keep working for the app versions already in the
 # stores, so rule changes must be additive (old builds stay in use for weeks).
+# Production is deployed only from main or a release tag on main, after the full CI including the rules emulator
+# tests: release.yml and preview.yml run ci-check.yml before calling this workflow; a manual start runs it here.
 on:
   workflow_call:
     inputs:
@@ -36,8 +38,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The production rules guard every user's data and the functions run with admin rights, so they come only from main
+  # or a release tag whose commit is on main (scripts/release-check.mjs --release-ref). Staging passes straight through.
+  gate:
+    name: 🚦 Production only from main or a release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout
+        if: inputs.environment == 'production'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # the "is this commit on main" check needs main's history
+
+      - name: 🟢 Setup Node.js 22
+        if: inputs.environment == 'production'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🚦 main or a release tag on main
+        if: inputs.environment == 'production'
+        run: node scripts/release-check.mjs --release-ref
+
+  # Started by hand, nothing has tested this ref yet: run the same CI as every release, whose `rules` job runs the
+  # emulator suites against these very rules. Callers (release.yml, preview.yml) have run it already.
+  ci:
+    name: ✅ CI gate
+    needs: gate
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/ci-check.yml
+
   deploy:
     name: ☁️ Deploy to ${{ inputs.environment }}
+    needs: [gate, ci]
+    # A skipped CI is accepted only when another workflow called this one (and ran ci-check.yml itself)
+    if: >-
+      !cancelled() && needs.gate.result == 'success'
+      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && github.event_name != 'workflow_dispatch'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
@@ -50,6 +88,9 @@ jobs:
       DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
       WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       WIF_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      # The functions set no region, so they (and their gcf-artifacts image repository) live in the default one.
+      # Change this together with any region you give the functions.
+      FUNCTIONS_REGION: us-central1
     steps:
       - name: 🔎 Is this environment configured?
         id: cfg
@@ -86,7 +127,24 @@ jobs:
         run: npm ci
         working-directory: functions
 
-      # firebase.json in the repository points at the production database; each environment names its own
+      # firebase.json in the repository names the production database, the one the production app is built with
+      # (EAS production FIREBASE_FIRESTORE_DATABASE_ID, compared by ota.yml). A production FIRESTORE_DATABASE_ID that
+      # names anything else would put the rules on another (possibly non-existent) database and point the functions
+      # at it, while the app keeps reading and writing this one. To move production to a new database, change
+      # firebase.json, this variable and the EAS variable together.
+      - name: 🗄️ Production database is the one firebase.json names
+        if: steps.cfg.outputs.configured == 'true' && env.TARGET == 'production'
+        run: |
+          repo_db="$(jq -r '.firestore[0].database // empty' firebase.json)"
+          if [ "$DATABASE_ID" != "$repo_db" ]; then
+            echo "::error::FIRESTORE_DATABASE_ID of the GitHub Environment 'production' is \"$DATABASE_ID\", but firebase.json (and the app) use the database \"$repo_db\". Set the variable to \"$repo_db\"."
+            exit 1
+          fi
+
+      # Each environment names its own database.
+      # FIRESTORE_DATABASE_ID is a required function param (no default), so the rules and the functions always get
+      # the same id from the same variable. EXPO_ACCESS_TOKEN is not a param: the function reads it from process.env,
+      # so leaving the secret unset is fine (an optional *declared* param would abort a --non-interactive deploy).
       - name: ⚙️ Point firebase.json and the function at this environment's database
         if: steps.cfg.outputs.configured == 'true'
         env:
@@ -99,9 +157,37 @@ jobs:
             if [ -n "$EXPO_ACCESS_TOKEN" ]; then echo "EXPO_ACCESS_TOKEN=$EXPO_ACCESS_TOKEN"; fi
           } > "functions/.env.$PROJECT_ID"
 
+      # No --force on purpose: it would also delete, without asking, any deployed function that is missing from the
+      # source (remove functions with an explicit `firebase functions:delete`, see DEPLOY.md).
+      # The price: firebase-tools 15.32.1 checks the gcf-artifacts image repository AFTER releasing the functions and,
+      # in --non-interactive mode, exits 1 when that repository has no cleanup policy. That happens exactly once per
+      # project, on the first functions deploy (the repository does not exist before it, so a policy cannot be set
+      # in advance). In that case set the policy (7 days) and deploy again: the second run also reports any function
+      # error the cleanup failure may have hidden. Every later deploy finds the policy and passes on the first run.
+      # The grep matches the pinned version's message; re-check it when bumping firebase-tools (if it stops
+      # matching, the job simply fails with the CLI's own instructions).
       - name: 🚀 Deploy rules and functions
         if: steps.cfg.outputs.configured == 'true'
-        run: npx --yes firebase-tools@15.32.1 deploy --only firestore:rules,functions --project "$PROJECT_ID" --non-interactive
+        run: |
+          deploy() {
+            npx --yes firebase-tools@15.32.1 deploy --only firestore:rules,firestore:indexes,functions --project "$PROJECT_ID" --non-interactive 2>&1 \
+              | tee "$RUNNER_TEMP/deploy.log"
+          }
+          if deploy; then exit 0; fi
+          if ! grep -q "could not set up cleanup policy" "$RUNNER_TEMP/deploy.log"; then
+            echo "::error::Backend deploy to $TARGET ($PROJECT_ID) failed, see the log above"
+            exit 1
+          fi
+          echo "::notice::First functions deploy to $PROJECT_ID: setting a 7-day cleanup policy on gcf-artifacts ($FUNCTIONS_REGION), then deploying again"
+          if ! npx --yes firebase-tools@15.32.1 functions:artifacts:setpolicy --project "$PROJECT_ID" \
+            --location "$FUNCTIONS_REGION" --days 7 --force --non-interactive; then
+            echo "::error::Could not set the cleanup policy: the deploy service account needs artifactregistry.repositories.update and artifactregistry.versions.delete (or run the setpolicy command once by hand, see DEPLOY.md)"
+            exit 1
+          fi
+          if ! deploy; then
+            echo "::error::Backend deploy to $TARGET ($PROJECT_ID) failed after setting the cleanup policy, see the log above"
+            exit 1
+          fi
 
       - name: 🧹 Remove generated env file
         if: always()

@@ -7,13 +7,15 @@ import { selectCanUseApp } from '../store/selectors';
 import { syncChatInbox } from '../store/thunks/inbox';
 import { buddiesSynced } from '../store/slices/buddiesSlice';
 import { syncHangouts } from '../store/thunks/lifecycle';
-import { meetupsMerged } from '../store/slices/meetupsSlice';
+import { meetupsReconciled } from '../store/slices/meetupsSlice';
 import { restoreFavoritesFromCloud } from '../store/thunks/favorites';
 import { syncBlocksFromCloud } from '../store/thunks/safety';
 import { getBatterySaverConfig } from '../logic/batterySaver';
 import { coarseCoordinate } from '../logic/privacy';
 import { PRESENCE_INTERVAL_MS, snapToQueryGrid } from '../logic/nearby';
 import { firestoreSyncService } from '../services/firestoreSyncService';
+import { queueSync } from '../store/thunks/outbox';
+import { captureSession } from '../store/sessionGuard';
 
 /**
  * Everything that talks to other people's data lives here, and every hook is behind selectCanUseApp: signed in,
@@ -33,42 +35,54 @@ export function useFirestoreStreams() {
   const userId = useAppSelector((s) => s.auth.user.id);
   const allowed = useAppSelector(selectCanUseApp);
   const batterySaver = useAppSelector((s) => s.settings.batterySaver);
+  const generation = useAppSelector((s) => s.ui.sessionGeneration);
 
   useEffect(() => {
     if (!allowed) return;
+    const current = captureSession(store.getState);
     const { realtimeSyncIntervalMs } = getBatterySaverConfig(batterySaver);
     return firestoreSyncService.subscribeToLiveHangouts(
       store.getState().location.current,
-      (items) => dispatch(syncHangouts(items)),
+      (items) => { if (current()) dispatch(syncHangouts(items)); },
       { throttleMs: batterySaver ? realtimeSyncIntervalMs : 0 }
     );
-  }, [dispatch, store, allowed, batterySaver]);
+  }, [dispatch, store, allowed, batterySaver, userId, generation]);
 
   // "People nearby" is a query around the position, on a ~550 m grid so that walking does not re-subscribe each step
   const gridLat = useAppSelector((s) => snapToQueryGrid(s.location.current.lat));
   const gridLng = useAppSelector((s) => snapToQueryGrid(s.location.current.lng));
   useEffect(() => {
     if (!allowed) return;
-    return firestoreSyncService.subscribeToPublicBuddies(userId, { lat: gridLat, lng: gridLng }, (items) => dispatch(buddiesSynced(items)));
-  }, [dispatch, allowed, userId, gridLat, gridLng]);
+    const current = captureSession(store.getState);
+    return firestoreSyncService.subscribeToPublicBuddies(userId, { lat: gridLat, lng: gridLng }, (items) => { if (current()) dispatch(buddiesSynced(items)); });
+  }, [dispatch, store, allowed, userId, gridLat, gridLng, generation]);
 
   useEffect(() => {
     if (!allowed) return;
-    return firestoreSyncService.subscribeToMeetups((items) => dispatch(meetupsMerged(items)));
-  }, [dispatch, allowed]);
+    const current = captureSession(store.getState);
+    return firestoreSyncService.subscribeToMeetups((items) => {
+      if (!current()) return;
+      const pendingIds = store.getState().outbox.jobs
+        .filter((job) => job.owner === userId && job.method === 'saveMeetup')
+        .map((job) => (job.args[0] as { id?: string } | undefined)?.id)
+        .filter((id): id is string => typeof id === 'string');
+      dispatch(meetupsReconciled({ items, pendingIds }));
+    });
+  }, [dispatch, store, allowed, userId, generation]);
 
   useEffect(() => {
     if (allowed) void dispatch(restoreFavoritesFromCloud());
-  }, [dispatch, allowed, userId]);
+  }, [dispatch, allowed, userId, generation]);
 
   useEffect(() => {
     if (allowed) void dispatch(syncBlocksFromCloud());
-  }, [dispatch, allowed, userId]);
+  }, [dispatch, allowed, userId, generation]);
 
   useEffect(() => {
     if (!allowed) return;
-    return firestoreSyncService.subscribeToMyChats(userId, (chats) => void dispatch(syncChatInbox(chats)));
-  }, [dispatch, allowed, userId]);
+    const current = captureSession(store.getState);
+    return firestoreSyncService.subscribeToMyChats(userId, (chats) => { if (current()) void dispatch(syncChatInbox(chats)); });
+  }, [dispatch, store, allowed, userId, generation]);
 }
 
 /** Lets other people see that this person is around: once on launch, on every return to the app, and every 10 minutes */
@@ -91,26 +105,33 @@ export function usePresence() {
 
 /** Publishes identity + position to the public profile (debounced; never touches other fields) */
 export function useProfileSync() {
+  const dispatch = useAppDispatch();
   const user = useAppSelector((s) => s.auth.user);
   const allowed = useAppSelector(selectCanUseApp);
   const location = useAppSelector((s) => s.location.current);
-  // Only a ~20 m grid is ever published, so a smaller GPS move must not cause a Firestore write
+  const shareLocation = useAppSelector((s) => s.settings.shareLocation === true) && !location.isSimulated && location.status === 'active';
+  // An approximate area is published, so smaller GPS movements do not cause a write.
   const lat = coarseCoordinate(location.lat);
   const lng = coarseCoordinate(location.lng);
 
   useEffect(() => {
     if (!allowed || !user.id) return;
     const timer = setTimeout(() => {
-      void firestoreSyncService.saveUserProfile({
+      dispatch(queueSync('saveUserProfile', 'profile', [{
         id: user.id,
         name: user.name,
         avatar: user.avatar,
-        locationName: location.locationName,
-        lat,
-        lng,
+        shareLocation,
+        lat: shareLocation ? lat : undefined,
+        lng: shareLocation ? lng : undefined,
         age: user.age,
-      });
+        tagline: user.tagline,
+        bio: user.bio,
+        preferredDrinks: user.preferredDrinks,
+        currentMood: user.currentMood,
+        paymentRule: user.paymentRule === 'not_specified' ? undefined : user.paymentRule,
+      }]));
     }, PROFILE_SYNC_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [allowed, user.id, user.name, user.avatar, user.age, location.locationName, lat, lng]);
+  }, [dispatch, allowed, user.id, user.name, user.avatar, user.age, user.tagline, user.bio, user.preferredDrinks, user.currentMood, user.paymentRule, shareLocation, lat, lng]);
 }

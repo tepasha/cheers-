@@ -11,15 +11,20 @@ import { dismissBanner } from '../store/thunks/notifications';
 import { navigateFromNotification } from '../navigation/ref';
 import { acknowledgeEndedTable, renewHangout } from '../store/thunks/lifecycle';
 import { useTr } from '../hooks/useT';
+import { retryOutbox } from '../store/thunks/outbox';
 
 export const OfflineBanner = () => {
   const tr = useTr();
+  const dispatch = useAppDispatch();
   const isOnline = useAppSelector(selectIsOnline);
-  if (isOnline) return null;
+  const pending = useAppSelector((s) => s.outbox.jobs.length);
+  const failed = useAppSelector((s) => s.outbox.jobs.some((j) => j.status === 'failed'));
+  if (isOnline && !pending) return null;
   return (
     <View style={styles.offline} accessibilityRole="alert">
       <Icon name="wifi-off" size={14} color={colors.amberSoft} />
-      <Text style={styles.offlineText}>{tr('Зв’язок втрачено • дані збережено локально')}</Text>
+      <Text style={styles.offlineText}>{isOnline ? tr('Зміни ще не збережено. Перевірте з’єднання й повторіть спробу.') : tr('Зв’язок втрачено • дані збережено локально')}</Text>
+      {failed && <Button label={tr('Повторити')} small variant="secondary" onPress={() => dispatch(retryOutbox())} />}
     </View>
   );
 };

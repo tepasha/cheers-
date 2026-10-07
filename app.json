@@ -15,9 +15,9 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.budmo.app",
       "buildNumber": "1",
+      "usesAppleSignIn": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Будьмо! потребує доступу до гео-локації для пошуку найближчих барів, компанії на радарі та безпечного виявлення санкційних зон.",
-        "ITSAppUsesNonExemptEncryption": false
+        "NSLocationWhenInUseUsageDescription": "Будьмо! потребує доступу до гео-локації для пошуку найближчих барів, компанії на радарі та безпечного виявлення санкційних зон."
       }
     },
     "android": {
@@ -52,11 +52,13 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash.png",
+          "imageWidth": 180,
           "resizeMode": "contain",
           "backgroundColor": "#0a0a0a"
         }
       ],
       "expo-sharing",
+      "expo-apple-authentication",
       [
         "expo-location",
         {

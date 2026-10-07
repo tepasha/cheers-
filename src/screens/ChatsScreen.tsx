@@ -1,5 +1,6 @@
+import { dialogs as Alert } from '../services/dialogs';
 import React, { useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors, radius, spacing, typography } from '../theme';
@@ -118,7 +119,7 @@ const CreateGroupSheet = ({
     setAvatar(GROUP_EMOJIS[0]);
     setSelected([]);
   };
-  const canCreate = name.trim().length > 0;
+  const canCreate = name.trim().length > 0 && selected.length > 0;
 
   return (
     <Sheet

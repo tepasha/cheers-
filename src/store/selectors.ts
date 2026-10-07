@@ -16,8 +16,10 @@ export const selectUser = (s: RootState) => s.auth.user;
  * a person who turns out to be too young is removed without ever having been visible. Memoized on its three inputs.
  */
 export const selectCanUseApp = createSelector(
-  [(s: RootState) => s.auth.user.isLoggedIn, (s: RootState) => s.auth.user.emailVerified, (s: RootState) => s.auth.user.birthDate],
-  (isLoggedIn, emailVerified, birthDate): boolean => isLoggedIn === true && emailVerified === true && checkAge(birthDate) === 'ok'
+  [(s: RootState) => s.auth.user.isLoggedIn, (s: RootState) => s.auth.user.emailVerified, (s: RootState) => s.auth.user.birthDate,
+    (s: RootState) => s.auth.user.serverEligible, (s: RootState) => s.location.current, (s: RootState) => s.settings.simulateRuBlock],
+  (isLoggedIn, emailVerified, birthDate, eligible, location, simulate): boolean =>
+    isLoggedIn === true && emailVerified === true && eligible !== false && checkAge(birthDate) === 'ok' && !checkRussianTerritoryRestriction(location, simulate).isBlocked
 );
 export const selectLocation = (s: RootState) => s.location.current;
 export const selectSettings = (s: RootState) => s.settings;

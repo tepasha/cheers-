@@ -1,3 +1,4 @@
+import { attachBudget } from './helpers/writeBudget';
 /**
  * Server-side blocking. If Bob blocked Alice (document users/bob/blocks/alice), the rules must stop Alice from
  * reaching Bob, and must never reveal the block to her.  npm run test:rules  (needs the Firestore emulator)
@@ -8,7 +9,7 @@ import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestE
 import { arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, increment, setDoc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
-const user = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
+const user = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true, age_21: true }).firestore();
 const seed = (fn: (db: any) => Promise<void>) => env.withSecurityRulesDisabled((ctx) => fn(ctx.firestore()));
 
 beforeAll(async () => {
@@ -25,15 +26,16 @@ const blockAliceByBob = () => seed((db) => setDoc(doc(db, 'users/bob/blocks/alic
 
 const dm = 'dm_alice_bob';
 const dmChat = (members: string[], sender: string) => ({
-  members, isGroup: false, profiles: { [sender]: { name: sender, avatar: '' } }, lastCipherPayload: 'enc:v1:a:b', lastSenderId: sender, lastMessageTime: '1', updatedAt: 'n',
+  members, isGroup: false, profiles: { [sender]: { name: sender, avatar: '' } }, lastCipherPayload: '', lastSenderId: sender, lastMessageTime: '1', updatedAt: 'n',
 });
 const msg = (uid: string, chatId: string, id = 'm1') => ({
   id, chatId, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text', proposalData: null, timestamp: '1', isEncrypted: true, createdAt: serverTimestamp(),
 });
-const send = (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
+const send = async (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
   const batch = writeBatch(db);
+  await attachBudget(db, batch, String(m.senderId), 'message', `${chatId}/${m.id}`);
   batch.set(doc(db, `chats/${chatId}/messages/${m.id}`), m);
-  batch.set(doc(db, `chats/${chatId}`), chat, { merge: true });
+  batch.set(doc(db, `chats/${chatId}`), { ...chat, lastMessageId: m.id, lastCipherPayload: m.cipherPayload, lastMessageTime: m.timestamp }, { merge: true });
   return batch.commit();
 };
 const preview = (uid: string) => ({ lastCipherPayload: 'x', lastSenderId: uid, lastMessageTime: '2', updatedAt: 'n2' });
@@ -63,14 +65,14 @@ describe('profile', () => {
     await seed((db) => setDoc(doc(db, 'users/bob'), profile('bob')));
     await blockAliceByBob();
     await assertFails(getDoc(doc(user('alice'), 'users/bob')));
-    await assertSucceeds(getDoc(doc(user('carol'), 'users/bob')));
+    await assertFails(getDoc(doc(user('carol'), 'users/bob')));
     await assertSucceeds(getDoc(doc(user('bob'), 'users/bob')));
   });
 
   it('documents the limit: rules cannot filter list queries, so discovery lists still include it', async () => {
     await seed((db) => setDoc(doc(db, 'users/bob'), profile('bob')));
     await blockAliceByBob();
-    await assertSucceeds(getDocs(collection(user('alice'), 'users')));
+    await assertFails(getDocs(collection(user('alice'), 'users')));
   });
 });
 
@@ -108,7 +110,7 @@ describe('tables and meetups', () => {
     await seed((db) =>
       setDoc(doc(db, 'hangouts/h1'), {
         id: 'h1', userId: 'bob', userName: 'Bob', userAvatar: '', barName: 'Squat', locationArea: '', drinkPreference: '', description: '', createdAt: 'x',
-        slotsAvailable: 3, participantsCount: 1, status: 'active', joinedUsers: ['bob'],
+        slotsAvailable: 3, participantsCount: 1, status: 'active', joinedUsers: ['bob'], expiresAt: Date.now() + 3600000,
       })
     );
     await blockAliceByBob();
@@ -120,7 +122,7 @@ describe('tables and meetups', () => {
     const entry = (uid: string, role = 'member') => ({ userId: uid, userName: uid, userAvatar: '', role, status: 'going', joinedAt: 'x' });
     await seed((db) =>
       setDoc(doc(db, 'group_meetups/m1'), {
-        id: 'm1', title: 'Настілки', maxParticipants: 6, participants: { bob: entry('bob', 'host') }, creatorId: 'bob', creatorName: 'Bob', creatorAvatar: '', status: 'upcoming',
+        id: 'm1', title: 'Настілки', maxParticipants: 6, participants: { bob: entry('bob', 'host') }, creatorId: 'bob', creatorName: 'Bob', creatorAvatar: '', status: 'upcoming', endsAt: Date.now() + 86400000,
       })
     );
     await blockAliceByBob();
@@ -132,10 +134,10 @@ describe('tables and meetups', () => {
 describe('group chats', () => {
   const grp = (creator: string, members: string[], id: string) => ({
     id,
-    doc: { members, isGroup: true, createdBy: creator, groupName: 'G', groupTopic: '', groupAvatar: '', participants: [], lastCipherPayload: 'x', lastSenderId: creator, lastMessageTime: '1', updatedAt: 'n' },
+    doc: { members, isGroup: true, createdBy: creator, groupName: 'G', groupTopic: '', groupAvatar: '', participants: [], lastCipherPayload: '', lastSenderId: creator, lastMessageTime: '1', updatedAt: 'n' },
   });
 
-  it('refuses a group that includes someone who blocked its creator, and groups over 10 members', async () => {
+  it('refuses a blocked recipient and ten members, and accepts nine with all rule checks', async () => {
     await blockAliceByBob();
     const withBob = grp('alice', ['alice', 'carol', 'bob'], 'grp_alice_1');
     await assertFails(send(user('alice'), withBob.id, withBob.doc, msg('alice', withBob.id, 'g1')));
@@ -146,7 +148,9 @@ describe('group chats', () => {
     const eleven = grp('alice', ['alice', ...Array.from({ length: 10 }, (_, i) => `u${i}`)], 'grp_alice_3');
     await assertFails(send(user('alice'), eleven.id, eleven.doc, msg('alice', eleven.id, 'g3')));
     const ten = grp('alice', ['alice', ...Array.from({ length: 9 }, (_, i) => `u${i}`)], 'grp_alice_4');
-    await assertSucceeds(send(user('alice'), ten.id, ten.doc, msg('alice', ten.id, 'g4')));
+    await assertFails(send(user('alice'), ten.id, ten.doc, msg('alice', ten.id, 'g4')));
+    const nine = grp('alice', ['alice', ...Array.from({ length: 8 }, (_, i) => `u${i}`)], 'grp_alice_5');
+    await assertSucceeds(send(user('alice'), nine.id, nine.doc, msg('alice', nine.id, 'g5')));
   });
 
   it('lets the creator add members one at a time, never someone who blocked them', async () => {

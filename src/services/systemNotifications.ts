@@ -34,6 +34,21 @@ export function configureNotifications(): void {
   });
 }
 
+let pushOperation: Promise<unknown> = Promise.resolve();
+const serializePush = <T,>(operation: () => Promise<T>): Promise<T> => {
+  const next = pushOperation.then(operation, operation);
+  pushOperation = next.catch(() => {});
+  return next;
+};
+
+async function unregisterPush(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  await Notifications.unregisterForNotificationsAsync();
+  await Notifications.dismissAllNotificationsAsync();
+  await Notifications.clearLastNotificationResponseAsync();
+}
+export const stopSystemPush = () => serializePush(unregisterPush);
+
 export async function getSystemNotificationPermission(): Promise<SystemNotificationPermission> {
   if (Platform.OS === 'web') return 'denied'; // the browser build has no push registration
   try {
@@ -57,7 +72,7 @@ async function ensureAndroidChannel(): Promise<void> {
  * Gets this phone's Expo push token. With `ask` the system permission dialog may be shown; without it, only an
  * already granted permission is used (background re-registration must never pop a dialog).
  */
-export async function registerForPush(ask: boolean): Promise<PushRegistration> {
+async function getPushRegistration(ask: boolean): Promise<PushRegistration> {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return { status: 'unavailable' };
   try {
     configureNotifications();
@@ -78,6 +93,7 @@ export async function registerForPush(ask: boolean): Promise<PushRegistration> {
     return { status: 'unavailable' };
   }
 }
+export const registerForPush = (ask: boolean) => serializePush(() => getPushRegistration(ask));
 
 /** Called when the OS rotates the device push token; the caller registers again */
 export function onPushTokenChanged(callback: () => void): () => void {

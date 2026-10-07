@@ -13,6 +13,7 @@ export interface Device {
   uid: string;
   token: string;
   language: Language;
+  privatePreview?: boolean;
 }
 
 export interface ChatDoc {
@@ -53,6 +54,8 @@ export interface PushDeps {
   getDevices(userIds: string[]): Promise<Device[]>;
   send(messages: ExpoMessage[]): Promise<ExpoTicket[]>;
   removeDevices(deviceIds: string[]): Promise<void>;
+  senderProfileName?(uid: string): Promise<string>;
+  saveTickets?(tickets: Array<{ id: string; deviceId: string }>): Promise<void>;
 }
 
 export interface PushResult {
@@ -136,6 +139,7 @@ export async function notifyChatMessage(deps: PushDeps, chatId: string, message:
 
   const chat = await deps.getChat(chatId);
   if (!chat || !Array.isArray(chat.members) || !chat.members.includes(message.senderId)) return result;
+  if (deps.senderProfileName) message = { ...message, senderName: await deps.senderProfileName(message.senderId) };
 
   const candidates = chat.members.filter((m) => m !== message.senderId);
   if (candidates.length === 0) return result;
@@ -161,7 +165,7 @@ export async function notifyChatMessage(deps: PushDeps, chatId: string, message:
   for (const batch of chunk(devices, EXPO_BATCH_SIZE)) {
     const messages: ExpoMessage[] = batch.map((d) => ({
       to: d.token,
-      ...composeNotification(chat, message, d.language),
+      ...(d.privatePreview === false ? { title: 'Budmo', body: TEXT[safeLanguage(d.language)].text } : composeNotification(chat, message, d.language)),
       data: { type: 'chat_message', chatId },
       sound: 'default',
       channelId: 'messages',
@@ -169,11 +173,22 @@ export async function notifyChatMessage(deps: PushDeps, chatId: string, message:
       ttl: TTL_SECONDS,
     }));
 
-    const tickets = await deps.send(messages);
+    let tickets: ExpoTicket[];
+    try { tickets = await deps.send(messages); }
+    catch {
+      // A token from a different Expo project must not suppress the rest of the recipients.
+      tickets = [];
+      for (const message of messages) {
+        try { tickets.push((await deps.send([message]))[0]); }
+        catch { tickets.push({ status: 'error', details: { error: 'MessageRateExceeded' } }); }
+      }
+    }
+    const saved: Array<{ id: string; deviceId: string }> = [];
     tickets.forEach((ticket, i) => {
-      if (ticket.status === 'ok') result.sent += 1;
+      if (ticket.status === 'ok') { result.sent += 1; if (ticket.id) saved.push({ id: ticket.id, deviceId: batch[i].id }); }
       else if (ticket.details?.error === 'DeviceNotRegistered') toRemove.push(batch[i].id);
     });
+    if (saved.length) await deps.saveTickets?.(saved);
   }
 
   if (toRemove.length > 0) {

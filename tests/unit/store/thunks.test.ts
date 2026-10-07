@@ -1,3 +1,4 @@
+import outbox from '@/store/slices/outboxSlice';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
 
@@ -8,11 +9,11 @@ vi.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 0, Medium: 1, Soft: 2, Rigid: 3 },
   NotificationFeedbackType: { Success: 0, Warning: 1, Error: 2 },
 }));
-vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn() }));
+vi.mock('@/services/systemNotifications', () => ({ stopSystemPush: vi.fn().mockResolvedValue(undefined), registerForPush: vi.fn() }));
 vi.mock('@/services/firebase', () => ({ db: {}, auth: {}, firebaseApp: {} }));
 vi.mock('@/services/authService', () => ({
   authService: {
-    logout: vi.fn().mockResolvedValue(undefined),
+    completeOnboarding: vi.fn().mockResolvedValue(undefined), logout: vi.fn().mockResolvedValue(undefined),
     refreshVerification: vi.fn(),
     deleteAccount: vi.fn().mockResolvedValue(undefined),
     removeAccountAfterAgeRejection: vi.fn().mockResolvedValue(undefined),
@@ -21,7 +22,7 @@ vi.mock('@/services/authService', () => ({
 vi.mock('firebase/firestore', () => ({ doc: vi.fn(() => ({})), setDoc: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/services/firestoreSyncService', () => ({
   firestoreSyncService: {
-    sendEncryptedMessage: vi.fn().mockResolvedValue({ cipherPayload: 'enc:v1:test', success: true }),
+    saveReport: vi.fn().mockResolvedValue(undefined), sendEncryptedMessage: vi.fn().mockResolvedValue({ cipherPayload: 'enc:v1:test', success: true }),
     addGroupMembers: vi.fn().mockResolvedValue(undefined),
     saveBlock: vi.fn().mockResolvedValue(undefined),
     removeBlock: vi.fn().mockResolvedValue(undefined),
@@ -29,6 +30,7 @@ vi.mock('@/services/firestoreSyncService', () => ({
     saveMeetup: vi.fn().mockResolvedValue(undefined),
     setMeetupParticipation: vi.fn().mockResolvedValue(undefined),
     getPrivateProfile: vi.fn().mockResolvedValue(null),
+    getUserProfile: vi.fn().mockResolvedValue(null),
     syncFriend: vi.fn().mockResolvedValue(undefined),
     removeFriendFromFirestore: vi.fn().mockResolvedValue(undefined),
     syncGamification: vi.fn().mockResolvedValue(undefined),
@@ -52,7 +54,9 @@ import gamification from '@/store/slices/gamificationSlice';
 import meetups from '@/store/slices/meetupsSlice';
 import safety from '@/store/slices/safetySlice';
 import favorites from '@/store/slices/favoritesSlice';
-import ui from '@/store/slices/uiSlice';
+import ui, { networkStatusChanged } from '@/store/slices/uiSlice';
+import { flushOutbox, retryOutbox } from '@/store/thunks/outbox';
+import { personalDataReset } from '@/store/actions';
 import { firestoreSyncService } from '@/services/firestoreSyncService';
 import { createUser, SESSION_DURATION_MS } from '@/logic/session';
 import { languageChosen } from '@/store/slices/settingsSlice';
@@ -70,7 +74,7 @@ import { userBlocked } from '@/store/slices/safetySlice';
 import { messagesReceived } from '@/store/slices/chatsSlice';
 import type { RootState } from '@/store/index';
 
-const rootReducer = combineReducers({ auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
+const rootReducer = combineReducers({ outbox, auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
 
 function makeStore() {
   const store = configureStore({ reducer: rootReducer });
@@ -112,6 +116,36 @@ describe('chat thunks', () => {
     s.dispatch(groupChatCreated(thread));
   };
 
+  it('keeps an offline message queued, exposes a server rejection and retries explicitly', async () => {
+    const s = makeStore(); withChat(s);
+    s.dispatch(networkStatusChanged(false));
+    run(s, sendMessage({ chatId: 'chat-a', text: 'offline', id: 'offline-message' }));
+    expect(sync.sendEncryptedMessage).not.toHaveBeenCalled();
+    expect(st(s).chats.threads[0].messages[0].deliveryStatus).toBe('queued');
+    sync.sendEncryptedMessage.mockResolvedValueOnce({ success: false, cipherPayload: '', errorCode: 'permission-denied' });
+    s.dispatch(networkStatusChanged(true));
+    await run(s, flushOutbox());
+    expect(st(s).outbox.jobs[0].status).toBe('failed');
+    expect(st(s).chats.threads[0].messages[0].deliveryStatus).toBe('failed');
+    run(s, retryOutbox());
+    await vi.waitFor(() => expect(st(s).outbox.jobs).toHaveLength(0));
+    expect(st(s).chats.threads[0].messages[0].deliveryStatus).toBe('sent');
+  });
+
+  it('does not complete an old message in the new account after a late network response', async () => {
+    const s = makeStore(); withChat(s);
+    let finish!: (value: { success: boolean; cipherPayload: string }) => void;
+    sync.sendEncryptedMessage.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    run(s, sendMessage({ chatId: 'chat-a', text: 'old account' }));
+    s.dispatch(personalDataReset());
+    s.dispatch(loggedIn(createUser({ id: 'new', email: 'new@example.com', emailVerified: true })));
+    finish({ success: true, cipherPayload: 'old-cipher' });
+    await Promise.resolve(); await Promise.resolve();
+    expect(st(s).chats.threads).toHaveLength(0);
+    expect(st(s).outbox.jobs).toHaveLength(0);
+    expect(st(s).auth.user.id).toBe('new');
+  });
+
   it('sends a message optimistically, syncs it encrypted and attaches the cipher', async () => {
     const s = makeStore();
     withChat(s);
@@ -142,7 +176,7 @@ describe('chat thunks', () => {
     withChat(s);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     run(s, sendMessage({ chatId: 'chat-a', text: 'offline msg' }));
-    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    await vi.waitFor(() => expect(st(s).outbox.jobs[0]?.status).toBe('queued'));
     expect(st(s).chats.threads[0].messages).toHaveLength(1);
     warn.mockRestore();
   });
@@ -193,11 +227,11 @@ describe('chat thunks', () => {
     expect(t.memberIds).toEqual(['me', 'p1', 'p2']);
   });
 
-  it('lets only the group creator add members', () => {
+  it('lets only the group creator add members', async () => {
     const s = makeStore();
     const mine = run<ChatThread>(s, createGroupChat({ name: 'Mine', topic: '', avatar: '', participants: [] }));
     run(s, addGroupParticipants(mine.id, [{ id: 'p1', name: 'P1', avatar: '' }]));
-    expect(sync.addGroupMembers).toHaveBeenCalledWith(mine.id, [expect.objectContaining({ id: 'p1' })]);
+    await vi.waitFor(() => expect(sync.addGroupMembers).toHaveBeenCalledWith(mine.id, [expect.objectContaining({ id: 'p1' })]));
     expect(st(s).chats.threads.find((t) => t.id === mine.id)?.memberIds).toContain('p1');
 
     vi.clearAllMocks();
@@ -217,7 +251,7 @@ describe('chat thunks', () => {
 });
 
 describe('friend thunks', () => {
-  it('adds a friend once: +50 XP, a notification and a cloud sync', () => {
+  it('adds a friend once: +50 XP, a notification and a cloud sync', async () => {
     const s = makeStore();
     run(s, addFriend(buddy('a')));
     run(s, addFriend(buddy('a')));
@@ -226,16 +260,16 @@ describe('friend thunks', () => {
     expect(selectGamification(st(s)).xp).toBe(50);
     expect(st(s).notifications.items).toHaveLength(1);
     expect(st(s).notifications.items[0].type).toBe('friend_added');
-    expect(sync.syncFriend).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sync.syncFriend).toHaveBeenCalledTimes(1));
   });
 
-  it('toggles friendship off without granting XP again', () => {
+  it('toggles friendship off without granting XP again', async () => {
     const s = makeStore();
     expect(run<boolean>(s, toggleFriend(buddy('a')))).toBe(true);
     expect(run<boolean>(s, toggleFriend(buddy('a')))).toBe(false);
     expect(st(s).friends.ids).toEqual([]);
     expect(selectGamification(st(s)).xp).toBe(50);
-    expect(sync.removeFriendFromFirestore).toHaveBeenCalledWith('me', 'a');
+    await vi.waitFor(() => expect(sync.removeFriendFromFirestore).toHaveBeenCalledWith('me', 'a'));
   });
 });
 
@@ -318,18 +352,19 @@ describe('safety thunks', () => {
     expect(st(s).safety.reports[0].comment).toBe('c');
   });
 
-  it('auto-blocks on a critical category', () => {
+  it('leaves critical reports for review without claiming automatic community moderation', () => {
     const s = makeStore();
     report(s, 'harassment');
-    expect(st(s).safety.blockedUsers[0]).toMatchObject({ userId: 'bad', autoBlocked: true });
+    expect(st(s).safety.blockedUsers).toHaveLength(0);
+    expect(st(s).safety.reports[0].status).toBe('pending');
   });
 
-  it('auto-blocks on the second report against the same user', () => {
+  it('repeated reports do not claim to ban another account', () => {
     const s = makeStore();
     report(s, 'spam');
     report(s, 'spam');
-    expect(st(s).safety.blockedUsers).toHaveLength(1);
-    expect(st(s).safety.blockedUsers[0].reason).toContain('2 скарги');
+    expect(st(s).safety.blockedUsers).toHaveLength(0);
+    expect(st(s).safety.reports).toHaveLength(2);
   });
 
   it('honours an explicit "also block"', () => {
@@ -370,24 +405,25 @@ describe('meetup thunks', () => {
       })
     );
 
-  it('creates a meetup hosted by the current user and awards +75 XP', () => {
+  it('creates a meetup hosted by the current user and awards +75 XP', async () => {
     const s = makeStore();
     const m = create(s);
     expect(st(s).meetups.items[0]).toMatchObject({ id: m.id, creatorId: 'me', status: 'upcoming' });
     expect(selectGamification(st(s)).xp).toBe(75);
-    expect(sync.saveMeetup).toHaveBeenCalledWith(expect.objectContaining({ id: m.id, creatorId: 'me' }));
+    await vi.waitFor(() => expect(sync.saveMeetup).toHaveBeenCalledWith(expect.objectContaining({ id: m.id, creatorId: 'me' })));
   });
 
-  it('syncs joining as a change to the caller\'s own entry only', () => {
+  it('syncs joining as a change to the caller\'s own entry only', async () => {
     const s = makeStore();
     const m = create(s, 6);
+    await vi.waitFor(() => expect(sync.saveMeetup).toHaveBeenCalledTimes(1));
     s.dispatch(loggedIn(createUser({ id: 'guest1', email: 'g@b.co', emailVerified: true })));
     expect(run<boolean>(s, joinMeetup(m.id))).toBe(true);
-    expect(sync.setMeetupParticipation).toHaveBeenCalledWith(m.id, 'guest1', expect.objectContaining({ userId: 'guest1', role: 'member', status: 'going' }));
+    await vi.waitFor(() => expect(sync.setMeetupParticipation).toHaveBeenCalledWith(m.id, 'guest1', expect.objectContaining({ userId: 'guest1', role: 'member', status: 'going' })));
     expect(sync.saveMeetup).toHaveBeenCalledTimes(1); // only the creator's original write
 
     run(s, leaveMeetup(m.id));
-    expect(sync.setMeetupParticipation).toHaveBeenLastCalledWith(m.id, 'guest1', null);
+    await vi.waitFor(() => expect(sync.setMeetupParticipation).toHaveBeenLastCalledWith(m.id, 'guest1', null));
   });
 
   it('keeps invites and cancellation host-only', () => {
@@ -429,14 +465,14 @@ describe('gamification & favorites thunks', () => {
     expect(sync.syncGamification).toHaveBeenCalledWith('me', expect.objectContaining({ xp: expect.any(Number) }));
   });
 
-  it('saves and removes favorites locally and in the cloud', () => {
+  it('saves and removes favorites locally and in the cloud', async () => {
     const s = makeStore();
     run(s, saveFavoriteVenue({ id: 'v', name: 'V', area: 'A', category: 'c', lat: 1, lng: 2 }));
     expect(st(s).favorites.items[0].createdAt).toBeTruthy();
     expect(sync.saveFavoriteVenue).toHaveBeenCalledWith('me', expect.objectContaining({ id: 'v' }));
     run(s, removeFavoriteVenue('v'));
     expect(st(s).favorites.items).toHaveLength(0);
-    expect(sync.removeFavoriteVenue).toHaveBeenCalledWith('me', 'v');
+    await vi.waitFor(() => expect(sync.removeFavoriteVenue).toHaveBeenCalledWith('me', 'v'));
   });
 });
 
@@ -460,6 +496,18 @@ describe('Firebase auth bridge', () => {
 
     run(s, handleFirebaseUser(fb('u1', { photoURL: 'https://cdn.example/me.png' })));
     expect(st(s).auth.user.avatar).toBe('https://cdn.example/me.png');
+  });
+
+  it('cannot apply a late profile lookup from a previous account', async () => {
+    const s = empty();
+    let resolveOld!: (value: { birthDate: string }) => void;
+    vi.mocked(firestoreSyncService.getPrivateProfile).mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }));
+    run(s, handleFirebaseUser(fb('u1')));
+    run(s, handleFirebaseUser(fb('u2')));
+    resolveOld({ birthDate: '1990-01-01' });
+    await vi.waitFor(() => expect(st(s).auth.birthDateChecked).toBe(true));
+    expect(st(s).auth.user.id).toBe('u2');
+    expect(st(s).auth.user.birthDate).toBeUndefined();
   });
 
   it('is not ready until Firebase reports, then mirrors the account into Redux', () => {
@@ -503,14 +551,14 @@ describe('Firebase auth bridge', () => {
     expect(st(s).auth.dataOwnerId).toBe('u2');
   });
 
-  it('forces a fresh sign-in when a restored session sat unused beyond 36 hours', () => {
+  it('forces a fresh sign-in when a restored session sat unused beyond 36 hours', async () => {
     const s = empty();
     run(s, handleFirebaseUser(fb('u1')));
     const stale = createUser({ id: 'u1', email: 'u1@b.co' }, Date.now() - SESSION_DURATION_MS - 1000);
     s.dispatch(loggedIn(stale));
     vi.mocked(authService.logout).mockClear();
     run(s, handleFirebaseUser(fb('u1')));
-    expect(authService.logout).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(authService.logout).toHaveBeenCalledTimes(1));
   });
 
   it('restores the birth date from the private profile on a fresh device', async () => {
@@ -520,7 +568,7 @@ describe('Firebase auth bridge', () => {
     await vi.waitFor(() => expect(st(s).auth.user.birthDate).toBe('1990-02-03'));
   });
 
-  it('touchSession extends a live session and signs out an expired one', () => {
+  it('touchSession extends a live session and signs out an expired one', async () => {
     const s = makeStore();
     const before = st(s).auth.user.sessionExpiresAt!;
     run(s, touchSession());
@@ -529,10 +577,11 @@ describe('Firebase auth bridge', () => {
     s.dispatch(loggedIn(createUser({ id: 'me', email: 'me@b.co' }, Date.now() - SESSION_DURATION_MS - 1)));
     vi.mocked(authService.logout).mockClear();
     run(s, touchSession());
-    expect(authService.logout).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(authService.logout).toHaveBeenCalledTimes(1));
     vi.mocked(authService.logout).mockClear();
     run(s, enforceSessionExpiry());
-    expect(authService.logout).toHaveBeenCalledTimes(1);
+    expect(st(s).auth.user.isLoggedIn).toBe(false);
+    expect(authService.logout).toHaveBeenCalledTimes(0); // expiry already ended the session
   });
 
   it('logout signs out of Firebase and clears the session immediately', async () => {
@@ -604,13 +653,13 @@ describe('thunk text follows the UI language', () => {
 describe('server-side blocking (client half)', () => {
   const record = (id: string) => ({ userId: id, userName: `U ${id}`, blockedAt: '12:00' });
 
-  it('writes a block to the cloud so the rules can enforce it, and removes it on unblock', () => {
+  it('writes a block to the cloud so the rules can enforce it, and removes it on unblock', async () => {
     const s = makeStore();
     run(s, blockUser('bad', 'Bad', 'https://x.test/a.png'));
     expect(sync.saveBlock).toHaveBeenCalledWith('me', expect.objectContaining({ userId: 'bad', userName: 'Bad', userAvatar: 'https://x.test/a.png' }));
 
     run(s, unblockUser('bad'));
-    expect(sync.removeBlock).toHaveBeenCalledWith('me', 'bad');
+    await vi.waitFor(() => expect(sync.removeBlock).toHaveBeenCalledWith('me', 'bad'));
     expect(st(s).safety.blockedUsers).toHaveLength(0);
   });
 
@@ -621,12 +670,12 @@ describe('server-side blocking (client half)', () => {
     expect(sync.saveBlock).toHaveBeenCalledTimes(1);
   });
 
-  it('an auto-block from reports and the SOS button are enforced on the server too', () => {
+  it('explicit report blocking and the SOS button are enforced on the server too', async () => {
     const s = makeStore();
-    run(s, submitReport({ targetId: 'bad', targetType: 'profile', targetName: 'Bad', category: 'harassment', comment: '' }));
+    run(s, submitReport({ targetId: 'bad', targetType: 'profile', targetName: 'Bad', category: 'harassment', comment: '', shouldBlockUser: true }));
     run(s, triggerSosAlert({ interlocutorId: 'sos', interlocutorName: 'Sos' }));
-    expect(sync.saveBlock).toHaveBeenCalledWith('me', expect.objectContaining({ userId: 'bad', autoBlocked: true }));
-    expect(sync.saveBlock).toHaveBeenCalledWith('me', expect.objectContaining({ userId: 'sos', autoBlocked: true }));
+    await vi.waitFor(() => expect(sync.saveBlock).toHaveBeenCalledWith('me', expect.objectContaining({ userId: 'bad', autoBlocked: false })));
+    await vi.waitFor(() => expect(sync.saveBlock).toHaveBeenCalledWith('me', expect.objectContaining({ userId: 'sos', autoBlocked: true })));
   });
 
   it('first sync merges: blocks made before this feature are pushed to the cloud and kept', async () => {
@@ -663,23 +712,24 @@ describe('server-side blocking (client half)', () => {
     expect(st(s).safety.cloudSyncedFor).toBeNull();
   });
 
-  it('caps a new group at 10 people including the creator', () => {
+  it('caps a new group at nine people including the creator', () => {
     const s = makeStore();
     const many = Array.from({ length: 15 }, (_, i) => ({ id: `p${i}`, name: `P${i}`, avatar: '' }));
     const t = run<ChatThread>(s, createGroupChat({ name: 'G', topic: '', avatar: '', participants: many }));
-    expect(t.memberIds).toHaveLength(10);
-    expect(t.participants).toHaveLength(9);
+    expect(t.memberIds).toHaveLength(9);
+    expect(t.participants).toHaveLength(8);
   });
 
-  it('only adds as many members as there is room for', () => {
+  it('only adds as many members as there is room for', async () => {
     const s = makeStore();
     const first = Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, name: `P${i}`, avatar: '' }));
     const t = run<ChatThread>(s, createGroupChat({ name: 'G', topic: '', avatar: '', participants: first }));
     run(s, addGroupParticipants(t.id, [{ id: 'x1', name: 'X1', avatar: '' }, { id: 'x2', name: 'X2', avatar: '' }, { id: 'x3', name: 'X3', avatar: '' }]));
 
     const stored = st(s).chats.threads.find((c) => c.id === t.id)!;
-    expect(stored.memberIds).toHaveLength(10);
-    expect(sync.addGroupMembers).toHaveBeenCalledWith(t.id, [expect.objectContaining({ id: 'x1' }), expect.objectContaining({ id: 'x2' })]);
+    expect(stored.memberIds).toHaveLength(9);
+    await vi.waitFor(() => expect(sync.addGroupMembers).toHaveBeenCalledWith(t.id, [expect.objectContaining({ id: 'x1' })]));
+    expect(sync.addGroupMembers).not.toHaveBeenCalledWith(t.id, [expect.objectContaining({ id: 'x2' })]);
   });
 });
 

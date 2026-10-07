@@ -8,10 +8,14 @@ export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
  */
 export async function sendToExpo(
   messages: ExpoMessage[],
-  options: { url?: string; accessToken?: string; fetchImpl?: typeof fetch } = {}
+  options: { url?: string; accessToken?: string; fetchImpl?: typeof fetch; wait?: (ms: number) => Promise<void> } = {}
 ): Promise<ExpoTicket[]> {
   const doFetch = options.fetchImpl ?? fetch;
-  const response = await doFetch(options.url ?? EXPO_PUSH_URL, {
+  const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      response = await doFetch(options.url ?? EXPO_PUSH_URL, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -19,10 +23,17 @@ export async function sendToExpo(
       ...(options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
     },
     body: JSON.stringify(messages),
-  });
+    signal: AbortSignal.timeout(10000),
+      });
+      if (response.ok || (response.status !== 429 && response.status < 500) || attempt === 2) break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
+    await wait(250 * 2 ** attempt);
+  }
 
-  if (!response.ok) {
-    throw new Error(`Expo push request failed with HTTP ${response.status}`);
+  if (!response?.ok) {
+    throw new Error(`Expo push request failed with HTTP ${response?.status ?? 'unavailable'}`);
   }
 
   const payload = (await response.json()) as { data?: ExpoTicket[]; errors?: unknown };

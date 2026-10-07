@@ -13,9 +13,10 @@ export interface ReportTarget {
   name: string;
   avatar?: string;
   type: ReportTargetType;
+  contextId?: string;
 }
 
-/** Quick abuse report; critical categories or repeat reports auto-block the target */
+/** Report for moderator review, optionally block the target on this account. */
 export const ReportSheet = ({ target, onClose }: { target: ReportTarget | null; onClose: () => void }) =>
   // Mounted per target so the form always starts empty
   target ? <ReportForm key={target.id} target={target} onClose={onClose} /> : null;
@@ -33,6 +34,7 @@ const ReportForm = ({ target, onClose }: { target: ReportTarget; onClose: () => 
       submitReport({
         targetId: target.id,
         targetType: target.type,
+        contextId: target.contextId,
         targetName: target.name,
         targetAvatar: target.avatar,
         category,
@@ -71,7 +73,7 @@ const ReportForm = ({ target, onClose }: { target: ReportTarget; onClose: () => 
         })}
       </View>
       <View style={{ height: spacing.md }} />
-      <Field label={tr('КОМЕНТАР (НЕОБОВ’ЯЗКОВО)')} value={comment} onChangeText={setComment} multiline placeholder={tr('Що сталося?')} />
+      <Field label={tr('КОМЕНТАР (НЕОБОВ’ЯЗКОВО)')} value={comment} onChangeText={setComment} maxLength={500} multiline placeholder={tr('Що сталося?')} />
       <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: alsoBlock }} onPress={() => setAlsoBlock((v) => !v)} style={styles.checkRow}>
         <View style={[styles.checkbox, alsoBlock && { backgroundColor: colors.amber, borderColor: colors.amber }]} />
         <Text style={typography.body}>{tr('Також заблокувати користувача')}</Text>

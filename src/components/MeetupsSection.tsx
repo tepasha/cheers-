@@ -1,5 +1,6 @@
+import { dialogs as Alert } from '../services/dialogs';
 import React, { useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, Text, View } from 'react-native';
+import { FlatList, Pressable, Text, View } from 'react-native';
 import { Avatar, Badge, Button, Card, Chip, EmptyState, Field, Icon, IconButton, Row, SectionTitle, Sheet } from './ui';
 import type { ReportTarget } from './ReportSheet';
 import { colors, radius, spacing, typography } from '../theme';
@@ -81,7 +82,7 @@ export const MeetupsSection = ({ onReport }: { onReport: (t: ReportTarget) => vo
               </Row>
               <Row style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {!host && (
-                  <IconButton icon="flag" label={tr('Поскаржитись')} color={colors.textDim} onPress={() => onReport({ id: m.creatorId, name: m.creatorName, avatar: m.creatorAvatar, type: 'group_meetup' })} />
+                  <IconButton icon="flag" label={tr('Поскаржитись')} color={colors.textDim} onPress={() => onReport({ id: m.creatorId, name: m.creatorName, avatar: m.creatorAvatar, type: 'group_meetup', contextId: m.id })} />
                 )}
                 <IconButton icon="calendar" label={tr('Додати в календар')} onPress={() => calendar(m)} />
                 {host && <IconButton icon="user-plus" label={tr('Запросити')} onPress={() => setInviting(m.id)} />}

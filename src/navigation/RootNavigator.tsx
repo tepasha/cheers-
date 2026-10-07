@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Feather from '@expo/vector-icons/Feather';
@@ -25,6 +25,10 @@ import { BirthDateScreen } from '../screens/BirthDateScreen';
 import { checkAge } from '../logic/session';
 import { GamificationTour } from '../components/GamificationTour';
 import { useTr } from '../hooks/useT';
+import { Button } from '../components/ui';
+import { useAppDispatch } from '../store/hooks';
+import { auth } from '../services/firebase';
+import { handleFirebaseUser, logout } from '../store/thunks/auth';
 
 const Tab = createBottomTabNavigator<TabParamList>();
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -90,6 +94,10 @@ const Splash = () => (
  */
 export const RootNavigator = () => {
   const tr = useTr();
+  const dispatch = useAppDispatch();
+  const authError = useAppSelector((s) => s.ui.authError);
+  const authOperation = useAppSelector((s) => s.ui.authOperation);
+  const serverEligible = useAppSelector((s) => s.auth.user.serverEligible);
   const isLoggedIn = useAppSelector((s) => s.auth.user.isLoggedIn);
   const emailVerified = useAppSelector((s) => s.auth.user.emailVerified === true);
   const authReady = useAppSelector((s) => s.ui.authReady);
@@ -101,9 +109,11 @@ export const RootNavigator = () => {
   if (geoBlocked) return <RussiaBlockScreen />;
   // Firebase is restoring the saved session; avoid flashing the sign-in form at a signed-in user
   if (!authReady) return <Splash />;
-  if (!isLoggedIn) return <AuthScreen />;
+  if (!isLoggedIn || authOperation) return <AuthScreen />;
+  if (authError) return <View style={{ flex: 1, padding: 24, justifyContent: 'center', gap: 16, backgroundColor: colors.bg }}><Text style={{ color: colors.text }}>{tr('Не вдалося виконати дію. Спробуйте пізніше')}</Text><Button label={tr('Повторити')} onPress={() => dispatch(handleFirebaseUser(auth.currentUser))} /><Button label={tr('Вийти')} variant="secondary" onPress={() => dispatch(logout())} /></View>;
   if (!emailVerified) return <VerifyEmailScreen />;
   if (!canUseApp) {
+    if (serverEligible === false && birthDateChecked) return <BirthDateScreen />;
     // Verified, but the age is not confirmed. Nothing of the app is shown (and nothing is published: see
     // selectCanUseApp) until it is. Not asked yet -> look it up, then ask; under 21 -> the account is being removed.
     if (!birthDate) return birthDateChecked ? <BirthDateScreen /> : <Splash />;
@@ -113,7 +123,7 @@ export const RootNavigator = () => {
   return (
     <Stack.Navigator screenOptions={headerOptions}>
       <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
-      <Stack.Screen name="ChatRoom" component={ChatRoomScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="ChatRoom" component={ChatRoomScreen} getId={({ params }) => params.chatId} options={{ headerShown: false }} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ title: tr('Сповіщення'), presentation: 'modal' }} />
       <Stack.Screen name="Toasts" component={ToastsScreen} options={{ title: tr('Тости 🥂'), presentation: 'modal' }} />
       <Stack.Screen name="BlockedUsers" component={BlockedUsersScreen} options={{ title: tr('Заблоковані') }} />

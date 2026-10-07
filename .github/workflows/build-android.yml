@@ -3,7 +3,10 @@ name: 🤖 Android build (reusable)
 # Called by release.yml (tag) and preview.yml (main), or started by hand.
 # EAS builds in the cloud; nothing is published to GitHub Releases. The EAS output contains artifact links, so it is
 # summarised (id, status, link to the EAS page) and never uploaded or printed whole.
+# A production (store) build comes only from main or a release tag on main, after the full CI; a preview build must
+# be configured for the staging backend (GitHub Environment `staging`).
 on:
+  # Callers must run ci-check.yml before calling (release.yml and preview.yml do); a manual start runs it below
   workflow_call:
     inputs:
       profile:
@@ -11,7 +14,7 @@ on:
         type: string
         default: 'preview'
       submit:
-        description: 'Send the build to Google Play (internal track)'
+        description: 'Send a production build to Google Play (internal track; needs the GOOGLE_SERVICE_ACCOUNT_BASE64 secret)'
         type: boolean
         default: false
     secrets:
@@ -30,7 +33,7 @@ on:
           - preview
           - production
       submit:
-        description: 'Автоматично відправити в Google Play (internal track)'
+        description: 'Відправити production-збірку в Google Play (internal track; потрібен секрет GOOGLE_SERVICE_ACCOUNT_BASE64)'
         required: false
         default: false
         type: boolean
@@ -43,8 +46,74 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A production AAB goes to the Play internal track and from there, via promote.yml, to every user, so it is built
+  # only from main or a release tag whose commit is on main (scripts/release-check.mjs --release-ref). Preview passes.
+  gate:
+    name: 🚦 Production only from main or a release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout
+        if: inputs.profile == 'production'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # the "is this commit on main" check needs main's history
+
+      - name: 🟢 Setup Node.js 22
+        if: inputs.profile == 'production'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🚦 main or a release tag on main
+        if: inputs.profile == 'production'
+        run: node scripts/release-check.mjs --release-ref
+
+  # Started by hand, nothing has tested this ref yet: run the same CI as every release. Callers (release.yml,
+  # preview.yml) have run ci-check.yml already, so it is skipped then.
+  ci:
+    name: ✅ CI gate
+    needs: gate
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/ci-check.yml
+
+  # Every non-production client talks to the staging backend. Its Firebase project and database are variables of the
+  # GitHub Environment `staging`, which deploy-backend.yml deploys the rules and functions with; the build job then
+  # checks that the EAS environment of the profile names the same ones. Only this small job enters the environment,
+  # so a production build never needs a `staging` deployment (nor a production one, whose approval guards the backend).
+  staging:
+    name: 🎯 Staging backend
+    needs: gate
+    if: inputs.profile != 'production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    outputs:
+      project: ${{ steps.target.outputs.project }}
+      database: ${{ steps.target.outputs.database }}
+    steps:
+      - name: 🎯 Staging backend is configured
+        id: target
+        env:
+          PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
+        run: |
+          if [ -z "$PROJECT_ID" ] || [ -z "$DATABASE_ID" ]; then
+            echo "::error::The GitHub Environment 'staging' has no FIREBASE_PROJECT_ID / FIRESTORE_DATABASE_ID. Preview builds must talk to the staging backend, so none is built until it is configured (see DEPLOY.md)."
+            exit 1
+          fi
+          echo "project=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+          echo "database=$DATABASE_ID" >> "$GITHUB_OUTPUT"
+
   build-android:
     name: 🤖 Build Android (${{ inputs.profile }})
+    needs: [gate, ci, staging]
+    # A skipped CI is accepted only when another workflow called this one (and ran ci-check.yml itself);
+    # a skipped staging job only for a production build
+    if: >-
+      !cancelled() && needs.gate.result == 'success'
+      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && github.event_name != 'workflow_dispatch'))
+      && (needs.staging.result == 'success' || (needs.staging.result == 'skipped' && inputs.profile == 'production'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -70,41 +139,113 @@ jobs:
       - name: 🏷️ Project is linked to EAS
         run: node scripts/release-check.mjs --project
 
-      - name: 🔑 Configure Google Play Service Account
-        if: ${{ inputs.submit }}
-        env:
-          GOOGLE_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_BASE64 }}
-        run: |
-          if [ -n "$GOOGLE_SERVICE_ACCOUNT_BASE64" ]; then
-            echo "$GOOGLE_SERVICE_ACCOUNT_BASE64" | base64 --decode > google-service-account.json
-            echo "✅ Google Service Account JSON налаштовано"
-          else
-            echo "ℹ️ Використовуються ключі, збережені в Expo EAS"
-          fi
+      # The EAS variables app.config.ts compiles into the app: Firebase config (with the named database), Google client
+      # ids, legal URLs and, per platform, the Maps key / iOS client id. A missing one does not fail `eas build`; the
+      # app used to fall back silently (no Terms/Privacy links, the '(default)' database, a Map tab that crashes, a
+      # Google button that only shows a configuration error). `eas env:exec` runs the check with exactly the
+      # "Plain text" and "Sensitive" variables of the profile's EAS environment (eas.json names it after the profile),
+      # which is what `eas build` and later `eas update` read. A "Secret" variable is reported as missing on purpose:
+      # `eas update` cannot read it, so OTA updates would ship without it. app.config.ts repeats the check (and the
+      # google-services.json file) on the build worker.
+      - name: 🔐 EAS environment is complete
+        run: eas env:exec "$PROFILE" 'node scripts/release-check.mjs --env --platform android' --non-interactive
 
-      - name: 🔨 EAS Build for Android
+      # The app's Firebase project and named database (EAS variables of the profile's environment) must be the staging
+      # backend's, or testers' data lands in the production database and the build is tested against rules that
+      # were deployed somewhere else.
+      - name: 🎯 The preview app talks to the staging backend
+        if: inputs.profile != 'production'
+        env:
+          EXPECTED_FIREBASE_PROJECT_ID: ${{ needs.staging.outputs.project }}
+          EXPECTED_FIRESTORE_DATABASE_ID: ${{ needs.staging.outputs.database }}
+        run: eas env:exec "$PROFILE" 'node scripts/release-check.mjs --backend' --non-interactive
+
+      # Decides whether this run uploads to Google Play, and checks the key BEFORE the cloud build starts: eas.json's
+      # submit profile names the key file (serviceAccountKeyPath), so eas-cli never falls back to a key stored on EAS,
+      # and a missing file used to surface only after the build had been queued (red run, no summary, no upload).
+      # promote.yml needs the same key for the Play Developer API, so the GitHub secret is the one source of it.
+      # Only production (AAB, store distribution) goes to Play; preview is an internal APK, so a manual preview run
+      # with submit ticked just builds. The key is decoded outside the workspace, so it is never part of the project
+      # archive EAS uploads, and is copied to the path eas.json expects only for the submit step, after the build.
+      - name: 🔑 Google Play target
+        id: target
         env:
           SUBMIT_REQUESTED: ${{ inputs.submit }}
+          GOOGLE_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_BASE64 }}
+          KEY_DIR: ${{ runner.temp }}/play
         run: |
-          AUTO_SUBMIT_FLAG=""
-          if [ "$SUBMIT_REQUESTED" = "true" ]; then
-            AUTO_SUBMIT_FLAG="--auto-submit"
+          if [ "$SUBMIT_REQUESTED" != "true" ]; then
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if [ "$PROFILE" != "production" ]; then
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The $PROFILE profile builds an internal APK, which is not sent to Google Play: the build is not submitted"
+            exit 0
+          fi
+          if [ -z "$GOOGLE_SERVICE_ACCOUNT_BASE64" ]; then
+            echo "::error::Submitting to Google Play needs the secret GOOGLE_SERVICE_ACCOUNT_BASE64 (base64 -w0 of the Play service account JSON key). Nothing was built. See DEPLOY.md, stage 0, step 4."
+            exit 1
+          fi
+          mkdir -p "$KEY_DIR"
+          chmod 700 "$KEY_DIR"
+          if ! echo "$GOOGLE_SERVICE_ACCOUNT_BASE64" | base64 --decode > "$KEY_DIR/service-account.json" 2>/dev/null \
+             || ! jq -e '.type == "service_account" and (.client_email | type == "string") and (.private_key | type == "string")' \
+                  "$KEY_DIR/service-account.json" > /dev/null 2>&1; then
+            echo "::error::GOOGLE_SERVICE_ACCOUNT_BASE64 is not a base64-encoded service account JSON key (encode it with: base64 -w0 key.json). Nothing was built."
+            exit 1
+          fi
+          chmod 600 "$KEY_DIR/service-account.json"
+          echo "submit=true" >> "$GITHUB_OUTPUT"
+          echo "✅ Google Play service account key is ready"
 
+      - name: 🔨 EAS Build for Android
+        id: build
+        run: |
           echo "🚀 Запуск збірки Android для профілю: $PROFILE"
-          # Kept outside the workspace and never uploaded or printed in full
-          eas build \
+          # No --auto-submit: the upload is a separate step after the build (see "Google Play target" for why).
+          # The result is kept outside the workspace and never uploaded or printed in full.
+          if eas build \
             --platform android \
             --profile "$PROFILE" \
             --non-interactive \
-            $AUTO_SUBMIT_FLAG \
-            --json > "$RUNNER_TEMP/android-build-result.json"
+            --json > "$RUNNER_TEMP/android-build-result.json"; then
+            BUILD_EXIT=0
+          else
+            BUILD_EXIT=$?
+          fi
 
           {
             echo "### 🤖 Android ($PROFILE)"
-            jq -r '.[] | "- збірка `\(.id)`: **\(.status)** — [відкрити в EAS](\(.buildDetailsPageUrl))"' "$RUNNER_TEMP/android-build-result.json"
+            if jq -e 'type == "array" and length > 0' "$RUNNER_TEMP/android-build-result.json" > /dev/null 2>&1; then
+              jq -r '.[] | "- збірка `\(.id)`: **\(.status)** — [відкрити в EAS](\(.buildDetailsPageUrl))"' "$RUNNER_TEMP/android-build-result.json"
+            else
+              echo "- EAS не повернув результат збірки, див. лог кроку"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "::error::eas build failed (exit $BUILD_EXIT), see the log above"
+            exit "$BUILD_EXIT"
+          fi
+          echo "id=$(jq -r '.[0].id' "$RUNNER_TEMP/android-build-result.json")" >> "$GITHUB_OUTPUT"
+          echo "status=$(jq -r '.[0].status' "$RUNNER_TEMP/android-build-result.json")" >> "$GITHUB_OUTPUT"
+
+      # Uploads the finished AAB to the internal track (submit profile "production" in eas.json). promote.yml later
+      # moves this same versionCode to production without uploading it again.
+      - name: 🚀 Submit to Google Play (internal)
+        if: steps.target.outputs.submit == 'true'
+        env:
+          BUILD_ID: ${{ steps.build.outputs.id }}
+          BUILD_STATUS: ${{ steps.build.outputs.status }}
+        run: |
+          if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ] || [ "$BUILD_STATUS" != "FINISHED" ]; then
+            echo "::error::The build did not finish (status: ${BUILD_STATUS:-unknown}), nothing to submit"
+            exit 1
+          fi
+          install -m 600 "$RUNNER_TEMP/play/service-account.json" google-service-account.json
+          eas submit --platform android --profile production --id "$BUILD_ID" --non-interactive
+          echo "- Google Play (internal): збірку \`$BUILD_ID\` відправлено; далі promote.yml з цим id" >> "$GITHUB_STEP_SUMMARY"
 
       - name: 🧹 Remove the service account key
         if: always()
-        run: rm -f google-service-account.json
+        run: rm -rf google-service-account.json "$RUNNER_TEMP/play"

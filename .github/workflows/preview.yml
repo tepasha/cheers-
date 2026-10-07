@@ -1,8 +1,11 @@
 name: 🧪 Preview (main)
 
-# Every merge to main: CI gate, then the staging backend (only when it changed), and, once the repository variable
-# PREVIEW_BUILDS is 'true' (set it after `eas init` and the EAS variables exist), an internal Android build and a
+# Every merge to main: CI gate, then the staging backend, and, once the repository variable PREVIEW_BUILDS is 'true'
+# (set it after `eas init`, the EAS variables and the staging environment exist), an internal Android build and a
 # preview OTA update. iOS preview builds need registered test devices, so they stay a manual run of build-ios.yml.
+#
+# The preview clients talk to the staging backend: build-android.yml and ota.yml refuse an EAS `preview` environment
+# whose Firebase project / database differ from the GitHub Environment `staging` (see DEPLOY.md).
 on:
   push:
     branches: [ main ]
@@ -15,32 +18,13 @@ jobs:
     name: ✅ CI gate
     uses: ./.github/workflows/ci-check.yml
 
-  changes:
-    name: 🔎 What changed
-    needs: ci
-    runs-on: ubuntu-latest
-    outputs:
-      backend: ${{ steps.diff.outputs.backend }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-      - id: diff
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          # A first push or an unreachable "before" commit counts as changed
-          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
-             || git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -qE '^(firestore\.rules|firebase\.json|functions/)'; then
-            echo "backend=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "backend=false" >> "$GITHUB_OUTPUT"
-          fi
-
+  # Deployed on EVERY push, not only when firestore.rules / functions changed: a diff against the previous push
+  # loses a change whenever that push's run was cancelled (a newer push queues behind it) or failed, and staging then
+  # kept the old rules until the next backend change, while the preview clients already expected the new ones.
+  # A full deploy is cheap: the rules are one file, and firebase-tools skips functions whose source is unchanged.
   backend:
     name: ☁️ Backend → staging
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    needs: ci
     uses: ./.github/workflows/deploy-backend.yml
     with:
       environment: staging
@@ -49,9 +33,11 @@ jobs:
       id-token: write
     secrets: inherit
 
+  # The backend first, as in a release: the preview clients of this commit may rely on its rules and functions, so
+  # they are built and published only after the staging deploy has succeeded.
   android:
     name: 🤖 Android preview build
-    needs: ci
+    needs: [ci, backend]
     if: vars.PREVIEW_BUILDS == 'true'
     uses: ./.github/workflows/build-android.yml
     with:
@@ -61,7 +47,7 @@ jobs:
 
   ota:
     name: 📡 OTA → preview channel
-    needs: ci
+    needs: [ci, backend]
     if: vars.PREVIEW_BUILDS == 'true'
     uses: ./.github/workflows/ota.yml
     with:

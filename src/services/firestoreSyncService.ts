@@ -1,4 +1,5 @@
 import { ph } from './i18nService';
+import { requireAllowedContent } from '../logic/contentPolicy';
 import {
   doc,
   setDoc,
@@ -12,20 +13,20 @@ import {
   updateDoc,
   arrayUnion as arrayUnionFs,
   orderBy,
-  startAt,
-  endAt,
-  limit,
+    limit,
   serverTimestamp,
-  writeBatch,
   runTransaction,
   arrayUnion,
   increment,
   deleteField
 } from 'firebase/firestore';
+import type { Transaction } from 'firebase/firestore';
 
 /** Newest messages loaded per chat; older history is not streamed */
 const CHAT_PAGE_SIZE = 100;
 import { db } from './firebase';
+import { auth, functions } from './firebase';
+import { httpsCallable } from 'firebase/functions';
 import { FavoriteVenueItem, PaymentEtiquette, DrinkType, Message, HangoutAlert, UserGamificationState, BuddyProfile, GroupMeetup, ChatThread, ChatParticipant } from '../types';
 import type { CloudChat } from '../logic/chats';
 import { meetupToCloud } from '../logic/meetups';
@@ -37,7 +38,7 @@ import { cryptoService } from './cryptoService';
 import { deviceIdFor } from '../logic/push';
 import { hangoutExpiresAt, isHangoutExpired } from '../logic/lifecycle';
 import { coarseCoordinate as coarse } from '../logic/privacy';
-import { isInactive, isOnline, nearbyQueryBounds, PER_RANGE_LIMIT, pickNearby, publicGeohash, type GeoPoint } from '../logic/nearby';
+import { publicGeohash, type GeoPoint } from '../logic/nearby';
 import { UserGeoLocation, calculateDistanceKm, formatDistance } from './geoService';
 
 export interface FirestoreUserProfile {
@@ -55,12 +56,34 @@ export interface FirestoreUserProfile {
   /** Added on save from the coarsened coordinates; used for the "nearby" range queries */
   geohash?: string;
   lastSeenAt?: string;
+  shareLocation?: boolean;
+  bio?: string;
+  currentMood?: string;
+  favoriteBars?: string[];
+  talkTopics?: string[];
 }
 
 /** Data only the owner may read: never shown to other users */
 export interface PrivateProfile {
   email?: string;
   birthDate?: string;
+  termsVersion?: string;
+}
+
+/** Read before any transaction writes. The rules bind this debit to one newly created resource. */
+async function prepareWriteBudget(tx: Transaction, uid: string, operation: 'message' | 'hangout' | 'meetup', resourceId: string) {
+  const ref = doc(db, 'writeQuotas', `${uid}_${operation}`);
+  const snap = await tx.get(ref);
+  const previous = snap.data();
+  const reset = !previous || Date.now() - timeMillis(previous.windowStartedAt) >= 86400000;
+  const count = reset ? 1 : Number(previous.count) + 1;
+  const maximum = operation === 'message' ? 2000 : operation === 'hangout' ? 30 : 20;
+  if (count > maximum) throw Object.assign(new Error('Daily publishing limit reached'), { code: 'resource-exhausted' });
+  return () => tx.set(ref, {
+    uid, operation, resourceId, count,
+    windowStartedAt: reset ? serverTimestamp() : previous!.windowStartedAt,
+    lastAt: serverTimestamp(),
+  });
 }
 
 
@@ -95,14 +118,18 @@ export const firestoreSyncService = {
   // Save/Update the PUBLIC profile. Only supplied fields are written (merge), so a location update never
   // overwrites a tagline set elsewhere. Email and birth date never go here (see savePrivateProfile).
   async saveUserProfile(profile: FirestoreUserProfile): Promise<void> {
+    requireAllowedContent(profile.name, profile.tagline, profile.bio);
     try {
       const fields = Object.fromEntries(Object.entries(profile).filter(([, v]) => v !== undefined));
+      if (profile.shareLocation === false) {
+        fields.lat = deleteField(); fields.lng = deleteField(); fields.geohash = deleteField(); fields.locationName = deleteField();
+      }
       if (typeof fields.lat === 'number') fields.lat = coarse(fields.lat);
       if (typeof fields.lng === 'number') fields.lng = coarse(fields.lng);
       if (typeof fields.lat === 'number' && typeof fields.lng === 'number') fields.geohash = publicGeohash(fields.lat, fields.lng);
       await setDoc(doc(db, 'users', profile.id), { ...fields, updatedAt: new Date().toISOString() }, { merge: true });
     } catch (error) {
-      console.warn('Firestore sync failed, local state preserved:', error);
+      throw error;
     }
   },
 
@@ -111,7 +138,7 @@ export const firestoreSyncService = {
       const fields = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
       await setDoc(doc(db, 'users', userId, 'private', 'profile'), fields, { merge: true });
     } catch (error) {
-      console.warn('Could not save private profile:', error);
+      throw error;
     }
   },
 
@@ -120,24 +147,18 @@ export const firestoreSyncService = {
       const snap = await getDoc(doc(db, 'users', userId, 'private', 'profile'));
       return snap.exists() ? (snap.data() as PrivateProfile) : null;
     } catch (error) {
-      console.warn('Could not read private profile:', error);
-      return null;
+      throw error;
     }
   },
 
   // Fetch user profile from Firestore
   async getUserProfile(userId: string): Promise<Partial<FirestoreUserProfile> | null> {
-    try {
-      const userRef = doc(db, 'users', userId);
-      const snap = await getDoc(userRef);
-      if (snap.exists()) {
-        return snap.data() as FirestoreUserProfile;
-      }
-      return null;
-    } catch (error) {
-      console.warn('Could not fetch Firestore profile:', error);
-      return null;
+    if (auth.currentUser?.uid === userId) {
+      const snap = await getDoc(doc(db, 'users', userId));
+      return snap.exists() ? snap.data() as FirestoreUserProfile : null;
     }
+    const result = await httpsCallable<{ userId: string }, Partial<FirestoreUserProfile> | null>(functions, 'publicUserProfile')({ userId });
+    return result.data;
   },
 
   // Gamification is private to the owner (it is not part of the public profile)
@@ -152,6 +173,8 @@ export const firestoreSyncService = {
       });
     } catch (error) {
       console.warn('Could not sync gamification to Firestore:', error);
+
+      throw error;
     }
   },
 
@@ -190,6 +213,8 @@ export const firestoreSyncService = {
       });
     } catch (error) {
       console.warn('Failed to save venue to Firestore:', error);
+
+      throw error;
     }
   },
 
@@ -200,6 +225,8 @@ export const firestoreSyncService = {
       await deleteDoc(favRef);
     } catch (error) {
       console.warn('Failed to delete venue from Firestore:', error);
+
+      throw error;
     }
   },
 
@@ -228,9 +255,14 @@ export const firestoreSyncService = {
    * Зберігається з локальним кешем IndexedDB та миттєво транслюється іншим користувачам.
    */
   async publishHangout(hangout: HangoutAlert): Promise<void> {
+    requireAllowedContent(hangout.userName, hangout.barName, hangout.description);
     try {
       const hangoutRef = doc(db, 'hangouts', hangout.id);
-      await setDoc(hangoutRef, {
+      await runTransaction(db, async (tx) => {
+      if ((await tx.get(hangoutRef)).exists()) return;
+      const debit = await prepareWriteBudget(tx, hangout.userId, 'hangout', hangout.id);
+      debit();
+      tx.set(hangoutRef, {
         id: hangout.id,
         userId: hangout.userId,
         userName: hangout.userName,
@@ -248,6 +280,7 @@ export const firestoreSyncService = {
         lng: typeof hangout.lng === 'number' ? hangout.lng : null,
         status: 'active',
         joinedUsers: hangout.joinedUsers || [],
+      });
       });
     } catch (error) {
       console.warn('[Firestore] Failed to publish live hangout check-in:', error);
@@ -338,9 +371,13 @@ export const firestoreSyncService = {
       // Transaction: two people joining at once must both be counted, and re-joining must not double-count
       await runTransaction(db, async (tx) => {
         const snap = await tx.get(hangoutRef);
-        if (!snap.exists()) return;
+        if (!snap.exists()) throw Object.assign(new Error('Table no longer exists'), { code: 'not-found' });
         const joined: string[] = Array.isArray(snap.data().joinedUsers) ? snap.data().joinedUsers : [];
         if (joined.includes(currentUserId)) return;
+        const table = snap.data();
+        if (table.status === 'closed' || Number(table.expiresAt) <= Date.now() || Number(table.participantsCount) >= Number(table.slotsAvailable) + 1) {
+          throw Object.assign(new Error('Table is closed or full'), { code: 'failed-precondition' });
+        }
         tx.update(hangoutRef, {
           participantsCount: increment(1),
           joinedUsers: arrayUnion(currentUserId),
@@ -349,6 +386,8 @@ export const firestoreSyncService = {
       });
     } catch (err) {
       console.warn('[Firestore] Error joining live hangout in Firestore:', err);
+
+      throw err;
     }
   },
 
@@ -378,15 +417,35 @@ export const firestoreSyncService = {
       await deleteDoc(hangoutRef);
     } catch (err) {
       console.warn('[Firestore] Error closing live hangout:', err);
+
+      throw err;
     }
   },
 
   /** Creator only (rules): creates the meetup or rewrites it (invites, cancel) */
   async saveMeetup(meetup: GroupMeetup): Promise<void> {
+    requireAllowedContent(meetup.title, meetup.description, meetup.venueName);
     try {
-      await setDoc(doc(db, 'group_meetups', meetup.id), omitUndefined({ ...meetupToCloud(meetup), updatedAt: new Date().toISOString() }));
+      const ref = doc(db, 'group_meetups', meetup.id);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const fields = omitUndefined({ ...meetupToCloud(meetup), updatedAt: new Date().toISOString() });
+        if (!snap.exists()) {
+          const debit = await prepareWriteBudget(tx, meetup.creatorId, 'meetup', meetup.id);
+          debit(); tx.set(ref, fields); return;
+        }
+        const existing = snap.data();
+        if (existing.creatorId !== meetup.creatorId) throw new Error('Meetup owner changed');
+        // Only new invitations are merged; never overwrite a guest's concurrent RSVP from a stale host copy.
+        const participants = { ...existing.participants };
+        for (const [uid, entry] of Object.entries(fields.participants as Record<string, MeetupParticipant>)) {
+          if (!(uid in participants)) participants[uid] = entry;
+        }
+        if (Object.keys(participants).length > meetup.maxParticipants) throw new Error('Meetup is full');
+        tx.update(ref, { ...fields, participants });
+      });
     } catch (err) {
-      console.warn('[Firestore] Group meetup sync warning:', err);
+      throw err;
     }
   },
 
@@ -401,7 +460,7 @@ export const firestoreSyncService = {
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
-      console.warn('[Firestore] Meetup participation sync warning:', err);
+      throw err;
     }
   },
 
@@ -438,23 +497,35 @@ export const firestoreSyncService = {
     chat: Pick<ChatThread, 'id' | 'isGroup' | 'memberIds' | 'createdBy' | 'groupName' | 'groupTopic' | 'groupAvatar' | 'participants'>,
     message: Message,
     me: { id: string; name: string; avatar?: string }
-  ): Promise<{ cipherPayload: string; success: boolean }> {
+  ): Promise<{ cipherPayload: string; success: boolean; errorCode?: string }> {
     try {
+      // A previous attempt may have committed after its timeout. Never rewrite an immutable message on retry.
+      requireAllowedContent(message.text, chat.groupName, chat.groupTopic, message.proposalData?.barName, message.proposalData?.address);
+      const existing = await getDoc(doc(db, 'chats', chat.id, 'messages', message.id)).catch(() => null);
+      if (existing?.exists()) {
+        if (existing.data().senderId !== me.id) throw Object.assign(new Error('Message id belongs to another sender'), { code: 'permission-denied' });
+        return { cipherPayload: asString(existing.data().cipherPayload), success: true };
+      }
       const cipherPayload = await cryptoService.encryptMessage(message.text, chat.id);
       const now = new Date().toISOString();
 
       const chatFields: Record<string, unknown> = {
+        lastMessageId: message.id,
         lastCipherPayload: cipherPayload,
         lastSenderId: me.id,
         lastMessageTime: message.timestamp,
         updatedAt: now,
       };
+      // Rules hide a missing parent too; the atomic write below proves membership on creation.
+      const parent = await getDoc(doc(db, 'chats', chat.id)).catch(() => null);
       const members = chat.memberIds ?? [];
-      if (!chat.isGroup) {
+      if (!chat.isGroup && !parent?.exists()) {
         chatFields.members = members;
         chatFields.isGroup = false;
         chatFields.profiles = { [me.id]: { name: me.name.slice(0, 60), avatar: me.avatar ?? '' } };
-      } else if (chat.createdBy === me.id) {
+      } else if (!chat.isGroup) {
+        chatFields.profiles = { [me.id]: { name: me.name.slice(0, 60), avatar: me.avatar ?? '' } };
+      } else if (chat.isGroup && chat.createdBy === me.id && !parent?.exists()) {
         chatFields.members = members;
         chatFields.isGroup = true;
         chatFields.createdBy = me.id;
@@ -475,8 +546,13 @@ export const firestoreSyncService = {
           )
         : null;
 
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'chats', chat.id, 'messages', message.id), {
+      await runTransaction(db, async (tx) => {
+      const messageRef = doc(db, 'chats', chat.id, 'messages', message.id);
+      // Reading a not-yet-created parent is forbidden by the membership rule, so message idempotency
+      // is checked above. A concurrent retry that loses creation is retried by the durable outbox.
+      const debit = await prepareWriteBudget(tx, me.id, 'message', `${chat.id}/${message.id}`);
+      debit();
+      tx.set(messageRef, {
         id: message.id,
         chatId: chat.id,
         senderId: message.senderId,
@@ -493,13 +569,13 @@ export const firestoreSyncService = {
         // else, so a skewed clock cannot misorder replies and nobody can pin a message to the top of the history
         createdAt: serverTimestamp(),
       });
-      batch.set(doc(db, 'chats', chat.id), chatFields, { merge: true });
-      await batch.commit();
+      tx.set(doc(db, 'chats', chat.id), chatFields, { merge: true });
+      });
 
       return { cipherPayload, success: true };
     } catch (error) {
       console.warn('Could not sync encrypted message to Firestore (running in offline/local fallback):', error);
-      return { cipherPayload: '', success: false };
+      return { cipherPayload: '', success: false, errorCode: String((error as { code?: unknown })?.code ?? 'unavailable') };
     }
   },
 
@@ -509,6 +585,7 @@ export const firestoreSyncService = {
    * stopping the others.
    */
   async addGroupMembers(chatId: string, participants: ChatParticipant[]): Promise<void> {
+    const failures: unknown[] = [];
     for (const p of participants) {
       try {
         await updateDoc(doc(db, 'chats', chatId), {
@@ -517,8 +594,11 @@ export const firestoreSyncService = {
         });
       } catch (error) {
         console.warn('Could not add group member:', error);
+
+        failures.push(error);
       }
     }
+    if (failures.length) throw failures[0];
   },
 
   // --------------------------------------------------------------------------
@@ -530,12 +610,15 @@ export const firestoreSyncService = {
   // Push devices: one document per Expo push token (see the `devices` rules)
   // --------------------------------------------------------------------------
 
-  async saveDevice(userId: string, token: string, platform: 'ios' | 'android', language: string): Promise<void> {
+  async saveDevice(userId: string, token: string, platform: 'ios' | 'android', language: string, bindingSequence = Date.now()): Promise<void> {
     await setDoc(doc(db, 'devices', deviceIdFor(token)), {
       uid: userId,
       token,
       platform,
       language,
+      privatePreview: false,
+      bindingSequence,
+      leaseUntil: Date.now() + 24 * 60 * 60 * 1000,
       updatedAt: new Date().toISOString(),
     });
   },
@@ -559,6 +642,8 @@ export const firestoreSyncService = {
       );
     } catch (error) {
       console.warn('Could not save the block:', error);
+
+      throw error;
     }
   },
 
@@ -567,6 +652,8 @@ export const firestoreSyncService = {
       await deleteDoc(doc(db, 'users', userId, 'blocks', blockedId));
     } catch (error) {
       console.warn('Could not remove the block:', error);
+
+      throw error;
     }
   },
 
@@ -645,6 +732,7 @@ export const firestoreSyncService = {
                 isFromCache: snapshot.metadata.fromCache,
                 hasPendingWrites: docSnap.metadata.hasPendingWrites,
                 _createdAt: timeMillis(data.createdAt),
+                createdAt: timeMillis(data.createdAt),
               };
             } catch (error) {
               console.warn('[Firestore] unreadable message skipped:', docSnap.id, error);
@@ -703,6 +791,8 @@ export const firestoreSyncService = {
       }, { merge: true });
     } catch (e) {
       console.warn('Could not sync friend to Firestore:', e);
+
+      throw e;
     }
   },
 
@@ -715,6 +805,8 @@ export const firestoreSyncService = {
       await deleteDoc(friendRef);
     } catch (e) {
       console.warn('Could not delete friend from Firestore:', e);
+
+      throw e;
     }
   },
 
@@ -737,70 +829,49 @@ export const firestoreSyncService = {
    * distance, so the circle is covered by a few geohash ranges (one listener each) and the exact distance is applied
    * here. Users without a location carry no geohash and are never returned.
    */
-  subscribeToPublicBuddies(
-    currentUserId: string,
-    center: GeoPoint,
-    callback: (buddies: BuddyProfile[]) => void
-  ): () => void {
-    try {
-      const bounds = nearbyQueryBounds(center);
-      const byRange = new Map<number, BuddyProfile[]>();
-      const emit = () => callback(pickNearby(Array.from(byRange.values()).flat(), center));
+  subscribeToPublicBuddies(currentUserId: string, center: GeoPoint, callback: (buddies: BuddyProfile[]) => void): () => void {
+    let cancelled = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const result = await httpsCallable<GeoPoint, Record<string, unknown>[]>(functions, 'discoverNearby')(center);
+        if (cancelled) return;
+        const buddies = readEach(result.data, (data): BuddyProfile | null => {
+          const uid = asString(data.id), name = asString(data.name);
+          const lat = asNumber(data.lat), lng = asNumber(data.lng);
+          if (!uid || uid === currentUserId || !name || lat === undefined || lng === undefined) return null;
+          return {
+            id: uid, name, age: asNumber(data.age) ?? 0, avatar: asString(data.avatar),
+            tagline: asString(data.tagline), bio: asString(data.bio), locationName: '',
+            distanceKm: calculateDistanceKm(center.lat, center.lng, lat, lng), coordinates: { lat, lng },
+            preferredDrinks: asStringList(data.preferredDrinks, 8).filter((x): x is DrinkType => (DRINK_TYPES as readonly string[]).includes(x)),
+            paymentRule: oneOf(data.paymentRule, PAYMENT_RULES, 'not_specified'),
+            currentMood: oneOf(data.currentMood, MOOD_TYPES, 'not_specified'),
+            favoriteBars: asStringList(data.favoriteBars, 20), talkTopics: asStringList(data.talkTopics, 20), online: false,
+          };
+        });
+        callback(buddies);
+      } catch (error) { console.warn('[discovery] refresh failed:', error); }
+      finally { inFlight = false; }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  },
 
-      const unsubscribes = bounds.map(([start, end], index) =>
-        onSnapshot(
-          query(collection(db, 'users'), orderBy('geohash'), startAt(start), endAt(end), limit(PER_RANGE_LIMIT)),
-          guard('nearby profiles', (snapshot) => {
-            const now = Date.now();
-            const found = readEach(snapshot.docs, (docSnap): BuddyProfile | null => {
-              const data = docSnap.data();
-              const uid = docSnap.id;
-              const name = asString(data.name);
-              const lat = asNumber(data.lat);
-              const lng = asNumber(data.lng);
-              if (uid === currentUserId || !name) return null;
-              if (lat === undefined || lng === undefined) return null; // no location: not "nearby"
-              const drinks = asStringList(data.preferredDrinks, 8).filter((x): x is DrinkType => (DRINK_TYPES as readonly string[]).includes(x));
-
-              return {
-                id: uid,
-                name,
-                age: asNumber(data.age) ?? 26,
-                avatar: asString(data.avatar),
-                tagline: asString(data.tagline) || ph('Радий знайомству за келихом 🍻'),
-                bio: asString(data.bio),
-                locationName: asString(data.locationName) || ph('Київ'),
-                distanceKm: 0, // set by pickNearby, recomputed from the live position in selectors
-                coordinates: { lat, lng },
-                preferredDrinks: drinks.length > 0 ? drinks : ['craft'],
-                paymentRule: oneOf(data.paymentRule, PAYMENT_RULES, 'split_50_50'),
-                currentMood: oneOf(data.currentMood, MOOD_TYPES, 'chill_talk'),
-                favoriteBars: asStringList(data.favoriteBars, 20),
-                talkTopics: asStringList(data.talkTopics, 20),
-                online: isOnline(asOptString(data.lastSeenAt), now),
-                inactive: isInactive(asOptString(data.lastSeenAt), now),
-                lastSeenAt: asOptString(data.lastSeenAt),
-                level: asNumber(data.level) ?? 1,
-                levelTitle: asOptString(data.levelTitle),
-                totalCheckIns: asNumber(data.totalCheckIns),
-              };
-            });
-            byRange.set(index, found);
-            emit();
-          }),
-          (error) => {
-            console.warn('[Firestore] Error subscribing to nearby profiles:', error);
-            byRange.set(index, []);
-            emit();
-          }
-        )
-      );
-
-      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-    } catch (err) {
-      console.warn('[Firestore] Failed to establish nearby profiles listener:', err);
-      return () => {};
-    }
+  async saveReport(report: import('../types').UserReport): Promise<void> {
+    const ref = doc(db, 'reports', report.id);
+    const quota = doc(db, 'reportRateLimits', report.reporterId);
+    await runTransaction(db, async (tx) => {
+      const [existing, limit] = await Promise.all([tx.get(ref), tx.get(quota)]);
+      if (existing.exists()) return;
+      const previous = limit.exists() ? limit.data() : null;
+      const reset = !previous || timeMillis(previous.windowStartedAt) < Date.now() - 24 * 3600_000;
+      tx.set(quota, { count: reset ? 1 : Number(previous?.count ?? 0) + 1, windowStartedAt: reset ? serverTimestamp() : previous!.windowStartedAt, lastAt: serverTimestamp(), lastReportId: report.id });
+      tx.set(ref, omitUndefined({ ...report, syncedAt: new Date().toISOString(), receivedAt: serverTimestamp() }));
+    });
   },
 
   /** Tells other users this person has the app open (the online dot, and the "inactive" mark after a week away) */
@@ -810,20 +881,6 @@ export const firestoreSyncService = {
     } catch (error) {
       console.warn('Could not update presence:', error);
     }
-  },
-
-  /**
-   * Account deletion (required by the App Store / Google Play): removes the profile, private
-   * data, favorites and friends. Messages already sent stay in chats as ciphertext for the other members.
-   */
-  async deleteAccountData(userId: string): Promise<void> {
-    for (const sub of ['favorites', 'friends', 'private']) {
-      const snap = await getDocs(collection(db, 'users', userId, sub));
-      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
-    }
-    const devices = await getDocs(query(collection(db, 'devices'), where('uid', '==', userId)));
-    await Promise.all(devices.docs.map((d) => deleteDoc(d.ref)));
-    await deleteDoc(doc(db, 'users', userId));
   },
 };
 

@@ -57,7 +57,7 @@ describe('meetup logic', () => {
   });
 
   it('invites only new people and reports the real count', () => {
-    const { meetup, count } = addInvitees(base(), [buddy('a'), buddy('b'), buddy('b')]);
+    const { meetup, count } = addInvitees({ ...base(), maxParticipants: 3 }, [buddy('a'), buddy('b'), buddy('b')]);
     expect(count).toBe(1);
     expect(meetup.participants).toHaveLength(3);
   });
@@ -68,12 +68,12 @@ describe('meetup logic', () => {
   });
 
   it('confirms an invited user without hitting the capacity check', () => {
-    const joined = joinMeetup(base(), { userId: 'a', userName: 'A', userAvatar: '' });
+    const joined = joinMeetup({ ...base(), endsAt: Date.now() + 86400000 }, { userId: 'a', userName: 'A', userAvatar: '' });
     expect(joined?.participants.find((p) => p.userId === 'a')?.status).toBe('going');
   });
 
   it('refuses new attendees once the meetup is full', () => {
-    const full = joinMeetup(base(), { userId: 'a', userName: 'A', userAvatar: '' })!; // host + a = 2 = max
+    const full = joinMeetup({ ...base(), endsAt: Date.now() + 86400000 }, { userId: 'a', userName: 'A', userAvatar: '' })!; // host + a = 2 = max
     expect(joinMeetup(full, { userId: 'z', userName: 'Z', userAvatar: '' })).toBeNull();
   });
 

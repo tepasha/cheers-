@@ -9,8 +9,17 @@ import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { analyticsService } from '../../services/analyticsService';
 import { sounds } from '../../services/soundService';
 import { releaseDevice } from './push';
+import { captureSession } from '../sessionGuard';
+import { authErrorSet } from '../slices/uiSlice';
+import { asString, asStringList, DRINK_TYPES, MOOD_TYPES, PAYMENT_RULES, oneOf } from '../../logic/cloudData';
+import type { DrinkType } from '../../types';
 
-const providerOf = (fb: User): 'google' | 'email' => (fb.providerData?.some((p) => p.providerId === 'google.com') ? 'google' : 'email');
+const providerOf = (fb: User): 'google' | 'apple' | 'email' => {
+  const ids = (fb.providerData ?? []).map((p) => p.providerId);
+  if (ids.includes('password')) return 'email';
+  if (ids.includes('apple.com')) return 'apple';
+  return ids.includes('google.com') ? 'google' : 'email';
+};
 
 /** Accounts created by earlier builds stored a DiceBear URL as their avatar; drop it so the name is no longer sent out */
 const withoutHostedPlaceholder = (avatar: string) => (/(^|\/\/)api\.dicebear\.com\//.test(avatar) ? '' : avatar);
@@ -20,10 +29,13 @@ const withoutHostedPlaceholder = (avatar: string) => (/(^|\/\/)api\.dicebear\.co
  * phone would keep showing this person's chat notifications to whoever holds it.
  */
 export const endSession =
-  (): AppThunk<Promise<void>> =>
+  (expectedUid?: string): AppThunk<Promise<void>> =>
   async (dispatch, getState) => {
-    if (getState().settings.push.deviceToken) await dispatch(releaseDevice());
-    await authService.logout();
+    const uid = expectedUid ?? getState().auth.user.id;
+    const releasing = dispatch(releaseDevice());
+    dispatch(loggedOut());
+    await releasing;
+    await authService.logout(uid);
   };
 
 /**
@@ -58,7 +70,7 @@ export const handleFirebaseUser =
           email: fb.email ?? '',
           name: fb.displayName || (sameUser ? prev.name : ''),
           // A Google account brings its own profile picture
-          avatar: fb.photoURL || (sameUser && prev.provider === 'email' ? withoutHostedPlaceholder(prev.avatar) : ''),
+          avatar: fb.photoURL || (sameUser && prev.provider !== 'google' ? withoutHostedPlaceholder(prev.avatar) : ''),
           emailVerified: fb.emailVerified,
           provider: providerOf(fb),
           birthDate: sameUser ? prev.birthDate : undefined,
@@ -67,21 +79,30 @@ export const handleFirebaseUser =
       )
     );
     dispatch(authReady());
-
-    // Birth date lives in the private profile; restore it on a fresh device. Whoever has none yet (a first Google
-    // sign-in) is asked for it before anything else, and everyone's age is held against the minimum.
-    if (sameUser && prev.birthDate) {
-      void dispatch(reviewAge());
-    } else {
-      void firestoreSyncService.getPrivateProfile(fb.uid).then((p) => {
-        if (getState().auth.user.id !== fb.uid) return; // someone else signed in meanwhile
-        if (p?.birthDate) dispatch(profileUpdated({ birthDate: p.birthDate }));
-        dispatch(birthDateLookedUp());
-        void dispatch(reviewAge());
-      });
-    }
+    dispatch(authErrorSet(false));
+    const current = captureSession(getState);
 
     analyticsService.setUser(fb.uid, { provider: providerOf(fb) });
+    const withClaims = typeof fb.getIdTokenResult === 'function';
+    if (withClaims) dispatch(profileUpdated({ serverEligible: false }));
+    void Promise.all([
+      firestoreSyncService.getPrivateProfile(fb.uid),
+      firestoreSyncService.getUserProfile(fb.uid),
+      withClaims ? fb.getIdTokenResult(true) : Promise.resolve(null),
+    ]).then(([privateProfile, publicProfile, token]) => {
+      if (!current()) return;
+      dispatch(profileUpdated({
+        ...(privateProfile?.birthDate ? { birthDate: privateProfile.birthDate } : {}),
+        ...(publicProfile ? {
+          tagline: asString(publicProfile.tagline), bio: asString(publicProfile.bio),
+          preferredDrinks: asStringList(publicProfile.preferredDrinks, 8).filter((value): value is DrinkType => (DRINK_TYPES as readonly string[]).includes(value)),
+          currentMood: oneOf(publicProfile.currentMood, MOOD_TYPES, 'not_specified'), paymentRule: oneOf(publicProfile.paymentRule, PAYMENT_RULES, 'not_specified'),
+        } : {}),
+        ...(token ? { emailVerified: token.claims.email_verified === true, serverEligible: token.claims.age_21 === true, termsVersion: typeof token.claims.terms_version === 'string' ? token.claims.terms_version : undefined } : {}),
+      }));
+      dispatch(birthDateLookedUp());
+      void dispatch(reviewAge());
+    }).catch(() => { if (current()) dispatch(authErrorSet(true)); });
   };
 
 /**
@@ -97,9 +118,11 @@ export const reviewAge =
 
 export const rejectUnderage =
   (): AppThunk<Promise<void>> =>
-  async (dispatch) => {
+  async (dispatch, getState) => {
     dispatch(authNoticeSet('underage'));
+    const owner = getState().auth.user.id;
     await authService.removeAccountAfterAgeRejection();
+    if (getState().auth.dataOwnerId !== owner) return;
     dispatch(personalDataReset());
     dispatch(loggedOut());
   };
@@ -115,8 +138,12 @@ export const submitBirthDate =
       return 'too_young';
     }
     const { user } = getState().auth;
-    await firestoreSyncService.savePrivateProfile(user.id, { email: user.email, birthDate: birthIso });
-    dispatch(profileUpdated({ birthDate: birthIso }));
+    const current = captureSession(getState);
+    await authService.completeOnboarding(birthIso);
+    if (!current()) return 'invalid';
+    await firestoreSyncService.savePrivateProfile(user.id, { email: user.email });
+    if (!current()) return 'invalid';
+    dispatch(profileUpdated({ birthDate: birthIso, serverEligible: true }));
     return 'ok';
   };
 
@@ -146,7 +173,7 @@ export const logout =
     // The listener resets Redux once Firebase confirms; do it now too so the UI does not wait on the network
     dispatch(loggedOut());
     try {
-      await dispatch(endSession());
+      await dispatch(endSession(userId));
     } catch (err) {
       console.warn('Sign out failed:', err);
     }
@@ -155,16 +182,21 @@ export const logout =
 /** Re-checks the verification flag after the user followed the email link. Resolves true when verified. */
 export const refreshEmailVerification =
   (): AppThunk<Promise<boolean>> =>
-  async (dispatch) => {
+  async (dispatch, getState) => {
+    const current = captureSession(getState);
     const verified = await authService.refreshVerification();
+    if (!current()) return false;
     if (verified) dispatch(profileUpdated({ emailVerified: true }));
     return verified;
   };
 
+/** `password` for an email account; a Google account confirms through the Google dialog instead */
 export const deleteAccount =
-  (password: string): AppThunk<Promise<void>> =>
-  async (dispatch) => {
+  (password?: string): AppThunk<Promise<void>> =>
+  async (dispatch, getState) => {
+    const owner = getState().auth.user.id;
     await authService.deleteAccount(password);
+    if (getState().auth.dataOwnerId !== owner) return;
     analyticsService.trackEvent('account_deleted');
     dispatch(personalDataReset());
     dispatch(loggedOut());

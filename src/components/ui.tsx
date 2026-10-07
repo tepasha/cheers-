@@ -1,24 +1,11 @@
 import React from 'react';
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleProp,
-  StyleSheet,
-  Text,
-  TextInput,
-  TextInputProps,
-  View,
-  ViewStyle,
-} from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle,  } from 'react-native';
 import { Image } from 'expo-image';
 import Feather from '@expo/vector-icons/Feather';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radius, spacing, typography } from '../theme';
 import { useTr } from '../hooks/useT';
+import { safeAvatarUri } from '../logic/avatar';
 
 export type IconName = React.ComponentProps<typeof Feather>['name'];
 
@@ -29,11 +16,11 @@ export const Icon = ({ name, size = 18, color = colors.text }: { name: IconName;
 // ─── Avatar ────────────────────────────────────────────────────────────────
 
 export const Avatar = ({ uri, name, size = 44, online }: { uri?: string; name?: string; size?: number; online?: boolean }) => {
-  const initial = (name?.trim().charAt(0) || '?').toUpperCase();
+  const initial = (Array.from(name?.trim() || '?')[0]).toUpperCase();
   return (
     <View style={{ width: size, height: size }}>
-      {uri ? (
-        <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.surfaceHigh }} />
+      {safeAvatarUri(uri) ? (
+        <Image source={{ uri: safeAvatarUri(uri) }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.surfaceHigh }} />
       ) : (
         <View
           style={[
@@ -223,6 +210,7 @@ export const Field = ({ label, ...props }: { label: string } & TextInputProps) =
   <View style={{ marginBottom: spacing.md }}>
     <Text style={[typography.label, { marginBottom: 6 }]}>{label}</Text>
     <TextInput
+      accessibilityLabel={label}
       placeholderTextColor={colors.textDim}
       {...props}
       style={[styles.input, props.multiline && { height: 84, textAlignVertical: 'top' }, props.style]}
@@ -248,7 +236,7 @@ export const Sheet = ({
   const tr = useTr();
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <ModalLayer visible={visible} onClose={onClose}>
       <KeyboardAvoidingView style={styles.sheetBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={tr('Закрити')} />
         <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.lg) }]}>
@@ -262,7 +250,7 @@ export const Sheet = ({
           {footer}
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </ModalLayer>
   );
 };
 
@@ -335,3 +323,4 @@ const styles = StyleSheet.create({
   },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.sm },
 });
+import { ModalLayer } from './ModalLayer';

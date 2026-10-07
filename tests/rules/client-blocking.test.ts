@@ -1,3 +1,5 @@
+import location from '@/store/slices/locationSlice';
+import outbox from '@/store/slices/outboxSlice';
 /**
  * Contract: the REAL client (firestoreSyncService + the block thunks) against the emulator with the REAL rules.
  * Proves the app writes blocks in the shape the rules read, and that the blocked person is actually stopped.
@@ -18,14 +20,14 @@ vi.mock('@/services/firebase', () => ({
   auth: {},
   firebaseApp: {},
 }));
-vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(randomBytes(n)) }));
+vi.mock('expo-crypto', () => ({ getRandomValues: (buffer: Uint8Array) => { buffer.set(randomBytes(buffer.length)); return buffer; } }));
 vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn().mockResolvedValue(undefined),
   notificationAsync: vi.fn().mockResolvedValue(undefined),
   ImpactFeedbackStyle: {},
   NotificationFeedbackType: {},
 }));
-vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn() }));
+vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn(), stopSystemPush: vi.fn().mockResolvedValue(undefined) }));
 
 import { firestoreSyncService as svc } from '@/services/firestoreSyncService';
 import { blockUser, syncBlocksFromCloud, unblockUser } from '@/store/thunks/safety';
@@ -40,7 +42,7 @@ import type { Message } from '@/types';
 
 let env: RulesTestEnvironment;
 const as = (uid: string) => {
-  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
+  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true, age_21: true }).firestore();
 };
 const admin = async <T,>(fn: (db: any) => Promise<T>): Promise<T> => {
   let out!: T;
@@ -63,7 +65,7 @@ beforeEach(async () => {
 });
 
 const storeFor = (uid: string) => {
-  const store = configureStore({ reducer: combineReducers({ auth, safety, notifications, settings, ui }) });
+  const store = configureStore({ reducer: combineReducers({ location, outbox, auth, safety, notifications, settings, ui }) });
   store.dispatch(loggedIn(createUser({ id: uid, email: `${uid}@example.com`, emailVerified: true })));
   return store;
 };
@@ -127,11 +129,11 @@ describe('blocking through the real client', () => {
 
     as('alice');
     expect((await svc.sendEncryptedMessage(group, message('g1', 'alice', chatId), me('alice'))).success).toBe(true);
-    await svc.addGroupMembers(chatId, [
+    await expect(svc.addGroupMembers(chatId, [
       { id: 'bob', name: 'bob', avatar: '' }, // blocked alice: refused
       { id: 'dave', name: 'dave', avatar: '' },
       { id: 'erin', name: 'erin', avatar: '' },
-    ]);
+    ])).rejects.toThrow();
     const members = (await admin((db) => getDoc(doc(db, `chats/${chatId}`)))).data()!.members;
     expect(members).toEqual(['alice', 'carol', 'dave', 'erin']);
   });

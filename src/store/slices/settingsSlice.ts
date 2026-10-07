@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { AppLanguage, PushNotificationSettings } from '../../types';
 import { detectLanguageFromGeo, ph } from '../../services/i18nService';
 import { INITIAL_USER_LOCATION } from '../../services/geoService';
+import { personalDataReset } from '../actions';
 
 interface SettingsState {
   language: AppLanguage;
@@ -9,6 +10,7 @@ interface SettingsState {
   /** true once the user picked a language themselves; auto-detection then stops */
   languageIsManual: boolean;
   batterySaver: boolean;
+  shareLocation: boolean;
   simulateRuBlock: boolean;
   push: PushNotificationSettings;
   gamificationTourSeen: boolean;
@@ -21,6 +23,7 @@ const initialState: SettingsState = {
   languageHint: detected.locationHint,
   languageIsManual: false,
   batterySaver: false,
+  shareLocation: false,
   simulateRuBlock: false,
   push: {
     soundEnabled: true,
@@ -36,6 +39,7 @@ const settingsSlice = createSlice({
   name: 'settings',
   initialState,
   reducers: {
+    locationSharingSet(state, action: PayloadAction<boolean>) { state.shareLocation = action.payload; },
     languageChosen(state, action: PayloadAction<AppLanguage>) {
       state.language = action.payload;
       state.languageIsManual = true;
@@ -59,9 +63,17 @@ const settingsSlice = createSlice({
       state.gamificationTourSeen = action.payload;
     },
   },
+  extraReducers: (builder) => {
+    builder.addCase(personalDataReset, (state) => {
+      state.push = { ...initialState.push };
+      state.gamificationTourSeen = false;
+      state.shareLocation = false;
+    });
+  },
 });
 
 export const {
+  locationSharingSet,
   languageChosen,
   languageAutoDetected,
   batterySaverSet,

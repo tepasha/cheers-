@@ -1,15 +1,13 @@
-import { doc, setDoc } from 'firebase/firestore';
 import { BlockedUserRecord, ReportCategory, ReportTargetType, UserReport } from '../../types';
 import type { AppThunk } from '../hooks';
 import { blocksSynced, reportFiled, userBlocked, userUnblocked } from '../slices/safetySlice';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { pushNotification } from './notifications';
 import { REPORT_CATEGORIES } from '../../data/safetyData';
-import { db } from '../../services/firebase';
 import { sounds } from '../../services/soundService';
-import { omitUndefined } from '../../utils/firestoreData';
 import { formatClock } from '../../utils/time';
 import { trFor } from './lang';
+import { queueSync } from './outbox';
 
 export const blockUser =
   (userId: string, userName: string, userAvatar?: string, reason?: string, autoBlocked = false): AppThunk<BlockedUserRecord> =>
@@ -29,15 +27,13 @@ export const blockUser =
 
     dispatch(userBlocked(record));
     // Server-side enforcement: the rules consult this document when the blocked person tries to reach you
-    void firestoreSyncService.saveBlock(getState().auth.user.id, record);
+    dispatch(queueSync('saveBlock', `block:${userId}`, [getState().auth.user.id, record]));
     sounds.playTap();
     dispatch(
       pushNotification({
         type: 'system',
-        title: autoBlocked ? tr('🛡️ Анти-абуз: акаунт автозаблоковано') : tr('🚫 Користувача заблоковано'),
-        body: autoBlocked
-          ? tr('Акаунт {userName} отримав кілька скарг і був автоматично ізольований для безпеки спільноти.', { userName })
-          : tr('Користувача {userName} заблоковано. Ви більше не бачитимете його кличі, повідомлення та профіль.', { userName }),
+        title: tr('🚫 Користувача заблоковано'),
+        body: tr('Користувача {userName} заблоковано. Ви більше не бачитимете його кличі, повідомлення та профіль.', { userName }),
         actionText: tr('Керувати безпекою'),
       })
     );
@@ -48,7 +44,7 @@ export const unblockUser =
   (userId: string): AppThunk =>
   (dispatch, getState) => {
     dispatch(userUnblocked(userId));
-    void firestoreSyncService.removeBlock(getState().auth.user.id, userId);
+    dispatch(queueSync('removeBlock', `block:${userId}`, [getState().auth.user.id, userId]));
     sounds.playTap();
   };
 
@@ -57,7 +53,9 @@ export const syncBlocksFromCloud =
   (): AppThunk<Promise<void>> =>
   async (dispatch, getState) => {
     const userId = getState().auth.user.id;
+    const current = captureSession(getState);
     const cloud = await firestoreSyncService.getBlocks(userId);
+    if (!current()) return;
     if (cloud === null) return; // unreadable: keep what we have
 
     const firstSync = getState().safety.cloudSyncedFor !== userId;
@@ -66,7 +64,7 @@ export const syncBlocksFromCloud =
       // Blocks made on this device before they were stored in the cloud now become enforceable
       getState()
         .safety.blockedUsers.filter((r) => !inCloud.has(r.userId))
-        .forEach((r) => void firestoreSyncService.saveBlock(userId, r));
+        .forEach((r) => dispatch(queueSync('saveBlock', `block:${r.userId}`, [userId, r])));
     }
     dispatch(blocksSynced({ userId, records: cloud, merge: firstSync }));
   };
@@ -74,6 +72,7 @@ export const syncBlocksFromCloud =
 export interface SubmitReportParams {
   targetId: string;
   targetType: ReportTargetType;
+  contextId?: string;
   targetName: string;
   targetAvatar?: string;
   category: ReportCategory;
@@ -81,7 +80,7 @@ export interface SubmitReportParams {
   shouldBlockUser?: boolean;
 }
 
-/** Files a report and auto-blocks on critical categories or on the second report against a user */
+/** Files a report for moderator review; blocking is a separate explicit user choice. */
 export const submitReport =
   (params: SubmitReportParams): AppThunk<UserReport> =>
   (dispatch, getState) => {
@@ -91,11 +90,12 @@ export const submitReport =
     const categoryTitle = categoryDef ? categoryDef.title : 'Скарга на контент'; // i18n-ignore: stored for moderators, always Ukrainian
 
     const report: UserReport = {
-      id: `rep-${Date.now()}`,
+      id: `rep-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       reporterId: state.auth.user.id || 'me',
       reporterName: state.auth.user.name || 'Ви', // i18n-ignore: stored for moderators
       targetId: params.targetId,
       targetType: params.targetType,
+      contextId: params.contextId,
       targetName: params.targetName,
       targetAvatar: params.targetAvatar,
       category: params.category,
@@ -106,26 +106,22 @@ export const submitReport =
       status: 'pending',
     };
 
-    const newCount = (state.safety.reportCounts[params.targetId] || 0) + 1;
     dispatch(reportFiled(report));
 
-    const reachedThreshold = newCount >= 2;
-    if (reachedThreshold || categoryDef?.severity === 'critical' || params.shouldBlockUser) {
+    if (params.shouldBlockUser) {
       dispatch(
         blockUser(
           params.targetId,
           params.targetName,
           params.targetAvatar,
-          reachedThreshold ? tr('Автоматичне блокування: {newCount} скарги від користувачів', { newCount }) : tr('Скаргу подано: {categoryTitle}', { categoryTitle }),
-          true
+          tr('Скаргу подано: {categoryTitle}', { categoryTitle }),
+          false
         )
       );
     }
 
     sounds.playPop();
-    setDoc(doc(db, 'reports', report.id), omitUndefined({ ...report, syncedAt: new Date().toISOString() })).catch((err) =>
-      console.warn('[Firestore] Reports sync warning:', err)
-    );
+    dispatch(queueSync('saveReport', `report:${report.id}`, [report]));
     return report;
   };
 
@@ -140,6 +136,7 @@ export const triggerSosAlert =
     let interlocutorBlocked = false;
     if (params.interlocutorId && params.interlocutorName) {
       dispatch(blockUser(params.interlocutorId, params.interlocutorName, undefined, tr('Екстрене блокування через кнопку SOS'), true));
+      dispatch(submitReport({ targetId: params.interlocutorId, targetName: params.interlocutorName, targetType: 'profile', category: 'suspicious', comment: '', shouldBlockUser: false }));
       interlocutorBlocked = true;
     }
 
@@ -156,6 +153,7 @@ export const triggerSosAlert =
     return {
       interlocutorBlocked,
       angelaPhrase: tr('Чи можу я покликати Анжелу? (Ask for Angela)'),
-      emergencyNumber: '112 / 102',
+      emergencyNumber: '112',
     };
   };
+import { captureSession } from '../sessionGuard';

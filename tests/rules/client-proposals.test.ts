@@ -1,3 +1,5 @@
+import location from '@/store/slices/locationSlice';
+import outbox from '@/store/slices/outboxSlice';
 /**
  * End to end with two REAL clients (stores + thunks + firestoreSyncService) against the emulator and the real
  * rules: Alice proposes a meetup, Bob answers, Alice must see the answer.  npm run test:rules
@@ -17,14 +19,14 @@ vi.mock('@/services/firebase', () => ({
   auth: {},
   firebaseApp: {},
 }));
-vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(randomBytes(n)) }));
+vi.mock('expo-crypto', () => ({ getRandomValues: (buffer: Uint8Array) => { buffer.set(randomBytes(buffer.length)); return buffer; } }));
 vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn().mockResolvedValue(undefined),
   notificationAsync: vi.fn().mockResolvedValue(undefined),
   ImpactFeedbackStyle: {},
   NotificationFeedbackType: {},
 }));
-vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn() }));
+vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn(), stopSystemPush: vi.fn().mockResolvedValue(undefined) }));
 
 import { firestoreSyncService as svc } from '@/services/firestoreSyncService';
 import { openDirectChat, respondToProposal, sendMessage } from '@/store/thunks/social';
@@ -42,7 +44,7 @@ import type { BuddyProfile, Message } from '@/types';
 
 let env: RulesTestEnvironment;
 const as = (uid: string) => {
-  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
+  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true, age_21: true }).firestore();
 };
 const admin = async <T,>(fn: (db: any) => Promise<T>): Promise<T> => {
   let out!: T;
@@ -73,7 +75,7 @@ const buddy = (id: string): BuddyProfile => ({
 });
 
 const clientFor = (uid: string) => {
-  const store = configureStore({ reducer: combineReducers({ auth, chats, gamification, safety, notifications, settings, friends, ui }) });
+  const store = configureStore({ reducer: combineReducers({ location, outbox, auth, chats, gamification, safety, notifications, settings, friends, ui }) });
   store.dispatch(loggedIn(createUser({ id: uid, email: `${uid}@example.com`, emailVerified: true })));
   const run = <R,>(thunk: unknown) => (store.dispatch as unknown as (t: unknown) => R)(thunk);
   const messages = () => (store.getState() as any).chats.threads[0]?.messages as Message[] | undefined;

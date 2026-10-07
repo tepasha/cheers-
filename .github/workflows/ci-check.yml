@@ -5,7 +5,9 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-  # Reused as the gate of every release workflow (release.yml, preview.yml): nothing reaches a store without it
+  # Reused as the gate of every release path: release.yml and preview.yml run it before calling the build, OTA and
+  # backend workflows, and a manual start of ota.yml, build-*.yml, deploy-backend.yml or promote.yml runs it itself.
+  # Nothing reaches a store, an OTA channel or a Firebase project without it.
   workflow_call:
 
 # CI only reads the repository
@@ -39,6 +41,9 @@ jobs:
 
       - name: 🏷️ Versions and identifiers are consistent
         run: node scripts/release-check.mjs
+
+      - name: Check dependency advisories and expiring exceptions
+        run: node scripts/dependency-audit.mjs
 
       - name: 🔍 ESLint & TypeScript Check
         run: npm run lint

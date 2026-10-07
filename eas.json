@@ -6,6 +6,7 @@
   "build": {
     "development": {
       "channel": "development",
+      "environment": "development",
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
@@ -17,6 +18,7 @@
     },
     "preview": {
       "channel": "preview",
+      "environment": "preview",
       "distribution": "internal",
       "ios": {
         "simulator": false
@@ -28,6 +30,7 @@
     "production": {
       "autoIncrement": true,
       "channel": "production",
+      "environment": "production",
       "ios": {
         "resourceClass": "m-medium"
       },
@@ -45,15 +48,6 @@
         "serviceAccountKeyPath": "./google-service-account.json",
         "track": "internal",
         "releaseStatus": "completed",
-        "changesNotSentForReview": false
-      }
-    },
-    "production-release": {
-      "android": {
-        "serviceAccountKeyPath": "./google-service-account.json",
-        "track": "production",
-        "releaseStatus": "inProgress",
-        "rollout": 0.1,
         "changesNotSentForReview": false
       }
     }

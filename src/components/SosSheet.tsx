@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Linking, Modal, Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Button, Card, Row, SectionTitle, Sheet } from './ui';
 import { colors, spacing, typography } from '../theme';
@@ -9,6 +9,7 @@ import { useAppDispatch } from '../store/hooks';
 import { triggerSosAlert } from '../store/thunks/safety';
 import { useTr } from '../hooks/useT';
 import { ph } from '../services/i18nService';
+import { ModalLayer } from './ModalLayer';
 
 const ANGELA_TEXT = ph('Будь ласка, покличте допомогу або викличте таксі. Запитайте Анжелу.');
 
@@ -44,7 +45,6 @@ export const SosSheet = ({
       <Sheet visible={visible} onClose={onClose} title={tr('🚨 Екстрена безпека')}>
         <Row>
           <Button label={tr('Дзвінок 112')} icon="phone" variant="danger" onPress={() => call('112')} style={{ flex: 1 }} />
-          <Button label={tr('Поліція 102')} icon="phone" variant="secondary" onPress={() => call('102')} style={{ flex: 1 }} />
         </Row>
 
         <SectionTitle>{tr('Кодова фраза для бармена')}</SectionTitle>
@@ -83,7 +83,7 @@ export const SosSheet = ({
         )}
       </Sheet>
 
-      <Modal visible={showBig} animationType="fade" onRequestClose={() => setShowBig(false)}>
+      <ModalLayer visible={showBig} animation="fade" transparent={false} onClose={() => setShowBig(false)}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={tr('Закрити')}
@@ -96,7 +96,7 @@ export const SosSheet = ({
           </Text>
           <Text style={{ color: colors.onAmber, fontSize: 14, marginTop: spacing.lg, textAlign: 'center' }}>{tr('Торкніться екрана, щоб закрити')}</Text>
         </Pressable>
-      </Modal>
+      </ModalLayer>
     </>
   );
 };

@@ -2,6 +2,7 @@ import { AppLanguage, LanguageMeta, GeoBlockInfo } from '../types';
 import { en } from '../i18n/phrases/en';
 import { pl } from '../i18n/phrases/pl';
 import { de } from '../i18n/phrases/de';
+import { isRussianCoordinate } from '../logic/territory';
 
 export const SUPPORTED_LANGUAGES: LanguageMeta[] = [
   {
@@ -96,7 +97,7 @@ export function checkRussianTerritoryRestriction(
     (tz) => tz.toLowerCase() === userTz.toLowerCase()
   );
 
-  if (isRussianTz) {
+  if (!coords && isRussianTz) {
     return {
       isBlocked: true,
       reason: `Виявлено заборонену географічну зону за таймзоною (${userTz}). Використання застосунку в РФ суворо заборонено.`,
@@ -106,17 +107,10 @@ export function checkRussianTerritoryRestriction(
     };
   }
 
-  // 2. Coordinate range verification (rough bounding box of Russian territory)
+  // Offline country geometry; timezone is a fallback only when no position exists.
   if (coords) {
     const { lat, lng } = coords;
-    // European Russia (north of Caucasus, east of Ukraine/Belarus, west of Urals)
-    const isEuropeanRussia = lat >= 51.0 && lat <= 70.0 && lng >= 32.0 && lng <= 60.0;
-    // Asian Russia / Siberia / Far East
-    const isSiberianRussia = lat >= 42.0 && lat <= 77.0 && lng > 60.0 && lng <= 180.0;
-    // Kaliningrad exclave
-    const isKaliningrad = lat >= 54.2 && lat <= 55.3 && lng >= 19.8 && lng <= 22.8;
-
-    if (isEuropeanRussia || isSiberianRussia || isKaliningrad) {
+    if (isRussianCoordinate(lat, lng)) {
       return {
         isBlocked: true,
         reason: `Геолокація вказує на координати (${lat.toFixed(2)}, ${lng.toFixed(2)}) на території РФ. Доступ заблоковано на рівні протоколу безпеки.`,

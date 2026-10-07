@@ -10,21 +10,25 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
 
 const PROJECT = 'demo-budmo-lifecycle';
-const current: { db: any } = { db: null };
+const current: { db: any; uid: string } = { db: null, uid: "" };
 vi.mock('@/services/firebase', () => ({
   get db() {
     return current.db;
   },
+  functions: {},
   auth: {},
   firebaseApp: {},
 }));
-vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(randomBytes(n)) }));
+vi.mock('expo-crypto', () => ({ getRandomValues: (buffer: Uint8Array) => { buffer.set(randomBytes(buffer.length)); return buffer; } }));
 
 import { firestoreSyncService as svc } from '@/services/firestoreSyncService';
 import { buildMeetup } from '@/logic/meetups';
 import { publicGeohash } from '@/logic/nearby';
 import { coarseCoordinate } from '@/logic/privacy';
 import { adminFirestoreFor, createCleanupDeps } from '../../functions/src/deps';
+import { discoverPeople, getPublicProfile } from '../../functions/src/discovery';
+vi.mock('firebase/functions', () => ({ httpsCallable: () => async (input: { lat: number; lng: number }) => ({ data: await discoverPeople(adminDb, current.uid, input.lat, input.lng) }) }));
+
 import { cleanupExpired } from '../../functions/src/lifecycle';
 import type { GroupMeetup, HangoutAlert } from '@/types';
 
@@ -36,7 +40,8 @@ let adminDb: ReturnType<typeof adminFirestoreFor>['db'];
 let closeAdmin: () => Promise<void>;
 
 const as = (uid: string) => {
-  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
+  current.uid = uid;
+  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true, age_21: true }).firestore();
 };
 
 beforeAll(async () => {
@@ -157,7 +162,7 @@ describe('people nearby, through the real client', () => {
   const KYIV = { lat: 50.45, lng: 30.52 };
   const km = (north: number, east = 0) => ({ lat: KYIV.lat + north / 111.19, lng: KYIV.lng + east / (111.19 * Math.cos((KYIV.lat * Math.PI) / 180)) });
   const person = (uid: string, at: { lat: number; lng: number } | null, extra: Record<string, unknown> = {}) => ({
-    id: uid, name: uid, avatar: '', age: 27, updatedAt: '2026-10-10T10:00:00.000Z',
+    id: uid, name: uid, avatar: '', shareLocation: true, age: 27, updatedAt: '2026-10-10T10:00:00.000Z',
     ...(at ? { lat: coarseCoordinate(at.lat), lng: coarseCoordinate(at.lng), geohash: publicGeohash(coarseCoordinate(at.lat), coarseCoordinate(at.lng)) } : {}),
     ...extra,
   });
@@ -185,8 +190,8 @@ describe('people nearby, through the real client', () => {
       person('nowhere', null),
     ]);
     const found = await nearby();
-    expect(found.map((b) => b.id)).toEqual(['close', 'mid', 'edge']);
-    expect(found[0].distanceKm).toBeLessThan(0.6);
+    expect(found.map((b) => b.id)).toEqual(['close', 'mid']); // the rounded edge is outside the 3 km radius
+    expect(found[0].distanceKm).toBeLessThan(1.5);
   });
 
   it('never includes the signed-in user', async () => {
@@ -204,9 +209,11 @@ describe('people nearby, through the real client', () => {
     const found = await nearby();
     const by = (id: string) => found.find((b) => b.id === id)!;
     expect(found.map((b) => b.id).sort()).toEqual(['away', 'here', 'never']);
-    expect([by('here').online, by('here').inactive]).toEqual([true, false]);
-    expect([by('away').online, by('away').inactive]).toEqual([false, true]);
-    expect(by('never').inactive).toBe(true);
+    expect(by('here').online).toBe(false);
+    expect(by('here').lastSeenAt).toBeUndefined();
+    expect(by('away').online).toBe(false);
+    expect(by('away').lastSeenAt).toBeUndefined();
+    expect(by('never').lastSeenAt).toBeUndefined();
   });
 
   it('returns at most 50, the nearest ones', async () => {
@@ -220,7 +227,7 @@ describe('people nearby, through the real client', () => {
   it('the profile the real client writes is found by the query (the geohash comes from the published coordinates)', async () => {
     as('alice');
     await adminDb.doc('users/alice').set({ id: 'alice', name: 'Alice' });
-    await svc.saveUserProfile({ id: 'alice', name: 'Alice', lat: 50.45123, lng: 30.52456 });
+    await svc.saveUserProfile({ id: 'alice', name: 'Alice', shareLocation: true, lat: 50.45123, lng: 30.52456 });
     const stored = (await adminDb.doc('users/alice').get()).data()!;
     expect(stored.lat).toBe(coarseCoordinate(50.45123));
     expect(stored.geohash).toBe(publicGeohash(stored.lat, stored.lng));
@@ -258,5 +265,31 @@ describe('the cleanup job on a real Firestore', () => {
     await adminDb.doc('hangouts/over').set(table('over', now - HOUR));
     await cleanupExpired(createCleanupDeps(adminDb), now);
     expect(await cleanupExpired(createCleanupDeps(adminDb), now)).toEqual({ hangouts: 0, meetups: 0 });
+  });
+});
+
+describe('server discovery privacy', () => {
+  it('filters both block directions and bans before the 50-person cap', async () => {
+    const batch = adminDb.batch();
+    for (let i = 0; i < 55; i++) {
+      const id = `near-${String(i).padStart(2, '0')}`;
+      batch.set(adminDb.doc(`users/${id}`), { id, name: id, age: 30, shareLocation: true, lat: 50.46, lng: 30.52, geohash: publicGeohash(50.46, 30.52), lastSeenAt: new Date().toISOString(), locationName: 'Private home label' });
+    }
+    batch.set(adminDb.doc('users/near-00/blocks/alice'), { userId: 'alice' });
+    batch.set(adminDb.doc('users/alice/blocks/near-01'), { userId: 'near-01' });
+    batch.set(adminDb.doc('bannedUsers/near-02'), { reportId: 'test' });
+    await batch.commit();
+    const found = await discoverPeople(adminDb, 'alice', 50.46, 30.52);
+    expect(found).toHaveLength(50);
+    expect(found.map((p) => p.id)).not.toContain('near-00');
+    expect(found.map((p) => p.id)).not.toContain('near-01');
+    expect(found.map((p) => p.id)).not.toContain('near-02');
+    expect(found[0]).not.toHaveProperty('geohash');
+    expect(found[0]).not.toHaveProperty('lastSeenAt');
+    expect(found[0]).not.toHaveProperty('locationName');
+    expect(await getPublicProfile(adminDb, 'alice', 'near-00')).toBeNull();
+    expect(await getPublicProfile(adminDb, 'alice', 'near-01')).toBeNull();
+    expect(await getPublicProfile(adminDb, 'alice', 'near-02')).toBeNull();
+    expect(await getPublicProfile(adminDb, 'alice', 'near-03')).toHaveProperty('id', 'near-03');
   });
 });

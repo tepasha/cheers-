@@ -38,7 +38,7 @@ export function buildMeetup(params: CreateMeetupInput, now = Date.now()): GroupM
       status: 'going',
       joinedAt: ph('Організатор'),
     },
-    ...(params.invitedBuddies ?? []).map(
+    ...Array.from(new Map((params.invitedBuddies ?? []).filter((b) => b.id !== params.creatorId).map((b) => [b.id, b])).values()).slice(0, (params.maxParticipants || 6) - 1).map(
       (b): MeetupParticipant => ({
         userId: b.id,
         userName: b.name,
@@ -81,6 +81,7 @@ export function addInvitees(meetup: GroupMeetup, buddies: BuddyProfile[]): { mee
 
   buddies.forEach((buddy) => {
     if (existingIds.has(buddy.id)) return;
+    if (meetup.participants.length + added.length >= meetup.maxParticipants) return;
     existingIds.add(buddy.id);
     added.push({
       userId: buddy.id,
@@ -98,7 +99,10 @@ export function addInvitees(meetup: GroupMeetup, buddies: BuddyProfile[]): { mee
 
 /** Marks the user as going. Returns null when the meetup is full. */
 export function joinMeetup(meetup: GroupMeetup, user: Attendee): GroupMeetup | null {
+  if (meetup.status === 'cancelled' || meetup.status === 'past' || (meetup.endsAt !== undefined && meetup.endsAt <= Date.now())) return null;
   const existing = meetup.participants.find((p) => p.userId === user.userId);
+  const goingCount = meetup.participants.filter((p) => p.status === 'going').length;
+  if (existing?.status !== 'going' && goingCount >= meetup.maxParticipants) return null;
 
   if (existing) {
     return {
@@ -109,8 +113,7 @@ export function joinMeetup(meetup: GroupMeetup, user: Attendee): GroupMeetup | n
     };
   }
 
-  const goingCount = meetup.participants.filter((p) => p.status === 'going').length;
-  if (goingCount >= meetup.maxParticipants) return null;
+  if (meetup.participants.length >= meetup.maxParticipants) return null;
 
   return {
     ...meetup,

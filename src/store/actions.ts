@@ -6,3 +6,4 @@ import { createAction } from '@reduxjs/toolkit';
  * person (e.g. after the 36h session expired) keeps their local data.
  */
 export const personalDataReset = createAction('app/personalDataReset');
+export const identityRedacted = createAction<string>('app/identityRedacted');

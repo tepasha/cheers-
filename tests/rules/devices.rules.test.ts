@@ -9,7 +9,7 @@ import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } fro
 import { deviceIdFor } from '../../src/logic/push';
 
 let env: RulesTestEnvironment;
-const user = (uid: string, verified = true) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: verified }).firestore();
+const user = (uid: string, verified = true) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: verified, age_21: true }).firestore();
 
 beforeAll(async () => {
   env = await initializeTestEnvironment({
@@ -21,7 +21,7 @@ afterAll(async () => env.cleanup());
 beforeEach(async () => env.clearFirestore());
 
 const TOKEN = 'ExponentPushToken[abcDEF123_-xyz]';
-const device = (uid: string, over: Record<string, unknown> = {}) => ({ uid, token: TOKEN, platform: 'ios', language: 'uk', updatedAt: '2026-10-01T10:00:00Z', ...over });
+const device = (uid: string, over: Record<string, unknown> = {}) => ({ uid, token: TOKEN, platform: 'ios', language: 'uk', updatedAt: '2026-10-01T10:00:00Z', privatePreview: false, bindingSequence: Date.now(), leaseUntil: Date.now() + 30 * 60000, ...over });
 const ref = (db: any, token = TOKEN) => doc(db, `devices/${deviceIdFor(token)}`);
 
 describe('registering a device', () => {
@@ -75,6 +75,14 @@ describe('reading and removing devices', () => {
 });
 
 describe('a phone changing hands', () => {
+  it('rejects a stale previous-session binding after a new account takes the token', async () => {
+    const initial = Date.now();
+    await assertSucceeds(setDoc(ref(user('alice')), device('alice', { bindingSequence: initial })));
+    await assertSucceeds(setDoc(ref(user('bob')), device('bob', { bindingSequence: initial + 1 })));
+    await assertFails(setDoc(ref(user('alice')), device('alice', { bindingSequence: initial })));
+    await assertFails(deleteDoc(ref(user('alice'))));
+    await assertSucceeds(getDoc(ref(user('bob'))));
+  });
   it('moves to the account that signs in on it, and the previous owner loses it', async () => {
     await setDoc(ref(user('alice')), device('alice'));
     await assertSucceeds(setDoc(ref(user('bob')), device('bob')));

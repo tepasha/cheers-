@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { randomBytes, webcrypto } from 'node:crypto';
 
 // expo-crypto is a native module; Node's CSPRNG is an equivalent stand-in for getRandomBytes
-vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(randomBytes(n)) }));
+vi.mock('expo-crypto', () => ({ getRandomValues: (buffer: Uint8Array) => { buffer.set(randomBytes(buffer.length)); return buffer; } }));
 
 import { cryptoService } from '@/services/cryptoService';
 

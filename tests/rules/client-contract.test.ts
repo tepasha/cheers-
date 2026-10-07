@@ -1,3 +1,5 @@
+import location from '@/store/slices/locationSlice';
+import outbox from '@/store/slices/outboxSlice';
 /**
  * Contract tests: the REAL client code (firestoreSyncService and the report thunk) running against the
  * emulator with the REAL firestore.rules. They catch drift between what the app sends and what the
@@ -8,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
 
 // `db` is swapped per test to act as different signed-in users
@@ -20,14 +22,14 @@ vi.mock('@/services/firebase', () => ({
   auth: {},
   firebaseApp: {},
 }));
-vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(randomBytes(n)) }));
+vi.mock('expo-crypto', () => ({ getRandomValues: (buffer: Uint8Array) => { buffer.set(randomBytes(buffer.length)); return buffer; } }));
 vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn().mockResolvedValue(undefined),
   notificationAsync: vi.fn().mockResolvedValue(undefined),
   ImpactFeedbackStyle: {},
   NotificationFeedbackType: {},
 }));
-vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn() }));
+vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn(), stopSystemPush: vi.fn().mockResolvedValue(undefined) }));
 
 import { firestoreSyncService as svc } from '@/services/firestoreSyncService';
 import { submitReport } from '@/store/thunks/safety';
@@ -43,7 +45,7 @@ import type { HangoutAlert, Message } from '@/types';
 
 let env: RulesTestEnvironment;
 const as = (uid: string, verified = true) => {
-  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: verified }).firestore();
+  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: verified, age_21: true }).firestore();
 };
 const admin = async <T,>(fn: (db: any) => Promise<T>): Promise<T> => {
   let out!: T;
@@ -72,12 +74,12 @@ const message = (id: string, senderId: string, chatId: string, text = 'Прив�
 });
 
 describe('profiles', () => {
-  it('publishes a public profile with coordinates on the 20 m grid, a geohash, and without email or birth date', async () => {
+  it('publishes approximate area coordinates with a geohash and without private fields', async () => {
     as('alice');
     await svc.saveUserProfile({ id: 'alice', name: 'Alice', avatar: 'https://x.test/a.png', locationName: 'Київ', lat: 50.4635123, lng: 30.5180456, age: 27 });
     expect(warned()).toBe(0);
     const data = (await admin((db) => getDoc(doc(db, 'users/alice')))).data()!;
-    expect(data).toMatchObject({ id: 'alice', name: 'Alice', lat: 50.4636, lng: 30.518 }); // the 0.0002 degree (~20 m) grid
+    expect(data).toMatchObject({ id: 'alice', name: 'Alice', lat: 50.46, lng: 30.52 });
     expect(data.geohash).toMatch(/^u8vx/);
     expect(data).not.toHaveProperty('email');
     expect(data).not.toHaveProperty('birthDate');
@@ -97,17 +99,17 @@ describe('profiles', () => {
     expect(await svc.getPrivateProfile('alice')).toEqual({ email: 'alice@example.com', birthDate: '1998-05-15' });
 
     as('bob');
-    expect(await svc.getPrivateProfile('alice')).toBeNull();
-    expect(warned()).toBeGreaterThan(0); // permission denied, handled
+    await expect(svc.getPrivateProfile('alice')).rejects.toThrow();
   });
 
   it('refuses the public profile to an unverified account', async () => {
     as('alice', false);
-    await svc.saveUserProfile({ id: 'alice', name: 'Alice' });
+    await expect(svc.saveUserProfile({ id: 'alice', name: 'Alice' })).rejects.toThrow();
     expect((await admin((db) => getDoc(doc(db, 'users/alice')))).exists()).toBe(false);
   });
 
-  it('syncs gamification, favorites and friends as owner-only data, and deletes everything with the account', async () => {
+  // Deleting all of it is the server's job now: tests/rules/account-deletion.test.ts
+  it('syncs gamification, favorites and friends as owner-only data', async () => {
     as('alice');
     await svc.syncGamification('alice', { xp: 120, level: 2, totalMeetups: 1, achievements: ['first_checkin'], checkIns: [] });
     await svc.saveFavoriteVenue('alice', { id: 'v1', name: 'Squat 17b', area: 'Київ', category: 'craft', lat: 50.4, lng: 30.5 });
@@ -116,15 +118,6 @@ describe('profiles', () => {
     expect(warned()).toBe(0);
     expect((await svc.getUserGamification('alice'))?.xp).toBe(120);
     expect(await svc.getUserFavorites('alice')).toHaveLength(1);
-
-    await svc.deleteAccountData('alice');
-    const left = await admin(async (db) => ({
-      user: (await getDoc(doc(db, 'users/alice'))).exists(),
-      favs: (await getDocs(collection(db, 'users/alice/favorites'))).size,
-      friends: (await getDocs(collection(db, 'users/alice/friends'))).size,
-      priv: (await getDocs(collection(db, 'users/alice/private'))).size,
-    }));
-    expect(left).toEqual({ user: false, favs: 0, friends: 0, priv: 0 });
   });
 });
 
@@ -148,11 +141,11 @@ describe('hangouts', () => {
     expect(data.joinedUsers).toEqual(['alice', 'bob', 'carol']);
 
     as('dave');
-    await svc.joinLiveHangout('h1', 'dave'); // full (2 free seats, both taken)
+    await expect(svc.joinLiveHangout('h1', 'dave')).rejects.toThrow();
     expect((await admin((db) => getDoc(doc(db, 'hangouts/h1')))).data()!.participantsCount).toBe(3);
 
     as('bob');
-    await svc.closeLiveHangout('h1'); // not the owner
+    await expect(svc.closeLiveHangout('h1')).rejects.toThrow();
     expect((await admin((db) => getDoc(doc(db, 'hangouts/h1')))).exists()).toBe(true);
     as('alice');
     await svc.closeLiveHangout('h1');
@@ -196,9 +189,9 @@ describe('meetups', () => {
     await svc.saveMeetup(m);
 
     as('bob');
-    await svc.saveMeetup({ ...m, title: 'Hacked' });
+    await expect(svc.saveMeetup({ ...m, title: 'Hacked' })).rejects.toThrow();
     expect((await admin((db) => getDoc(doc(db, `group_meetups/${m.id}`)))).data()!.title).toBe('Настілки');
-    await svc.setMeetupParticipation(m.id, 'bob', { userId: 'bob', userName: 'Bob', userAvatar: '', role: 'host', status: 'going' });
+    await expect(svc.setMeetupParticipation(m.id, 'bob', { userId: 'bob', userName: 'Bob', userAvatar: '', role: 'host', status: 'going' })).rejects.toThrow();
     expect((await admin((db) => getDoc(doc(db, `group_meetups/${m.id}`)))).data()!.participants.bob).toBeUndefined();
   });
 
@@ -296,7 +289,7 @@ describe('chats', () => {
     as('carol');
     // a member's group object has no createdBy rights: only the preview is written
     expect((await svc.sendEncryptedMessage({ ...group, memberIds: ['alice', 'bob', 'carol'] }, message('g2', 'carol', chatId, 'Я тут'), me('carol'))).success).toBe(true);
-    await svc.addGroupMembers(chatId, [{ id: 'mallory', name: 'mallory', avatar: '' }]);
+    await expect(svc.addGroupMembers(chatId, [{ id: 'mallory', name: 'mallory', avatar: '' }])).rejects.toThrow();
     chat = (await admin((db) => getDoc(doc(db, `chats/${chatId}`)))).data()!;
     expect(chat.members).not.toContain('mallory');
     expect(chat.lastSenderId).toBe('carol');
@@ -305,7 +298,7 @@ describe('chats', () => {
 
 describe('abuse reports (thunk)', () => {
   it('files a report that the rules accept, even without a target avatar, and nobody can read it back', async () => {
-    const store = configureStore({ reducer: combineReducers({ auth, safety, notifications, settings, ui }) });
+    const store = configureStore({ reducer: combineReducers({ location, outbox, auth, safety, notifications, settings, ui }) });
     store.dispatch(loggedIn(createUser({ id: 'alice', email: 'alice@example.com', emailVerified: true })));
     as('alice');
 

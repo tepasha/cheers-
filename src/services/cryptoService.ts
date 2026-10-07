@@ -18,7 +18,7 @@ import { gcm } from '@noble/ciphers/aes.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { getRandomBytes } from 'expo-crypto';
+import { secureRandomBytes } from '../utils/secureRandom';
 import { ph } from './i18nService';
 
 const APP_SECRET_SALT = 'budmo_kyiv_e2ee_2026_salt_v1';
@@ -75,7 +75,7 @@ export const cryptoService = {
   async encryptMessage(plaintext: string, chatId: string): Promise<string> {
     if (!plaintext) return '';
     const key = deriveChatKey(chatId);
-    const iv = getRandomBytes(12);
+    const iv = secureRandomBytes(12);
     const encrypted = gcm(key, iv).encrypt(encoder.encode(plaintext));
     return `enc:${CURRENT_VERSION}:${bytesToBase64(iv)}:${bytesToBase64(encrypted)}`;
   },

@@ -6,7 +6,7 @@
  * rebuilt from Firestore.
  */
 import { gcm } from '@noble/ciphers/aes.js';
-import { getRandomBytes } from 'expo-crypto';
+import { secureRandomBytes } from '../utils/secureRandom';
 
 export interface KeyVault {
   get(): Promise<string | null>;
@@ -38,7 +38,7 @@ const fromBase64 = (b64: string) => {
   return bytes;
 };
 
-export function createEncryptedStorage(inner: StringStorage, vault: KeyVault, random: (n: number) => Uint8Array = getRandomBytes): StringStorage {
+export function createEncryptedStorage(inner: StringStorage, vault: KeyVault, random: (n: number) => Uint8Array = secureRandomBytes): StringStorage {
   let keyPromise: Promise<Uint8Array> | null = null;
 
   // One key per install, created on first use. Cached so concurrent writes share a single creation.
@@ -49,7 +49,7 @@ export function createEncryptedStorage(inner: StringStorage, vault: KeyVault, ra
       const fresh = random(32);
       await vault.set(toBase64(fresh));
       return fresh;
-    })());
+    })().catch((error) => { keyPromise = null; throw error; }));
 
   return {
     async getItem(name) {
@@ -58,8 +58,10 @@ export function createEncryptedStorage(inner: StringStorage, vault: KeyVault, ra
 
       const [version, ivB64, dataB64] = raw.split(':');
       if (version !== VERSION || !ivB64 || !dataB64) return null; // legacy/plaintext or corrupt: start clean
+      // An unavailable OS vault is not evidence of corrupt ciphertext. Preserve the cache and allow a retry.
+      const key = await getKey();
       try {
-        const plain = gcm(await getKey(), fromBase64(ivB64)).decrypt(fromBase64(dataB64));
+        const plain = gcm(key, fromBase64(ivB64)).decrypt(fromBase64(dataB64));
         return decoder.decode(plain);
       } catch {
         // Wrong key (restored backup / new device) or tampering: drop the cache rather than crash

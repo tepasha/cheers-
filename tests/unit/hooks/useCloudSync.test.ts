@@ -1,3 +1,4 @@
+import outbox from '@/store/slices/outboxSlice';
 /**
  * Nothing may be read from, or published to, other people's data until the age is confirmed.
  * These tests mount the REAL hooks (useFirestoreStreams, usePresence, useProfileSync) on a real store and watch what
@@ -21,12 +22,12 @@ vi.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: {},
   NotificationFeedbackType: {},
 }));
-vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn() }));
+vi.mock('@/services/systemNotifications', () => ({ stopSystemPush: vi.fn().mockResolvedValue(undefined), registerForPush: vi.fn() }));
 vi.mock('@/services/firebase', () => ({ db: {}, auth: {}, firebaseApp: {} }));
 vi.mock('firebase/firestore', () => ({ doc: vi.fn(() => ({})), setDoc: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/services/cryptoService', () => ({ cryptoService: { decryptMessage: vi.fn(async (p: string) => p) } }));
 vi.mock('@/services/authService', () => ({
-  authService: { logout: vi.fn().mockResolvedValue(undefined), removeAccountAfterAgeRejection: vi.fn().mockResolvedValue(undefined) },
+  authService: { completeOnboarding: vi.fn().mockResolvedValue(undefined), logout: vi.fn().mockResolvedValue(undefined), removeAccountAfterAgeRejection: vi.fn().mockResolvedValue(undefined) },
 }));
 vi.mock('@/services/firestoreSyncService', () => ({
   firestoreSyncService: {
@@ -46,7 +47,7 @@ vi.mock('@/services/firestoreSyncService', () => ({
 
 import auth, { loggedIn, loggedOut, profileUpdated } from '@/store/slices/authSlice';
 import settings from '@/store/slices/settingsSlice';
-import location from '@/store/slices/locationSlice';
+import location, { locationUpdated } from '@/store/slices/locationSlice';
 import buddies from '@/store/slices/buddiesSlice';
 import hangouts from '@/store/slices/hangoutsSlice';
 import chats from '@/store/slices/chatsSlice';
@@ -64,7 +65,7 @@ import { useFirestoreStreams, usePresence, useProfileSync } from '@/hooks/useClo
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const rootReducer = combineReducers({ auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
+const rootReducer = combineReducers({ outbox, auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
 const makeStore = () => configureStore({ reducer: rootReducer });
 type TestStore = ReturnType<typeof makeStore>;
 
@@ -237,6 +238,17 @@ describe('the Google sign-in flow end to end', () => {
 });
 
 describe('leaving', () => {
+  it('removes shared coordinates when GPS permission becomes unavailable', async () => {
+    const store = makeStore();
+    signInWithGoogle(store, { birthDate: bornYearsAgo(30) });
+    store.dispatch({ type: 'settings/locationSharingSet', payload: true });
+    store.dispatch(locationUpdated({ ...store.getState().location.current, isSimulated: false, status: 'active' }));
+    mount(store); await flush(2000);
+    expect(cloud.saveUserProfile).toHaveBeenLastCalledWith(expect.objectContaining({ shareLocation: true }));
+    act(() => { store.dispatch(locationUpdated({ ...store.getState().location.current, status: 'error' })); });
+    await flush(2000);
+    expect(cloud.saveUserProfile).toHaveBeenLastCalledWith(expect.objectContaining({ shareLocation: false, lat: undefined, lng: undefined }));
+  });
   it('signing out stops the listeners and any further publishing', async () => {
     const store = makeStore();
     signInWithGoogle(store, { birthDate: bornYearsAgo(30) });

@@ -4,6 +4,7 @@ import { favoriteRemoved, favoriteSaved, favoritesReplaced } from '../slices/fav
 import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { analyticsService } from '../../services/analyticsService';
 import { sounds } from '../../services/soundService';
+import { queueSync } from './outbox';
 
 export const saveFavoriteVenue =
   (venue: FavoriteVenueItem): AppThunk =>
@@ -12,7 +13,7 @@ export const saveFavoriteVenue =
     dispatch(favoriteSaved(toSave));
     sounds.playPop();
     analyticsService.trackVenueFavorite(venue.id, venue.name, true);
-    void firestoreSyncService.saveFavoriteVenue(getState().auth.user.id, toSave);
+    dispatch(queueSync('saveFavoriteVenue', `favorite:${venue.id}`, [getState().auth.user.id, toSave]));
   };
 
 export const removeFavoriteVenue =
@@ -22,7 +23,7 @@ export const removeFavoriteVenue =
     dispatch(favoriteRemoved(venueId));
     sounds.playTap();
     if (venue) analyticsService.trackVenueFavorite(venue.id, venue.name, false);
-    void firestoreSyncService.removeFavoriteVenue(getState().auth.user.id, venueId);
+    dispatch(queueSync('removeFavoriteVenue', `favorite:${venueId}`, [getState().auth.user.id, venueId]));
   };
 
 /** Pulls the signed-in user's favorites from Firestore and merges them with the local list */
@@ -31,10 +32,13 @@ export const restoreFavoritesFromCloud =
   async (dispatch, getState) => {
     const state = getState();
     if (!state.auth.user.isLoggedIn) return;
+    const current = captureSession(getState);
     const cloud = await firestoreSyncService.getUserFavorites(state.auth.user.id);
+    if (!current()) return;
     if (cloud.length === 0) return;
 
-    const merged = new Map(state.favorites.items.map((v) => [v.id, v]));
+    const merged = new Map(getState().favorites.items.map((v) => [v.id, v]));
     cloud.forEach((v) => merged.set(v.id, v));
     dispatch(favoritesReplaced(Array.from(merged.values())));
   };
+import { captureSession } from '../sessionGuard';

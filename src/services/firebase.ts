@@ -1,7 +1,8 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { initializeAuth, getAuth, getReactNativePersistence, type Auth } from 'firebase/auth';
 import { initializeFirestore, getFirestore, doc, getDocFromServer, type Firestore } from 'firebase/firestore';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getFunctions } from 'firebase/functions';
+import { encryptedAsyncStorage } from '../store/keystore';
 import Constants from 'expo-constants';
 
 /**
@@ -20,7 +21,11 @@ interface FirebaseExtra {
 }
 const extra = (Constants.expoConfig?.extra?.firebase ?? {}) as FirebaseExtra;
 
-const missing = (['apiKey', 'projectId', 'appId'] as const).filter((k) => !extra[k]);
+// The database id is required too: firestore.rules and the Cloud Functions live in the named database (firebase.json),
+// so falling back to '(default)' would send every read and write to a database whose rules this repo never deploys
+// (or that does not exist), and the chat/push triggers would never fire. Release builds cannot get here without it
+// (release-check --env in CI and app.config.ts on the EAS worker refuse); for a local .env, demo mode says what is missing.
+const missing = (['apiKey', 'projectId', 'appId', 'firestoreDatabaseId'] as const).filter((k) => !extra[k]);
 
 /**
  * False when the environment holds no Firebase config (a fresh checkout, a web preview without secrets). The app then
@@ -45,7 +50,8 @@ export const firebaseConfig = firebaseConfigured
     }
   : DEMO_CONFIG;
 
-const firestoreDatabaseId = extra.firestoreDatabaseId || '(default)';
+// '(default)' only in demo mode, where no request is ever made: the SDK objects just need some database id
+const firestoreDatabaseId = firebaseConfigured ? (extra.firestoreDatabaseId as string) : '(default)';
 
 export const firebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
@@ -63,11 +69,14 @@ export const db = firestoreInstance;
 
 let authInstance: Auth;
 try {
-  authInstance = initializeAuth(firebaseApp, { persistence: getReactNativePersistence(AsyncStorage) });
+  authInstance = initializeAuth(firebaseApp, { persistence: getReactNativePersistence(encryptedAsyncStorage) });
 } catch {
   authInstance = getAuth(firebaseApp);
 }
 export const auth = authInstance;
+
+/** Callable Cloud Functions (functions/src/index.ts), deployed in the default region */
+export const functions = getFunctions(firebaseApp);
 
 /** Resolves true when the Firestore backend answers, false when the client is offline */
 export async function testFirestoreConnection(): Promise<boolean> {

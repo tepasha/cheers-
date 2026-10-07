@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { dialogs as Alert } from '../services/dialogs';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, radius, spacing, typography } from '../theme';
 import { Avatar, Badge, Button, Card, Chip, Field, Icon, IconButton, Row, SectionTitle, Sheet } from '../components/ui';
@@ -31,17 +33,19 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
   const chat = useAppSelector(selectChat);
   const buddies = useAppSelector(selectBuddies);
   const myId = useAppSelector((s) => s.auth.user.id);
+  const blockedUsers = useAppSelector((s) => s.safety.blockedUsers);
+  const blockedIds = useMemo(() => new Set(blockedUsers.map((u) => u.userId)), [blockedUsers]);
 
   useChatSync(chatId);
   usePushOptIn();
 
   // Tell the inbox which chat is on screen so its incoming messages do not raise an unread badge
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     dispatch(chatOpened(chatId));
     return () => {
       dispatch(chatOpened(null));
     };
-  }, [dispatch, chatId]);
+  }, [dispatch, chatId]));
 
   const [draft, setDraft] = useState('');
   const [sheet, setSheet] = useState<null | 'menu' | 'proposal' | 'security' | 'group'>(null);
@@ -49,9 +53,9 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
 
   // Newest first: the list is inverted so the conversation sticks to the bottom
-  const data = useMemo(() => (chat ? [...chat.messages].reverse() : []), [chat]);
+  const data = useMemo(() => (chat ? [...chat.messages].filter((m) => !blockedIds.has(m.senderId)).reverse() : []), [chat, blockedIds]);
 
-  if (!chat) {
+  if (!chat || (!chat.isGroup && blockedIds.has(chat.buddy.id))) {
     return (
       <SafeAreaView style={styles.screen}>
         <View style={styles.center}>
@@ -107,6 +111,7 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <FlatList
           inverted
+          keyboardShouldPersistTaps="handled"
           data={data}
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ padding: spacing.md, gap: spacing.sm }}
@@ -118,7 +123,7 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
               onProposal={(status) => dispatch(respondToProposal(chatId, item.id, status))}
             />
           )}
-          ListEmptyComponent={<Text style={[typography.small, { textAlign: 'center', transform: [{ scaleY: -1 }] }]}>{tr('Почніть розмову 🍻')}</Text>}
+          ListEmptyComponent={<Text style={[typography.small, { textAlign: 'center' }]}>{tr('Почніть розмову 🍻')}</Text>}
         />
 
         <View style={styles.composer}>
@@ -159,6 +164,15 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
 
       <Sheet visible={sheet === 'menu'} onClose={() => setSheet(null)} title={tr('Дії з чатом')}>
         <View style={{ gap: spacing.sm }}>
+          {chat.isGroup && (
+            // App Store 1.2 / Google Play UGC: every chat needs a way to report and block, groups included
+            <Button
+              label={tr('Учасники: поскаржитись або заблокувати')}
+              icon="users"
+              variant="secondary"
+              onPress={() => setSheet('group')}
+            />
+          )}
           {interlocutor && (
             <>
               <Button
@@ -167,7 +181,7 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
                 variant="secondary"
                 onPress={() => {
                   setSheet(null);
-                  setReportTarget({ id: chat.buddy.id, name: chat.buddy.name, avatar: chat.buddy.avatar, type: 'chat' });
+                  setReportTarget({ id: chat.buddy.id, name: chat.buddy.name, avatar: chat.buddy.avatar, type: 'chat', contextId: chat.id });
                 }}
               />
               <Button
@@ -213,6 +227,17 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
         room={Math.max(0, MAX_GROUP_MEMBERS - (chat.memberIds?.length ?? (chat.participants?.length ?? 0) + 1))}
         // Only the creator may change membership (firestore.rules enforce it as well)
         candidates={chat.createdBy === myId ? buddies.filter((b) => !(chat.participants ?? []).some((p) => p.id === b.id)) : []}
+        blockedIds={blockedIds}
+        onReport={(p) => {
+          setSheet(null);
+          setReportTarget({ id: p.id, name: p.name, avatar: p.avatar, type: 'chat', contextId: chat.id });
+        }}
+        onBlock={(p) =>
+          Alert.alert(tr('Заблокувати {name}?', { name: p.name }), tr('Ця людина не зможе писати вам, бачити ваш профіль за посиланням чи запрошувати вас. Групу ви залишаєте спільну: щоб не бачити її, видаліть чат.'), [
+            { text: tr('Скасувати'), style: 'cancel' },
+            { text: tr('Заблокувати'), style: 'destructive', onPress: () => dispatch(blockUser(p.id, p.name, p.avatar)) },
+          ])
+        }
         onAdd={(ids) =>
           dispatch(
             addGroupParticipants(
@@ -256,7 +281,7 @@ const MessageBubble = React.memo(
     const meta = (
       <Text style={[styles.time, mine && { textAlign: 'right' }]}>
         {tr(message.timestamp)}
-        {message.hasPendingWrites ? ` • ${tr('надсилається')}` : ''}
+        {message.deliveryStatus === 'failed' ? ' • ' + tr('Не вдалося виконати дію. Спробуйте пізніше') : message.hasPendingWrites || (message.deliveryStatus && message.deliveryStatus !== 'sent') ? ` • ${tr('надсилається')}` : ''}
       </Text>
     );
 
@@ -394,6 +419,9 @@ const GroupSheet = ({
   participants,
   candidates,
   room,
+  blockedIds,
+  onReport,
+  onBlock,
   onAdd,
 }: {
   visible: boolean;
@@ -404,6 +432,10 @@ const GroupSheet = ({
   candidates: { id: string; name: string; avatar: string }[];
   /** How many more people the group can take (groups hold at most MAX_GROUP_MEMBERS) */
   room: number;
+  /** People this user has already blocked: no second block button for them */
+  blockedIds: ReadonlySet<string>;
+  onReport: (p: { id: string; name: string; avatar: string }) => void;
+  onBlock: (p: { id: string; name: string; avatar: string }) => void;
   onAdd: (ids: string[]) => void;
 }) => {
   const tr = useTr();
@@ -434,6 +466,12 @@ const GroupSheet = ({
             <Avatar uri={p.avatar} name={p.name} size={36} />
             <Text style={[typography.body, { flex: 1 }]}>{p.name}</Text>
             {p.role === 'admin' && <Badge label={tr('адмін')} />}
+            <IconButton icon="flag" label={tr('Поскаржитись на {name}', { name: p.name })} onPress={() => onReport(p)} />
+            {blockedIds.has(p.id) ? (
+              <Badge label={tr('заблоковано')} />
+            ) : (
+              <IconButton icon="slash" color={colors.red} label={tr('Заблокувати {name}', { name: p.name })} onPress={() => onBlock(p)} />
+            )}
           </Row>
         ))}
       </View>

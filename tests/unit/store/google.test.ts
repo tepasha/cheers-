@@ -1,3 +1,4 @@
+import outbox from '@/store/slices/outboxSlice';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
 
@@ -7,17 +8,18 @@ vi.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: {},
   NotificationFeedbackType: {},
 }));
-vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn() }));
+vi.mock('@/services/systemNotifications', () => ({ stopSystemPush: vi.fn().mockResolvedValue(undefined), registerForPush: vi.fn() }));
 vi.mock('@/services/firebase', () => ({ db: {}, auth: {}, firebaseApp: {} }));
 vi.mock('@/services/authService', () => ({
   authService: {
-    logout: vi.fn().mockResolvedValue(undefined),
+    completeOnboarding: vi.fn().mockResolvedValue(undefined), logout: vi.fn().mockResolvedValue(undefined),
     removeAccountAfterAgeRejection: vi.fn().mockResolvedValue(undefined),
   },
 }));
 vi.mock('@/services/firestoreSyncService', () => ({
   firestoreSyncService: {
     getPrivateProfile: vi.fn().mockResolvedValue(null),
+    getUserProfile: vi.fn().mockResolvedValue(null),
     savePrivateProfile: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -40,7 +42,7 @@ import { firestoreSyncService } from '@/services/firestoreSyncService';
 import { handleFirebaseUser, submitBirthDate } from '@/store/thunks/auth';
 import type { RootState } from '@/store/index';
 
-const rootReducer = combineReducers({ auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
+const rootReducer = combineReducers({ outbox, auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
 const makeStore = () => configureStore({ reducer: rootReducer });
 type TestStore = ReturnType<typeof makeStore>;
 const st = (s: TestStore) => s.getState() as unknown as RootState;
@@ -132,7 +134,8 @@ describe('the minimum age (21)', () => {
     run(s, handleFirebaseUser(googleUser()));
     const iso = bornYearsAgo(21);
     expect(await run<Promise<string>>(s, submitBirthDate(iso))).toBe('ok');
-    expect(firestoreSyncService.savePrivateProfile).toHaveBeenCalledWith('g1', { email: 'g1@gmail.com', birthDate: iso });
+    expect(authService.completeOnboarding).toHaveBeenCalledWith(iso);
+    expect(firestoreSyncService.savePrivateProfile).toHaveBeenCalledWith('g1', { email: 'g1@gmail.com' });
     expect(st(s).auth.user.birthDate).toBe(iso);
     expect(st(s).auth.user.age).toBe(21);
     expect(reject).not.toHaveBeenCalled();
@@ -143,5 +146,25 @@ describe('the minimum age (21)', () => {
     s.dispatch(authNoticeSet('underage'));
     s.dispatch(authNoticeSet(null));
     expect(st(s).ui.authNotice).toBeNull();
+  });
+});
+
+describe('Sign in with Apple: the account', () => {
+  const appleUser = (uid = 'a1') =>
+    ({ uid, email: 'x@privaterelay.appleid.com', displayName: null, photoURL: null, emailVerified: true, providerData: [{ providerId: 'apple.com' }] }) as never;
+
+  it('is mirrored as an Apple account and, like Google, has to give a birth date first', async () => {
+    profile.mockResolvedValue(null);
+    const s = makeStore();
+    run(s, handleFirebaseUser(appleUser()));
+    expect(st(s).auth.user).toMatchObject({ id: 'a1', provider: 'apple', emailVerified: true, isLoggedIn: true, avatar: '' });
+    await vi.waitFor(() => expect(st(s).auth.birthDateChecked).toBe(true));
+    expect(st(s).auth.user.birthDate).toBeUndefined();
+  });
+
+  it('an account that also has a password counts as an email account (it confirms deletion with the password)', () => {
+    const s = makeStore();
+    run(s, handleFirebaseUser({ ...(appleUser() as object), providerData: [{ providerId: 'apple.com' }, { providerId: 'password' }] } as never));
+    expect(st(s).auth.user.provider).toBe('email');
   });
 });

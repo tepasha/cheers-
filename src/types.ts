@@ -9,12 +9,14 @@ export type DrinkType =
   | 'non_alcoholic';
 
 export type PaymentEtiquette = 
+  | 'not_specified'
   | 'split_50_50' 
   | 'each_for_themselves' 
   | 'i_treat' 
   | 'rounds';
 
 export type MoodType = 
+  | 'not_specified'
   | 'chill_talk' 
   | 'coding_it' 
   | 'board_games' 
@@ -85,6 +87,8 @@ export interface Message {
   cipherPayload?: string;
   isFromCache?: boolean;
   hasPendingWrites?: boolean;
+  createdAt?: number;
+  deliveryStatus?: 'queued' | 'sending' | 'sent' | 'failed';
   proposalData?: {
     barName: string;
     address: string;
@@ -112,6 +116,8 @@ export interface ChatThread {
   memberIds?: string[];
   /** Cloud `updatedAt` last applied to the preview, to detect new activity */
   updatedAt?: string;
+  lastMessageId?: string;
+  lastReadMessageId?: string;
 }
 
 export interface HangoutAlert {
@@ -208,7 +214,7 @@ export interface AuthUser {
   name: string;
   email: string;
   avatar: string;
-  provider: 'google' | 'email' | 'guest';
+  provider: 'google' | 'apple' | 'email' | 'guest';
   googleId?: string;
   isLoggedIn: boolean;
   accessToken?: string;
@@ -218,6 +224,13 @@ export interface AuthUser {
   lastActiveAt?: number;
   birthDate?: string;
   age?: number;
+  serverEligible?: boolean;
+  termsVersion?: string;
+  tagline?: string;
+  bio?: string;
+  preferredDrinks?: DrinkType[];
+  currentMood?: MoodType;
+  paymentRule?: PaymentEtiquette;
 }
 
 export interface FavoriteVenueItem {
@@ -327,6 +340,7 @@ export interface UserReport {
   reporterName?: string;
   targetId: string;
   targetType: ReportTargetType;
+  contextId?: string;
   targetName: string;
   targetAvatar?: string;
   category: ReportCategory;

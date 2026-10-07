@@ -25,6 +25,8 @@ import meetups from './slices/meetupsSlice';
 import safety from './slices/safetySlice';
 import favorites from './slices/favoritesSlice';
 import ui from './slices/uiSlice';
+import outbox from './slices/outboxSlice';
+import { normalizePersistedState } from './persistMigration';
 
 export const rootReducer = combineReducers({
   auth,
@@ -40,6 +42,7 @@ export const rootReducer = combineReducers({
   safety,
   favorites,
   ui,
+  outbox,
 });
 
 /**
@@ -57,12 +60,13 @@ const PERSISTED_SLICES: Array<keyof ReturnType<typeof rootReducer>> = [
   'meetups',
   'safety',
   'favorites',
+  'outbox',
 ];
 
 export function createAppStore(storage: StringStorage = encryptedAsyncStorage) {
   const persistedReducer = persistReducer(
     // throttle: batch rapid actions (typing bursts, GPS ticks) into one AsyncStorage write per second
-    { key: 'budmo-root', version: 1, storage, throttle: 1000, whitelist: PERSISTED_SLICES as string[] },
+    { key: 'budmo-root', version: 2, storage, throttle: 1000, whitelist: PERSISTED_SLICES as string[], migrate: async (state) => normalizePersistedState(state) },
     rootReducer
   );
 

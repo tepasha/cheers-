@@ -21,6 +21,20 @@ import { openChatFromPush, registerPush } from '../store/thunks/push';
 import { chatOpenRequested } from '../store/slices/uiSlice';
 import { navigationRef } from '../navigation/ref';
 import { configureNotifications, onPushTokenChanged, subscribeToNotificationTaps } from '../services/systemNotifications';
+import { flushOutbox } from '../store/thunks/outbox';
+
+export function useOutbox() {
+  const dispatch = useAppDispatch();
+  const allowed = useAppSelector(selectCanUseApp);
+  const online = useAppSelector((s) => s.ui.isOnline);
+  const uid = useAppSelector((s) => s.auth.user.id);
+  useEffect(() => {
+    if (!allowed || !online) return;
+    void dispatch(flushOutbox());
+    const timer = setInterval(() => void dispatch(flushOutbox()), 5000);
+    return () => clearInterval(timer);
+  }, [dispatch, allowed, online, uid]);
+}
 
 const SESSION_CHECK_MS = 60_000;
 const EXPIRY_PRUNE_MS = 60_000;
@@ -95,17 +109,31 @@ export function useLocationTracking() {
   const store = useStore<RootState>();
   const isSimulated = useAppSelector((s) => s.location.current.isSimulated);
   const batterySaver = useAppSelector((s) => s.settings.batterySaver);
+  const allowed = useAppSelector(selectCanUseApp);
+  const userId = useAppSelector((s) => s.auth.user.id);
 
   useEffect(() => {
-    if (isSimulated) return;
+    if (isSimulated || !allowed) return;
 
     let cancelled = false;
     let subscription: Location.LocationSubscription | null = null;
     const config = getBatterySaverConfig(batterySaver);
 
-    (async () => {
+    const checkPermission = async () => {
       const permission = await Location.getForegroundPermissionsAsync();
-      if (!permission.granted || cancelled) return;
+      if (cancelled || store.getState().auth.user.id !== userId) return false;
+      if (!permission.granted) {
+        subscription?.remove(); subscription = null;
+        dispatch(locationUpdated({ ...store.getState().location.current, status: 'error' }));
+      }
+      return permission.granted;
+    };
+    let starting = false;
+    const startTracking = async () => {
+      if (starting) return;
+      starting = true;
+      try {
+      if (!await checkPermission() || cancelled || subscription) return;
 
       const sub = await Location.watchPositionAsync(
         {
@@ -114,10 +142,11 @@ export function useLocationTracking() {
           distanceInterval: 30,
         },
         (position) => {
+          if (cancelled || !selectCanUseApp(store.getState()) || store.getState().auth.user.id !== userId) return;
           const next = toUserGeoLocation(position.coords);
           const prev = store.getState().location.current;
           // Ignore jitter so idle GPS noise does not re-render every screen
-          if (Math.abs(next.lat - prev.lat) > MIN_MOVE_DEGREES || Math.abs(next.lng - prev.lng) > MIN_MOVE_DEGREES) {
+          if (prev.status !== 'active' || Math.abs(next.lat - prev.lat) > MIN_MOVE_DEGREES || Math.abs(next.lng - prev.lng) > MIN_MOVE_DEGREES) {
             dispatch(locationUpdated(next));
           }
         }
@@ -125,13 +154,22 @@ export function useLocationTracking() {
 
       if (cancelled) sub.remove();
       else subscription = sub;
-    })().catch((err) => console.warn('Location tracking failed:', err));
+      } catch (err) {
+        if (!cancelled && store.getState().auth.user.id === userId) dispatch(locationUpdated({ ...store.getState().location.current, status: 'error' }));
+        console.warn('Location tracking failed:', err);
+      } finally { starting = false; }
+    };
+    const foreground = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void startTracking();
+    });
+    void startTracking();
 
     return () => {
       cancelled = true;
+      foreground.remove();
       subscription?.remove();
     };
-  }, [dispatch, store, isSimulated, batterySaver]);
+  }, [dispatch, store, isSimulated, batterySaver, allowed, userId]);
 }
 
 /** Re-detects the UI language from the position until the user picks one manually */
@@ -165,7 +203,10 @@ export function usePushRegistration() {
   useEffect(() => {
     if (!allowed || !enabled) return;
     void dispatch(registerPush({ ask: false }));
-    return onPushTokenChanged(() => void dispatch(registerPush({ ask: false })));
+    const stop = onPushTokenChanged(() => void dispatch(registerPush({ ask: false })));
+    const timer = setInterval(() => AppState.currentState === 'active' && void dispatch(registerPush({ ask: false })), 10 * 60 * 1000);
+    const sub = AppState.addEventListener('change', (state) => state === 'active' && void dispatch(registerPush({ ask: false })));
+    return () => { stop(); clearInterval(timer); sub.remove(); };
   }, [dispatch, allowed, enabled, language, userId]);
 }
 
@@ -184,16 +225,22 @@ export function usePendingChatOpen(navReady: boolean) {
   const pending = useAppSelector((s) => s.ui.pendingChatId);
   const inApp = useAppSelector((s) => s.ui.authReady && selectCanUseApp(s));
   const known = useAppSelector((s) => (s.ui.pendingChatId ? s.chats.threads.some((t) => t.id === s.ui.pendingChatId) : false));
+  const inboxReady = useAppSelector((s) => s.ui.inboxReady);
+  const blocked = useAppSelector((s) => {
+    const thread = s.chats.threads.find((t) => t.id === s.ui.pendingChatId);
+    return thread && !thread.isGroup && s.safety.blockedUsers.some((b) => b.userId === thread.buddy.id);
+  });
 
   useEffect(() => {
-    if (!pending || !inApp || !navReady || !navigationRef.isReady()) return;
+    if (!pending || !inApp || !navReady || !inboxReady || !navigationRef.isReady()) return;
     dispatch(chatOpenRequested(null));
-    if (known) navigationRef.navigate('ChatRoom', { chatId: pending });
+    if (known && !blocked) navigationRef.navigate('ChatRoom', { chatId: pending });
     else navigationRef.navigate('Tabs', { screen: 'Chats' });
-  }, [dispatch, pending, inApp, navReady, known]);
+  }, [dispatch, pending, inApp, navReady, known, inboxReady, blocked]);
 }
 
 export function useAppLifecycle() {
+  useOutbox();
   useAuthSync();
   usePushRegistration();
   usePushTaps();

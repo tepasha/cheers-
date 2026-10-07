@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 
-vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(randomBytes(n)) }));
+vi.mock('expo-crypto', () => ({ getRandomValues: (buffer: Uint8Array) => { buffer.set(randomBytes(buffer.length)); return buffer; } }));
 
 import { createEncryptedStorage, createSplitStorage, type KeyVault, type StringStorage } from '@/store/secureStorage';
 

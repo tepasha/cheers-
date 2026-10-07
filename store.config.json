@@ -36,7 +36,7 @@
       "demoRequired": true,
       "demoUsername": "REPLACE_ME",
       "demoPassword": "REPLACE_ME",
-      "notes": "Sign-in needs a verified email, so the demo account above is already verified. Every user must be 21+ (date of birth is asked at sign-up, including after Google sign-in; younger people are turned away and their account is removed). User-generated content safeguards: every profile and chat has a Report action (menu in the chat, report sheet on profiles), users can block others (Profile → Blocked users, enforced by server-side security rules), reports are stored for moderators, and accounts can be deleted in Profile (requires the password). Location is used only while the app is open, to show people and venues nearby. Terms of use and Privacy policy are linked on the sign-up screen and in Profile."
+      "notes": "The demo account must have verified email and server-completed onboarding (21+, terms accepted). Age is self-reported and validated on the server. Email/password, Google and iOS Apple sign-in are available. Nearby visibility is off by default and requires GPS plus explicit opt-in; shared coordinates are rounded to an approximate area. Reporting and blocking are available from profiles and chats. Messages are encrypted in storage, without an E2EE claim. Account deletion in Profile requires recent password, Google or Apple authentication. SOS provides help options and does not automatically contact emergency services."
     },
     "info": {
       "uk": {
@@ -54,7 +54,7 @@
           "чат"
         ],
         "releaseNotes": "Перший випуск.",
-        "supportUrl": "https://t.me/cheers_support_bot",
+        "supportUrl": "REPLACE_ME",
         "privacyPolicyUrl": "REPLACE_ME"
       },
       "en-US": {
@@ -72,7 +72,7 @@
           "social"
         ],
         "releaseNotes": "First release.",
-        "supportUrl": "https://t.me/cheers_support_bot",
+        "supportUrl": "REPLACE_ME",
         "privacyPolicyUrl": "REPLACE_ME"
       },
       "pl": {
@@ -89,7 +89,7 @@
           "czat"
         ],
         "releaseNotes": "Pierwsze wydanie.",
-        "supportUrl": "https://t.me/cheers_support_bot",
+        "supportUrl": "REPLACE_ME",
         "privacyPolicyUrl": "REPLACE_ME"
       },
       "de-DE": {
@@ -106,7 +106,7 @@
           "Chat"
         ],
         "releaseNotes": "Erste Veröffentlichung.",
-        "supportUrl": "https://t.me/cheers_support_bot",
+        "supportUrl": "REPLACE_ME",
         "privacyPolicyUrl": "REPLACE_ME"
       }
     }

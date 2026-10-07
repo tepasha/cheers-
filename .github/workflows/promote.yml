@@ -2,9 +2,13 @@ name: 📣 Promote to production (stores)
 
 # Takes an already tested build out to real users. Always started by hand and held by the GitHub Environment
 # `store-release` (add required reviewers in Settings → Environments).
-#   Android  submits the chosen EAS build to the Google Play production track with a staged rollout
+#   Android  moves the chosen EAS build, which the tag release already put on the Google Play internal track, to
+#            production with a staged rollout. Run it again with the same build_id to raise the rollout
+#            (0.1 → 0.5) and with 1 to complete it. Nothing is uploaded again (see the step below).
 #   iOS      pushes the store listing (store.config.json). EAS cannot press "Submit for Review": do that in
 #            App Store Connect once the TestFlight build is verified.
+# Runs only from main or a release tag on main, after the full CI, and an Android build is promoted only if EAS
+# reports it as a production build made from a commit on main.
 on:
   workflow_dispatch:
     inputs:
@@ -21,7 +25,7 @@ on:
         required: false
         type: string
       rollout:
-        description: 'Android: частка користувачів на старті (0.01 – 1)'
+        description: 'Android: частка користувачів (0.1 → 0.5 → 1; 1 = 100%, завершити розгортання)'
         required: true
         default: '0.1'
         type: string
@@ -34,8 +38,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The scripts and the store listing used below come from the ref this run was started on, so it must be main or a
+  # release tag whose commit is on main (scripts/release-check.mjs --release-ref), like every production path.
+  gate:
+    name: 🚦 Only from main or a release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # the "is this commit on main" check needs main's history
+
+      - name: 🟢 Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🚦 main or a release tag on main
+        run: node scripts/release-check.mjs --release-ref
+
+  # The same CI as every release, on the ref whose scripts and listing this run uses
+  ci:
+    name: ✅ CI gate
+    needs: gate
+    uses: ./.github/workflows/ci-check.yml
+
   promote:
     name: 📣 Promote (${{ inputs.platform }})
+    needs: [gate, ci]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: store-release
@@ -46,6 +77,8 @@ jobs:
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # the promoted build's commit is checked against main's history
 
       - name: 🟢 Setup Node.js 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -64,43 +97,121 @@ jobs:
       - name: 🏷️ Project is linked to EAS
         run: node scripts/release-check.mjs --project
 
-      - name: 🤖 Submit to the Google Play production track
+      # The build being promoted had its EAS variables checked when it was made (build-*.yml, and app.config.ts on the
+      # build worker). Checked again because the production OTA hotfixes its users will get are built from this same
+      # environment. For iOS the store check (no REPLACE_ME, https legal pages) also runs here, against the legal URLs
+      # of the EAS production environment, i.e. the ones compiled into the app, not a separate copy that no build reads.
+      - name: 🔐 EAS production environment is complete
+        run: |
+          checks="--env --platform $PLATFORM"
+          if [ "$PLATFORM" = "ios" ]; then
+            checks="$checks --store"
+          fi
+          eas env:exec production "node scripts/release-check.mjs $checks" --non-interactive
+
+      # Google Play refuses a second upload of a version code it already has, and `eas submit` always uploads, so the
+      # build the tag release sent to the internal track cannot reach production through EAS Submit. Instead the
+      # existing versionCode is moved with the Play Developer API (scripts/play-promote.mjs: edits → tracks.update →
+      # commit): the first run copies the internal release to production at the given fraction, later runs with the
+      # same build_id raise it, and 1 completes it. The versionCode, the package and the build's kind come from EAS,
+      # so a preview APK or an unfinished build is refused before Play is touched.
+      - name: 🤖 Google Play internal → production (staged rollout)
         if: env.PLATFORM == 'android'
         env:
           GOOGLE_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_BASE64 }}
+          KEY_DIR: ${{ runner.temp }}/play
         run: |
           if [ -z "$BUILD_ID" ]; then
             echo "::error::build_id is required for Android: use the production build that passed internal testing (not 'latest', which could be a preview APK)"
             exit 1
           fi
-          if ! echo "$ROLLOUT" | grep -qE '^(0(\.[0-9]+)?|1(\.0+)?)$' || [ "$ROLLOUT" = "0" ]; then
-            echo "::error::rollout must be a fraction above 0 and at most 1"
+          if ! echo "$ROLLOUT" | grep -qE '^(0(\.[0-9]+)?|1(\.0+)?)$' || ! awk -v r="$ROLLOUT" 'BEGIN { exit !(r > 0) }'; then
+            echo "::error::rollout must be a fraction above 0 and at most 1 (0.1, 0.5, 1)"
             exit 1
           fi
-          if [ -n "$GOOGLE_SERVICE_ACCOUNT_BASE64" ]; then
-            echo "$GOOGLE_SERVICE_ACCOUNT_BASE64" | base64 --decode > google-service-account.json
+          if [ -z "$GOOGLE_SERVICE_ACCOUNT_BASE64" ]; then
+            echo "::error::The Play Developer API needs the secret GOOGLE_SERVICE_ACCOUNT_BASE64 (base64 -w0 of the Play service account JSON key). See DEPLOY.md, stage 0, step 4."
+            exit 1
           fi
-          jq --argjson r "$ROLLOUT" '.submit["production-release"].android.rollout = $r' eas.json > "$RUNNER_TEMP/eas.json"
-          mv "$RUNNER_TEMP/eas.json" eas.json
-          eas submit --platform android --profile production-release --id "$BUILD_ID" --non-interactive
+          mkdir -p "$KEY_DIR"
+          chmod 700 "$KEY_DIR"
+          if ! echo "$GOOGLE_SERVICE_ACCOUNT_BASE64" | base64 --decode > "$KEY_DIR/service-account.json" 2>/dev/null \
+             || ! jq -e '.type == "service_account" and (.client_email | type == "string") and (.private_key | type == "string")' \
+                  "$KEY_DIR/service-account.json" > /dev/null 2>&1; then
+            echo "::error::GOOGLE_SERVICE_ACCOUNT_BASE64 is not a base64-encoded service account JSON key (encode it with: base64 -w0 key.json)"
+            exit 1
+          fi
+          chmod 600 "$KEY_DIR/service-account.json"
 
+          eas build:view "$BUILD_ID" --json > "$RUNNER_TEMP/build.json"
+          if ! jq -e '.platform == "ANDROID" and .status == "FINISHED" and .distribution == "STORE" and .buildProfile == "production"' \
+               "$RUNNER_TEMP/build.json" > /dev/null; then
+            echo "::error::Build $BUILD_ID is not a finished Android production (store) build: $(jq -r '"\(.platform) \(.buildProfile) \(.distribution) \(.status)"' "$RUNNER_TEMP/build.json")"
+            exit 1
+          fi
+          VERSION_CODE="$(jq -r '.appBuildVersion // empty' "$RUNNER_TEMP/build.json")"
+          PACKAGE="$(jq -r '.appIdentifier // empty' "$RUNNER_TEMP/build.json")"
+          if ! echo "$VERSION_CODE" | grep -qE '^[0-9]+$' || [ -z "$PACKAGE" ]; then
+            echo "::error::EAS did not report the versionCode or the package of build $BUILD_ID"
+            exit 1
+          fi
+          # The build must come from a commit on main: release tags and manual production builds are only made from
+          # there (after CI), so a build from any other branch never reaches every user, whatever its profile says.
+          COMMIT="$(jq -r '.gitCommitHash // empty' "$RUNNER_TEMP/build.json")"
+          if [ -z "$COMMIT" ]; then
+            echo "::error::EAS reports no git commit for build $BUILD_ID, so it cannot be traced to a tested commit on main"
+            exit 1
+          fi
+          node scripts/release-check.mjs --on-main "$COMMIT"
+
+          node scripts/play-promote.mjs --package "$PACKAGE" --version-code "$VERSION_CODE" --rollout "$ROLLOUT" \
+            --key "$KEY_DIR/service-account.json"
+          {
+            echo "### 🤖 Google Play production"
+            echo "- $PACKAGE, versionCode $VERSION_CODE (збірка \`$BUILD_ID\`, коміт \`${COMMIT:0:12}\`): rollout $ROLLOUT"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ROLLOUT" = "1" ] || echo "$ROLLOUT" | grep -qE '^1\.0+$'; then
+            echo "::notice::versionCode $VERSION_CODE is rolled out to 100% of production."
+          else
+            echo "::notice::versionCode $VERSION_CODE is live for a fraction $ROLLOUT of production users. Run this workflow again with the same build_id and a larger rollout (1 = 100%) to widen it; halt it in Play Console if needed."
+          fi
+
+      # `eas metadata:push --non-interactive` authenticates only with an App Store Connect API key taken from
+      # EXPO_ASC_API_KEY_PATH / EXPO_ASC_KEY_ID / EXPO_ASC_ISSUER_ID, from the submit profile, or from the EAS
+      # credentials service; a decoded file nobody points at is ignored ('No App Store Connect API Key found').
+      # With the key from the environment it also needs the team id and team type, which it would otherwise prompt
+      # for. The team type only tells eas-cli whether the team is an Enterprise (in-house) one, which cannot publish
+      # to the App Store anyway. The key is decoded outside the workspace and removed in the last step.
       - name: 🍏 Push the App Store listing
         if: env.PLATFORM == 'ios'
         env:
           APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          # The legal pages are public URLs, not secrets: keep them as variables of the environment
-          PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
-          TERMS_URL: ${{ vars.TERMS_URL }}
+          EXPO_ASC_API_KEY_PATH: ${{ runner.temp }}/asc/AuthKey.p8
+          EXPO_ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          EXPO_APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          EXPO_APPLE_TEAM_TYPE: COMPANY_OR_ORGANIZATION
         run: |
-          if [ -n "$APP_STORE_CONNECT_API_KEY_BASE64" ]; then
-            mkdir -p private_keys
-            echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          missing=""
+          [ -n "$APP_STORE_CONNECT_API_KEY_BASE64" ] || missing="$missing secret APP_STORE_CONNECT_API_KEY_BASE64,"
+          [ -n "$EXPO_ASC_KEY_ID" ] || missing="$missing secret APP_STORE_CONNECT_KEY_ID,"
+          [ -n "$EXPO_ASC_ISSUER_ID" ] || missing="$missing secret APP_STORE_CONNECT_ISSUER_ID,"
+          [ -n "$EXPO_APPLE_TEAM_ID" ] || missing="$missing variable APPLE_TEAM_ID,"
+          if [ -n "$missing" ]; then
+            echo "::error::eas metadata:push needs the App Store Connect API key. Missing:${missing%,}. See DEPLOY.md, stage 0, step 3."
+            exit 1
           fi
-          node scripts/release-check.mjs --store
+          mkdir -p "$(dirname "$EXPO_ASC_API_KEY_PATH")"
+          chmod 700 "$(dirname "$EXPO_ASC_API_KEY_PATH")"
+          if ! echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$EXPO_ASC_API_KEY_PATH" 2>/dev/null \
+             || ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$EXPO_ASC_API_KEY_PATH"; then
+            echo "::error::APP_STORE_CONNECT_API_KEY_BASE64 is not a base64-encoded .p8 key (encode it with: base64 -w0 AuthKey_<id>.p8)"
+            exit 1
+          fi
+          chmod 600 "$EXPO_ASC_API_KEY_PATH"
           eas metadata:push --non-interactive
           echo "::notice::The listing is updated. Press 'Submit for Review' in App Store Connect after checking the TestFlight build."
 
       - name: 🧹 Remove store keys
         if: always()
-        run: rm -rf google-service-account.json private_keys
+        run: rm -rf "$RUNNER_TEMP/play" "$RUNNER_TEMP/asc"

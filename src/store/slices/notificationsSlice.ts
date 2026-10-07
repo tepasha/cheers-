@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { personalDataReset } from '../actions';
+import { personalDataReset, identityRedacted } from '../actions';
 import { PushNotificationItem } from '../../types';
 
 const MAX_STORED = 30;
@@ -26,6 +26,7 @@ const notificationsSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, () => ({ items: [] as PushNotificationItem[] }));
+    builder.addCase(identityRedacted, (state, { payload: uid }) => { state.items = state.items.filter((item) => item.buddyId !== uid); });
   },
 });
 

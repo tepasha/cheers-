@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { personalDataReset } from '../actions';
+import { personalDataReset, identityRedacted } from '../actions';
 import { BuddyProfile, ChatParticipant, ChatThread, Message } from '../../types';
 
 interface ChatsState {
@@ -18,6 +18,7 @@ export const MAX_MESSAGES_PER_THREAD = 100;
 const trim = (messages: Message[]) => {
   if (messages.length > MAX_MESSAGES_PER_THREAD) messages.splice(0, messages.length - MAX_MESSAGES_PER_THREAD);
 };
+const sortMessages = (messages: Message[]) => messages.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || (a.createdAt !== undefined && b.createdAt !== undefined ? a.id.localeCompare(b.id) : 0));
 
 /**
  * Messages are immutable, so answering a proposal is its own message (`proposal_response`). Replaying the
@@ -45,6 +46,10 @@ const chatsSlice = createSlice({
   name: 'chats',
   initialState,
   reducers: {
+    messageDeliveryChanged(state, action: PayloadAction<{ chatId: string; id: string; status: Message['deliveryStatus'] }>) {
+      const message = state.threads.find((t) => t.id === action.payload.chatId)?.messages.find((m) => m.id === action.payload.id);
+      if (message) message.deliveryStatus = action.payload.status;
+    },
     /** Creates a 1:1 thread with the buddy unless one already exists; re-opening un-hides it */
     directChatEnsured(
       state,
@@ -101,8 +106,9 @@ const chatsSlice = createSlice({
         // A thread never matched against the cloud before (fresh install, or it was created locally) has no
         // `updatedAt` yet. Its cloud preview then only counts as news if it differs from what this device already
         // holds; otherwise every already-read chat would light up as unread after each reinstall.
-        const hasNews = existing.updatedAt ? thread.updatedAt !== existing.updatedAt : thread.lastMessage !== existing.lastMessage;
+        const hasNews = thread.lastMessageId ? thread.lastMessageId !== existing.lastMessageId : thread.updatedAt !== existing.updatedAt && thread.lastMessage !== existing.lastMessage;
         existing.updatedAt = thread.updatedAt;
+        existing.lastMessageId = thread.lastMessageId;
         if (!hasNews) return;
         if (thread.lastMessage) {
           existing.lastMessage = thread.lastMessage;
@@ -118,6 +124,7 @@ const chatsSlice = createSlice({
       const thread = state.threads.find((t) => t.id === chatId);
       if (!thread || thread.messages.some((m) => m.id === message.id)) return;
       thread.messages.push(message);
+      sortMessages(thread.messages);
       trim(thread.messages);
       applyProposalResponses(thread);
       thread.lastMessage = summary;
@@ -140,6 +147,9 @@ const chatsSlice = createSlice({
       messages.forEach((incoming) => {
         const existing = known.get(incoming.id);
         if (existing) {
+          existing.senderName = incoming.senderName;
+          existing.senderAvatar = incoming.senderAvatar;
+          existing.createdAt = incoming.createdAt ?? existing.createdAt;
           existing.cipherPayload = incoming.cipherPayload ?? existing.cipherPayload;
           existing.isFromCache = incoming.isFromCache;
           existing.hasPendingWrites = incoming.hasPendingWrites;
@@ -151,12 +161,14 @@ const chatsSlice = createSlice({
       });
 
       if (appended) {
+        sortMessages(thread.messages);
         trim(thread.messages);
         applyProposalResponses(thread);
         const latest = thread.messages[thread.messages.length - 1];
         thread.lastMessage = latest.text;
         thread.lastMessageTime = latest.timestamp;
       }
+      if (!appended) sortMessages(thread.messages);
     },
     participantsAdded(
       state,
@@ -177,7 +189,7 @@ const chatsSlice = createSlice({
     },
     chatRead(state, action: PayloadAction<string>) {
       const thread = state.threads.find((t) => t.id === action.payload);
-      if (thread) thread.unreadCount = 0;
+      if (thread) { thread.unreadCount = 0; thread.lastReadMessageId = thread.lastMessageId; }
     },
     /** Removes the chat from this device's list only; the conversation itself is not deleted for others */
     chatDeleted(state, action: PayloadAction<string>) {
@@ -187,10 +199,18 @@ const chatsSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, () => initialState);
+    builder.addCase(identityRedacted, (state, { payload: uid }) => {
+      state.threads.forEach((thread) => {
+        if (thread.buddy.id === uid) { thread.buddy.name = ''; thread.buddy.avatar = ''; thread.buddy.bio = ''; thread.buddy.tagline = ''; }
+        thread.participants = thread.participants?.filter((p) => p.id !== uid);
+        thread.messages.forEach((m) => { if (m.senderId === uid) { m.senderName = ''; m.senderAvatar = undefined; } });
+      });
+    });
   },
 });
 
 export const {
+  messageDeliveryChanged,
   directChatEnsured,
   groupChatCreated,
   inboxSynced,

@@ -20,7 +20,7 @@ vi.mock('@react-native-google-signin/google-signin', () => ({
   isErrorWithCode: (e: unknown) => typeof (e as { code?: unknown })?.code === 'string',
 }));
 
-import { GoogleSignInError, signInWithGoogle } from '@/services/googleSignIn';
+import { GoogleSignInError, isGoogleSignInConfigured, signInWithGoogle } from '@/services/googleSignIn';
 
 const auth = { name: 'auth' } as never;
 
@@ -76,5 +76,20 @@ describe('Google sign-in (native)', () => {
     signIn.mockResolvedValue({ type: 'success', data: { idToken: 't' } });
     signInWithCredential.mockRejectedValue({ code: 'auth/user-disabled' });
     await expect(signInWithGoogle(auth)).rejects.toMatchObject({ code: 'auth/user-disabled' });
+  });
+});
+
+describe('Google sign-in availability', () => {
+  it('is offered only with the client ids the platform needs, instead of a button that can only fail', () => {
+    expect(isGoogleSignInConfigured('android')).toBe(true);
+    expect(isGoogleSignInConfigured('ios')).toBe(true);
+    extra.google = { webClientId: 'web-id.apps.googleusercontent.com' };
+    expect(isGoogleSignInConfigured('android')).toBe(true);
+    expect(isGoogleSignInConfigured('ios')).toBe(false);
+    extra.google = { iosClientId: 'ios-id.apps.googleusercontent.com' };
+    expect(isGoogleSignInConfigured('android')).toBe(false);
+    expect(isGoogleSignInConfigured('ios')).toBe(false);
+    delete extra.google;
+    expect(isGoogleSignInConfigured('android')).toBe(false);
   });
 });

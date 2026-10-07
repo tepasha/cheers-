@@ -6,8 +6,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fs = vi.hoisted(() => ({ next: [] as Array<(snap: unknown) => unknown> }));
+const callable = vi.hoisted(() => vi.fn());
 
-vi.mock('@/services/firebase', () => ({ db: {}, auth: {}, firebaseApp: {} }));
+vi.mock('@/services/firebase', () => ({ db: {}, auth: {}, firebaseApp: {}, functions: {} }));
+vi.mock('firebase/functions', () => ({ httpsCallable: () => callable }));
 vi.mock('firebase/firestore', () => {
   const ref = () => ({});
   return {
@@ -107,18 +109,17 @@ describe('message listener', () => {
 });
 
 describe('nearby people listener', () => {
-  it('skips profiles with a non-text name or no coordinates, without throwing', () => {
+  it('skips malformed server profiles and uses no invented preferences', async () => {
     const cb = vi.fn();
-    svc.subscribeToPublicBuddies('alice', { lat: 50.45, lng: 30.52 }, cb);
-    const listener = lastListener();
-    const ok = { name: 'Bob', lat: 50.451, lng: 30.521, preferredDrinks: ['craft', 'poison', 3], paymentRule: 'free_money' };
-    expect(() =>
-      listener(snapOf([docOf('bob', ok), docOf('m', { name: { evil: 1 }, lat: 50.45, lng: 30.52 }), docOf('n', { name: 'NoLoc' }), throwing]))
-    ).not.toThrow();
+    const ok = { id: 'bob', name: 'Bob', lat: 50.451, lng: 30.521, preferredDrinks: ['craft', 'poison', 3], paymentRule: 'free_money' };
+    callable.mockResolvedValueOnce({ data: [ok, { id: 'm', name: { evil: 1 }, lat: 50.45, lng: 30.52 }, { id: 'n', name: 'NoLoc' }] });
+    const stop = svc.subscribeToPublicBuddies('alice', { lat: 50.45, lng: 30.52 }, cb);
+    await vi.waitFor(() => expect(cb).toHaveBeenCalled());
+    stop();
     const people = cb.mock.calls.at(-1)![0] as Array<{ id: string; preferredDrinks: string[]; paymentRule: string }>;
     expect(people.map((p) => p.id)).toEqual(['bob']);
     expect(people[0].preferredDrinks).toEqual(['craft']);
-    expect(people[0].paymentRule).toBe('split_50_50');
+    expect(people[0].paymentRule).toBe('not_specified');
   });
 });
 

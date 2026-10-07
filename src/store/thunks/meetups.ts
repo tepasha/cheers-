@@ -1,3 +1,4 @@
+import { queueSync } from './outbox';
 import { BuddyProfile, GroupMeetup } from '../../types';
 import type { AppThunk } from '../hooks';
 import { meetupUpserted } from '../slices/meetupsSlice';
@@ -11,7 +12,6 @@ import {
   joinMeetup as joinMeetupLogic,
   leaveMeetup as leaveMeetupLogic,
 } from '../../logic/meetups';
-import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { analyticsService } from '../../services/analyticsService';
 import { sounds } from '../../services/soundService';
 import { trFor } from './lang';
@@ -45,7 +45,7 @@ export const createMeetup =
       })
     );
     analyticsService.trackMeetupAction('create', meetup.id, { venue: meetup.venueName });
-    void firestoreSyncService.saveMeetup(meetup);
+    dispatch(queueSync('saveMeetup', 'meetup:' + meetup.id, [meetup]));
     return meetup;
   };
 
@@ -78,7 +78,7 @@ export const inviteToMeetup =
       })
     );
     analyticsService.trackMeetupAction('invite', meetupId, { count });
-    void firestoreSyncService.saveMeetup(updated);
+    dispatch(queueSync('saveMeetup', 'meetup:' + updated.id, [updated]));
     return count;
   };
 
@@ -90,6 +90,7 @@ export const joinMeetup =
     const user = getState().auth.user;
     const meetup = findMeetup(getState, meetupId);
     if (!meetup) return false;
+    if (meetup.participants.some((p) => p.userId === user.id && p.status === 'going')) return false;
 
     const updated = joinMeetupLogic(meetup, { userId: user.id, userName: user.name || tr('Ви'), userAvatar: user.avatar });
     if (!updated) return false;
@@ -108,7 +109,7 @@ export const joinMeetup =
     );
     analyticsService.trackMeetupAction('join', meetupId);
     const mine = updated.participants.find((p) => p.userId === user.id);
-    if (mine) void firestoreSyncService.setMeetupParticipation(meetupId, user.id, mine);
+    if (mine) dispatch(queueSync('setMeetupParticipation', 'rsvp:' + meetupId, [meetupId, user.id, mine]));
     return true;
   };
 
@@ -122,7 +123,7 @@ export const leaveMeetup =
     dispatch(meetupUpserted(updated));
     sounds.playTap();
     analyticsService.trackMeetupAction('leave', meetupId);
-    void firestoreSyncService.setMeetupParticipation(meetupId, myId, null);
+    dispatch(queueSync('setMeetupParticipation', 'rsvp:' + meetupId, [meetupId, myId, null]));
   };
 
 export const cancelMeetup =
@@ -135,5 +136,5 @@ export const cancelMeetup =
     dispatch(meetupUpserted(updated));
     sounds.playTap();
     analyticsService.trackMeetupAction('cancel', meetupId);
-    void firestoreSyncService.saveMeetup(updated);
+    dispatch(queueSync('saveMeetup', 'meetup:' + updated.id, [updated]));
   };

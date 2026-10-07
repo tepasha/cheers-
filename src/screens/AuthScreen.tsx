@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import appIcon from '../../assets/logo.png'; // 256 px copy: the 1024 px store icon would cost 1 MB of bundle
@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Field, SegmentedControl } from '../components/ui';
 import { colors, radius, spacing, typography } from '../theme';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { authNoticeSet } from '../store/slices/uiSlice';
+import { authNoticeSet, authErrorSet, authOperationSet } from '../store/slices/uiSlice';
 import { profileUpdated } from '../store/slices/authSlice';
 import { authService, describeAuthError } from '../services/authService';
 import { firebaseConfigured } from '../services/firebase';
@@ -16,8 +16,13 @@ import { parseBirthDateInput } from '../logic/dateInput';
 import { MIN_AGE, isValidEmail, validatePassword } from '../logic/session';
 import { useTr } from '../hooks/useT';
 import { LegalLinks } from '../components/LegalLinks';
+import { AppleSignInButton } from '../components/AppleSignInButton';
+import { isAppleSignInAvailable } from '../services/appleSignIn';
+import { isGoogleSignInConfigured } from '../services/googleSignIn';
+import Constants from 'expo-constants';
 
-const SUPPORT_URL = 'https://t.me/cheers_support_bot';
+const supportEmail = Constants.expoConfig?.extra?.support?.email;
+const SUPPORT_URI = typeof supportEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail) ? `mailto:${supportEmail}` : undefined;
 
 type Mode = 'login' | 'register';
 
@@ -57,7 +62,18 @@ export const AuthScreen = () => {
 
   const underageNotice = useAppSelector((s) => s.ui.authNotice === 'underage');
 
-  const googleSignIn = async () => {
+  // Sign in with Apple exists on iOS 13+ only (App Store Guideline 4.8 asks for it next to Google)
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void isAppleSignInAvailable().then((ok) => alive && setAppleAvailable(ok));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** Google or Apple: the auth listener signs the person in; a new account is asked for its birth date next */
+  const providerSignIn = async (method: 'google' | 'apple') => {
     setError(null);
     setInfo(null);
     dispatch(authNoticeSet(null));
@@ -66,14 +82,24 @@ export const AuthScreen = () => {
       return;
     }
     setBusy(true);
+    dispatch(authOperationSet(true));
     try {
-      const result = await authService.loginWithGoogle();
-      if (result) analyticsService.trackEvent(result.isNewUser ? 'sign_up' : 'login', { method: 'google' });
-      // The auth listener signs the person in; a new account is asked for its birth date next (BirthDateScreen)
+      if (method === 'google') {
+        const result = await authService.loginWithGoogle();
+        if (result) analyticsService.trackEvent(result.isNewUser ? 'sign_up' : 'login', { method });
+      } else {
+        const result = await authService.loginWithApple();
+        if (result) {
+          analyticsService.trackEvent(result.isNewUser ? 'sign_up' : 'login', { method });
+          // Apple tells the name once, after the auth listener has already run: hand it to the profile now
+          if (result.fullName) dispatch(profileUpdated({ name: result.fullName.slice(0, 60) }));
+        }
+      }
     } catch (err) {
       setError(tr(describeAuthError(err)));
     } finally {
       setBusy(false);
+      dispatch(authOperationSet(false));
     }
   };
 
@@ -89,11 +115,12 @@ export const AuthScreen = () => {
     }
 
     setBusy(true);
+    dispatch(authOperationSet(true));
     try {
       if (registering && birthIso) {
         await authService.register({ email, password, name, birthDate: birthIso });
         // The auth listener signs the user in; keep the details they just typed
-        dispatch(profileUpdated({ name: name.trim(), birthDate: birthIso }));
+        dispatch(profileUpdated({ name: name.trim(), birthDate: birthIso, serverEligible: true }));
         analyticsService.trackEvent('sign_up', { method: 'email' });
       } else {
         await authService.login(email, password);
@@ -101,8 +128,10 @@ export const AuthScreen = () => {
       }
     } catch (err) {
       setError(tr(describeAuthError(err)));
+      if (registering) dispatch(authErrorSet(true));
     } finally {
       setBusy(false);
+      dispatch(authOperationSet(false));
     }
   };
 
@@ -218,7 +247,10 @@ export const AuthScreen = () => {
         {!!info && <Text style={[styles.hint, { marginBottom: spacing.md }]}>{info}</Text>}
 
         <Button label={registering ? tr('Створити акаунт') : tr('Увійти')} icon="arrow-right" onPress={submit} loading={busy} />
-        <Button label={tr('Увійти через Google')} icon="log-in" variant="secondary" onPress={googleSignIn} disabled={busy} style={{ marginTop: spacing.sm }} />
+        {isGoogleSignInConfigured(Platform.OS) && (
+          <Button label={tr('Увійти через Google')} icon="log-in" variant="secondary" onPress={() => providerSignIn('google')} disabled={busy} style={{ marginTop: spacing.sm }} />
+        )}
+        {appleAvailable && <AppleSignInButton onPress={() => providerSignIn('apple')} disabled={busy} />}
         {!registering && <Button label={tr('Забули пароль?')} variant="ghost" small onPress={forgotPassword} disabled={busy} style={{ marginTop: spacing.sm }} />}
 
         <Text style={[typography.tiny, { textAlign: 'center', marginTop: spacing.lg, lineHeight: 15 }]}>
@@ -232,7 +264,7 @@ export const AuthScreen = () => {
           </Text>
         )}
         <LegalLinks />
-        <Button label={tr('Підтримка в Telegram')} variant="ghost" icon="send" small onPress={() => Linking.openURL(SUPPORT_URL)} style={{ marginTop: spacing.sm }} />
+        {SUPPORT_URI && <Button label={tr('Підтримка')} variant="ghost" icon="mail" small onPress={() => Linking.openURL(SUPPORT_URI)} style={{ marginTop: spacing.sm }} />}
       </ScrollView>
     </KeyboardAvoidingView>
   );

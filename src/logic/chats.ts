@@ -11,9 +11,8 @@ export const dmChatId = (a: string, b: string) => `dm_${[a, b].sort().join('_')}
  */
 export const dmMembers = (a: string, b: string): string[] => [a, b].sort();
 
-/** Groups hold at most 10 people: the rules check each member against the creator's blocks, and Firestore
- *  allows 10 document lookups per request. */
-export const MAX_GROUP_MEMBERS = 10;
+/** Eight recipient block checks plus ban and preview checks fit Firestore's ten-read rule budget. */
+export const MAX_GROUP_MEMBERS = 9;
 
 export const groupChatId = (creatorId: string, now = Date.now()) => `grp_${creatorId}_${now}`;
 
@@ -32,6 +31,8 @@ export interface CloudChat {
   lastSenderId?: string;
   lastMessageTime?: string;
   updatedAt?: string;
+  lastMessageId?: string;
+  anonymizedMembers?: string[];
 }
 
 export const otherMemberId = (members: string[], myId: string): string | undefined => members.find((m) => m !== myId);
@@ -49,7 +50,7 @@ export function placeholderBuddy(id: string, name = ph('Користувач'), 
     distanceKm: 0,
     coordinates: { lat: 0, lng: 0 },
     preferredDrinks: [],
-    paymentRule: 'split_50_50',
+    paymentRule: 'not_specified',
     currentMood: 'chill_talk',
     favoriteBars: [],
     talkTopics: [],
@@ -69,6 +70,7 @@ export function threadFromCloudChat(
     lastMessage: options.lastText ?? '',
     lastMessageTime: chat.lastMessageTime ?? '',
     updatedAt: chat.updatedAt,
+    lastMessageId: chat.lastMessageId,
     unreadCount: 0,
     messages: [],
     createdBy: chat.createdBy,

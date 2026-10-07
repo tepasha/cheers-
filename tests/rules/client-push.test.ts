@@ -1,3 +1,5 @@
+import location from '@/store/slices/locationSlice';
+import outbox from '@/store/slices/outboxSlice';
 /**
  * Contract for push notifications, end to end on the emulator with the REAL rules:
  *   real client (registerPush thunk, firestoreSyncService)  →  devices/ documents  →  the Cloud Function core
@@ -20,14 +22,14 @@ vi.mock('@/services/firebase', () => ({
   auth: {},
   firebaseApp: {},
 }));
-vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(randomBytes(n)) }));
+vi.mock('expo-crypto', () => ({ getRandomValues: (buffer: Uint8Array) => { buffer.set(randomBytes(buffer.length)); return buffer; } }));
 vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn().mockResolvedValue(undefined),
   notificationAsync: vi.fn().mockResolvedValue(undefined),
   ImpactFeedbackStyle: {},
   NotificationFeedbackType: {},
 }));
-vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn() }));
+vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn(), stopSystemPush: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/services/authService', () => ({ authService: { logout: vi.fn().mockResolvedValue(undefined) } }));
 
 import { firestoreSyncService as svc } from '@/services/firestoreSyncService';
@@ -42,7 +44,8 @@ import notifications from '@/store/slices/notificationsSlice';
 import settings, { languageChosen } from '@/store/slices/settingsSlice';
 import ui from '@/store/slices/uiSlice';
 import { createUser } from '@/logic/session';
-import { adminFirestoreFor, createDeps } from '../../functions/src/deps';
+import { adminFirestoreFor, createAccountDeps, createDeps } from '../../functions/src/deps';
+import { deleteAccount } from '../../functions/src/account';
 import { notifyChatMessage, type ExpoMessage, type ExpoTicket } from '../../functions/src/push';
 import type { Message } from '@/types';
 
@@ -51,7 +54,7 @@ let adminDb: ReturnType<typeof adminFirestoreFor>['db'];
 let closeAdmin: () => Promise<void>;
 
 const as = (uid: string) => {
-  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
+  current.db = env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true, age_21: true }).firestore();
 };
 
 beforeAll(async () => {
@@ -72,7 +75,7 @@ beforeEach(async () => {
 });
 
 const storeFor = (uid: string, language: 'uk' | 'en' | 'pl' | 'de' = 'uk') => {
-  const store = configureStore({ reducer: combineReducers({ auth, safety, notifications, settings, ui }) });
+  const store = configureStore({ reducer: combineReducers({ location, outbox, auth, safety, notifications, settings, ui }) });
   store.dispatch(loggedIn(createUser({ id: uid, email: `${uid}@example.com`, emailVerified: true, birthDate: '1990-01-01' })));
   store.dispatch(languageChosen(language));
   return store;
@@ -150,8 +153,8 @@ describe('registering a phone through the real client', () => {
     await registerPhone('bob', tokenOf('bobphone1'));
     await registerPhone('bob', tokenOf('bobphone2'));
     await registerPhone('carol', tokenOf('carolphone'));
-    as('bob');
-    await svc.deleteAccountData('bob');
+    const noAuth = { deleteUser: async () => {} } as never;
+    await deleteAccount(createAccountDeps(adminDb, noAuth), 'bob', Math.floor(Date.now() / 1000), Date.now());
     const left = await adminDb.collection('devices').get();
     expect(left.docs.map((d) => d.data().uid)).toEqual(['carol']);
   });
@@ -167,7 +170,7 @@ describe('from a message to a push', () => {
     expect(sentToExpo).toHaveLength(1);
     expect(sentToExpo[0]).toMatchObject({
       to: tokenOf('bobphone'),
-      title: 'alice',
+      title: 'Budmo',
       body: 'New message',
       data: { type: 'chat_message', chatId: chat.id },
     });

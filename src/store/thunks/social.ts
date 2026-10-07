@@ -6,19 +6,19 @@ import {
   directChatEnsured,
   groupChatCreated,
   messageAppended,
-  messagesReceived,
   participantsAdded,
 } from '../slices/chatsSlice';
 import { friendAdded, friendRemoved } from '../slices/friendsSlice';
 import { hangoutClosed, hangoutJoined, hangoutPublished } from '../slices/hangoutsSlice';
 import { addBonusXp, recordCheckIn } from './gamification';
 import { pushNotification } from './notifications';
-import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { analyticsService } from '../../services/analyticsService';
 import { sounds } from '../../services/soundService';
 import { formatClock } from '../../utils/time';
 import { MAX_GROUP_MEMBERS, dmChatId, dmMembers, groupChatId } from '../../logic/chats';
 import { trFor } from './lang';
+import { queueSync } from './outbox';
+import { contentAllowed } from '../../logic/contentPolicy';
 
 // ─── Chats ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,10 @@ export const sendMessage =
     const tr = trFor(getState);
     const user = getState().auth.user;
     const { chatId, text, type = 'text', proposalData, audioData, proposalId, proposalStatus } = params;
+    if (!contentAllowed(text)) {
+      dispatch(pushNotification({ type: 'system', title: tr('Цей текст порушує правила спільноти. Відредагуйте його.'), body: '' }));
+      return;
+    }
 
     const message: Message = {
       id: params.id ?? `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -50,6 +54,7 @@ export const sendMessage =
       senderAvatar: user.avatar,
       text,
       timestamp: formatClock(),
+      createdAt: Date.now(),
       isMe: true,
       type,
       audioUrl: audioData?.audioUrl,
@@ -58,6 +63,7 @@ export const sendMessage =
       proposalId,
       proposalStatus,
       isEncrypted: true,
+      deliveryStatus: 'queued',
     };
 
     const summary = type === 'cheers' ? tr('Тост: {text}', { text }) : type === 'audio' ? tr('🎙️ Голосове повідомлення') : text;
@@ -67,15 +73,10 @@ export const sendMessage =
     const thread = getState().chats.threads.find((t) => t.id === chatId);
     if (!thread) return;
 
-    firestoreSyncService
-      .sendEncryptedMessage(thread, message, { id: user.id, name: user.name, avatar: user.avatar })
-      .then((res) => {
-        if (res.cipherPayload) {
-          // Same id, so the reducer only attaches the ciphertext for the security inspector
-          dispatch(messagesReceived({ chatId, messages: [{ ...message, cipherPayload: res.cipherPayload }] }));
-        }
-      })
-      .catch((err) => console.warn('Firestore encrypted sync notice:', err));
+    dispatch(queueSync('sendEncryptedMessage', `message:${message.id}`, [
+      { id: thread.id, isGroup: thread.isGroup, memberIds: thread.memberIds, createdBy: thread.createdBy, groupName: thread.groupName, groupTopic: thread.groupTopic, groupAvatar: thread.groupAvatar, participants: thread.participants },
+      message, { id: user.id, name: user.name, avatar: user.avatar },
+    ], { chatId, id: message.id }));
   };
 
 /** Opens (creating locally if needed) the 1:1 chat with a buddy. Nothing is written to Firestore until a message is sent. */
@@ -145,6 +146,8 @@ export const createGroupChat =
       senderAvatar: user.avatar,
       text: tr('🎉 Створено новий груповий чат: «{name}»! Давайте оберемо заклад та піднімемо келихи 🍻', { name: params.name }),
       timestamp: time,
+      createdAt: now.getTime(),
+      deliveryStatus: 'queued',
       isMe: true,
       type: 'cheers',
     };
@@ -187,9 +190,7 @@ export const createGroupChat =
 
     dispatch(groupChatCreated(thread));
     sounds.playMatchCheer();
-    firestoreSyncService
-      .sendEncryptedMessage(thread, intro, { id: user.id, name: user.name, avatar: user.avatar })
-      .catch((err) => console.warn('Firestore group initial message sync notice:', err));
+    dispatch(queueSync('sendEncryptedMessage', `message:${intro.id}`, [thread, intro, { id: user.id, name: user.name, avatar: user.avatar }], { chatId, id: intro.id }));
     return thread;
   };
 
@@ -220,7 +221,7 @@ export const addGroupParticipants =
         },
       })
     );
-    void firestoreSyncService.addGroupMembers(chatId, participants);
+    participants.forEach((p) => dispatch(queueSync('addGroupMembers', `group:${chatId}:${p.id}`, [chatId, [p]])));
   };
 
 /** Removes the chat from this device. The conversation stays for the other members (clients cannot delete chats). */
@@ -257,14 +258,14 @@ export const addFriend =
       })
     );
 
-    void firestoreSyncService.syncFriend(userId, {
+    dispatch(queueSync('syncFriend', `friend:${buddy.id}`, [userId, {
       friendId: buddy.id,
       friendName: buddy.name,
       friendAvatar: buddy.avatar,
       tagline: buddy.tagline,
       locationName: buddy.locationName,
       drinkPreference: buddy.preferredDrinks.join(', '),
-    });
+    }]));
   };
 
 export const removeFriend =
@@ -275,7 +276,7 @@ export const removeFriend =
 
     dispatch(friendRemoved(buddyId));
     sounds.playTap();
-    void firestoreSyncService.removeFriendFromFirestore(state.auth.user.id, buddyId);
+    dispatch(queueSync('removeFriendFromFirestore', `friend:${buddyId}`, [state.auth.user.id, buddyId]));
   };
 
 export const toggleFriend =
@@ -302,11 +303,7 @@ export const publishHangout =
     });
     // Optimistic: show immediately, Firestore snapshot reconciles
     dispatch(hangoutPublished(hangout));
-    try {
-      await firestoreSyncService.publishHangout(hangout);
-    } catch (err) {
-      console.warn('Firestore publish notice:', err);
-    }
+    dispatch(queueSync('publishHangout', `table:${hangout.id}`, [hangout]));
   };
 
 export const joinHangout =
@@ -316,6 +313,7 @@ export const joinHangout =
     const state = getState();
     const target = state.hangouts.items.find((h) => h.id === hangoutId);
     const userId = state.auth.user.id;
+    if (!target || target.expiresAt! <= Date.now() || target.status === 'closed' || target.joinedUsers?.includes(userId) || target.participantsCount >= target.slotsAvailable + 1) return;
 
     analyticsService.trackMeetupAction('join', hangoutId, { bar_name: target?.barName });
     dispatch(hangoutJoined({ hangoutId, userId }));
@@ -331,20 +329,12 @@ export const joinHangout =
       })
     );
 
-    try {
-      await firestoreSyncService.joinLiveHangout(hangoutId, userId);
-    } catch (err) {
-      console.warn('Firestore join notice:', err);
-    }
+    dispatch(queueSync('joinLiveHangout', `table-join:${hangoutId}`, [hangoutId, userId]));
   };
 
 export const closeHangout =
   (hangoutId: string): AppThunk<Promise<void>> =>
   async (dispatch) => {
     dispatch(hangoutClosed(hangoutId));
-    try {
-      await firestoreSyncService.closeLiveHangout(hangoutId);
-    } catch (err) {
-      console.warn('Firestore close hangout notice:', err);
-    }
+    dispatch(queueSync('closeLiveHangout', `table:${hangoutId}`, [hangoutId]));
   };

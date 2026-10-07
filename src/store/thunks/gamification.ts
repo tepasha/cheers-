@@ -1,9 +1,9 @@
+import { queueSync } from './outbox';
 import type { AppThunk } from '../hooks';
 import { gamificationStateSet } from '../slices/gamificationSlice';
 import { applyBonusXp, applyCheckIn, CheckInInput, CheckInResult } from '../../logic/gamification';
 import { selectGamification } from '../selectors';
 import { sounds } from '../../services/soundService';
-import { firestoreSyncService } from '../../services/firestoreSyncService';
 
 export const recordCheckIn =
   (data: CheckInInput): AppThunk<CheckInResult> =>
@@ -15,7 +15,7 @@ export const recordCheckIn =
     dispatch(gamificationStateSet({ userId, state: result.updatedState }));
     if (result.didLevelUp) sounds.playMatchCheer();
     else sounds.playClink();
-    void firestoreSyncService.syncGamification(userId, result.updatedState);
+    dispatch(queueSync('syncGamification', 'gamification', [userId, result.updatedState]));
     return result;
   };
 
@@ -29,6 +29,6 @@ export const addBonusXp =
     dispatch(gamificationStateSet({ userId, state: updatedState }));
     if (didLevelUp) sounds.playMatchCheer();
     else sounds.playClink();
-    void firestoreSyncService.syncGamification(userId, updatedState);
+    dispatch(queueSync('syncGamification', 'gamification', [userId, updatedState]));
     return { didLevelUp };
   };

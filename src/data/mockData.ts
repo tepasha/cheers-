@@ -13,6 +13,7 @@ export const DRINK_METADATA: Record<DrinkType, { label: string; icon: string; co
 };
 
 export const MOOD_METADATA: Record<MoodType, { label: string; emoji: string }> = {
+  not_specified: { label: ph('Не вказано'), emoji: '—' },
   chill_talk: { label: ph('Поговорити за життя'), emoji: '💬' },
   coding_it: { label: ph('Обговорити IT та код'), emoji: '💻' },
   board_games: { label: ph('Настілки під келих'), emoji: '🎲' },
@@ -23,6 +24,7 @@ export const MOOD_METADATA: Record<MoodType, { label: string; emoji: string }> =
 };
 
 export const PAYMENT_METADATA: Record<PaymentEtiquette, { label: string; badge: string }> = {
+  not_specified: { label: ph('Не вказано'), badge: '—' },
   split_50_50: { label: ph('Рахунок навпіл (50/50)'), badge: '⚖️ 50/50' },
   each_for_themselves: { label: ph('Кожен сам за себе'), badge: ph('🧾 Роздільно') },
   i_treat: { label: ph('Я пригощаю сьогодні'), badge: ph('🎁 Пригощаю') },

@@ -1,3 +1,4 @@
+import outbox from '@/store/slices/outboxSlice';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
 
@@ -17,7 +18,7 @@ import { acknowledgeEndedTable, pruneExpiredContent, renewHangout, syncHangouts 
 import type { HangoutAlert } from '@/types';
 import type { RootState } from '@/store/index';
 
-const rootReducer = combineReducers({ auth, hangouts, meetups, ui });
+const rootReducer = combineReducers({ outbox, auth, hangouts, meetups, ui });
 function makeStore() {
   const store = configureStore({ reducer: rootReducer });
   store.dispatch(loggedIn(createUser({ id: 'me', email: 'me@b.co', name: 'Me', emailVerified: true })));

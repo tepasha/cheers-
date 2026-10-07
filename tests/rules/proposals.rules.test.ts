@@ -1,3 +1,4 @@
+import { attachBudget } from './helpers/writeBudget';
 /**
  * Meetup proposals. Messages are immutable, so an answer is its own message `resp_<proposalId>`; the rules
  * decide who may send it and make "answered once" a database fact.  npm run test:rules
@@ -8,7 +9,7 @@ import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestE
 import { doc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
-const user = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
+const user = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true, age_21: true }).firestore();
 const seed = (fn: (db: any) => Promise<void>) => env.withSecurityRulesDisabled((ctx) => fn(ctx.firestore()));
 
 beforeAll(async () => {
@@ -28,10 +29,11 @@ const proposal = (uid: string, id = 'p1') =>
 const answer = (uid: string, over: Record<string, unknown> = {}, id = 'resp_p1') =>
   base(uid, id, { type: 'proposal_response', proposalId: 'p1', proposalStatus: 'accepted', ...over });
 const preview = (uid: string) => ({ lastCipherPayload: 'x', lastSenderId: uid, lastMessageTime: '2', updatedAt: 'n2' });
-const send = (db: any, m: Record<string, any>) => {
+const send = async (db: any, m: Record<string, any>) => {
   const batch = writeBatch(db);
+  await attachBudget(db, batch, String(m.senderId), 'message', `${dm}/${m.id}`);
   batch.set(doc(db, `chats/${dm}/messages/${m.id}`), m);
-  batch.set(doc(db, `chats/${dm}`), preview(m.senderId), { merge: true });
+  batch.set(doc(db, `chats/${dm}`), { ...preview(m.senderId), lastMessageId: m.id, lastCipherPayload: m.cipherPayload, lastMessageTime: m.timestamp }, { merge: true });
   return batch.commit();
 };
 
@@ -40,7 +42,7 @@ beforeEach(async () => {
   // Alice proposed a meetup to Bob
   await seed(async (db) => {
     await setDoc(doc(db, `chats/${dm}`), {
-      members: ['alice', 'bob'], isGroup: false, profiles: { alice: { name: 'Alice', avatar: '' } }, lastCipherPayload: 'x', lastSenderId: 'alice', lastMessageTime: '1', updatedAt: 'n',
+      members: ['alice', 'bob'], isGroup: false, profiles: { alice: { name: 'Alice', avatar: '' } }, lastCipherPayload: '', lastSenderId: 'alice', lastMessageTime: '1', updatedAt: 'n',
     });
     await setDoc(doc(db, `chats/${dm}/messages/p1`), proposal('alice'));
     await setDoc(doc(db, `chats/${dm}/messages/t1`), base('alice', 't1'));

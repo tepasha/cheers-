@@ -1,6 +1,8 @@
+import { dialogs as Alert } from '../services/dialogs';
+import Constants from 'expo-constants';
 import React, { useEffect, useState } from 'react';
 import { MIN_AGE } from '../logic/session';
-import { Alert, Linking, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography } from '../theme';
@@ -10,11 +12,12 @@ import { GamificationCard } from '../components/GamificationCard';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectLocation, selectSettings, selectUser } from '../store/selectors';
 import { profileUpdated } from '../store/slices/authSlice';
-import { batterySaverSet, languageChosen, pushSettingsUpdated, ruBlockSimulationSet } from '../store/slices/settingsSlice';
+import { batterySaverSet, languageChosen, pushSettingsUpdated, ruBlockSimulationSet, locationSharingSet } from '../store/slices/settingsSlice';
 import { locationUpdated } from '../store/slices/locationSlice';
 import { removeFavoriteVenue } from '../store/thunks/favorites';
 import { deleteAccount, logout } from '../store/thunks/auth';
-import { describeAuthError } from '../services/authService';
+import { CANCELLED, describeAuthError, authService } from '../services/authService';
+import { firestoreSyncService } from '../services/firestoreSyncService';
 import { SUPPORTED_LANGUAGES } from '../services/i18nService';
 import { analyticsService } from '../services/analyticsService';
 import { requestDeviceLocation } from '../services/locationService';
@@ -26,11 +29,17 @@ import { isoToDateInput, parseBirthDateInput } from '../logic/dateInput';
 import { useT } from '../hooks/useT';
 import { useTr } from '../hooks/useT';
 import { ph } from '../services/i18nService';
+import { DRINK_METADATA, MOOD_METADATA, PAYMENT_METADATA } from '../data/mockData';
+import type { DrinkType, MoodType, PaymentEtiquette } from '../types';
+import { captureSession } from '../store/sessionGuard';
+import { store } from '../store';
+import imageLicenses from '../data/imageLicenses.json';
 
+const support = Constants.expoConfig?.extra?.support;
 const SUPPORT_LINKS = [
-  { label: ph('Технічна підтримка в Telegram'), icon: 'send' as const, url: 'https://t.me/cheers_support_bot' },
-  { label: 'support@budmo.ua', icon: 'mail' as const, url: 'mailto:support@budmo.ua' },
-  { label: ph('Підтримати розробника 🍺'), icon: 'heart' as const, url: 'https://send.monobank.ua/jar/budmo' },
+  ...(typeof support?.url === 'string' && support.url.startsWith('https://') ? [{ label: ph('Технічна підтримка'), icon: 'send' as const, url: support.url }] : []),
+  ...(typeof support?.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(support.email) ? [{ label: support.email, icon: 'mail' as const, url: `mailto:${support.email}` }] : []),
+  ...(typeof support?.donationUrl === 'string' && support.donationUrl.startsWith('https://') ? [{ label: ph('Підтримати розробника 🍺'), icon: 'heart' as const, url: support.donationUrl }] : []),
 ];
 
 export const ProfileScreen = () => {
@@ -45,6 +54,7 @@ export const ProfileScreen = () => {
   const blockedCount = useAppSelector((s) => s.safety.blockedUsers.length);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [licensesVisible, setLicensesVisible] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -127,6 +137,14 @@ export const ProfileScreen = () => {
             {location.isSimulated ? tr('Обраний район (можна змінити на вкладці «Мапа»)') : tr('GPS • точність ±{accuracyMeters} м • {lastUpdated}', { accuracyMeters: location.accuracyMeters, lastUpdated: location.lastUpdated })}
           </Text>
           <Button label={tr('Використовувати мій GPS')} icon="crosshair" small variant="secondary" onPress={useRealLocation} />
+          <SettingRow title={tr('Показувати мене поруч')} subtitle={tr('Лише з GPS: інші бачать приблизний район, а не точну позицію.')} value={settings.shareLocation} onChange={async (enabled) => {
+            const current = captureSession(store.getState);
+            if (enabled && (location.isSimulated || location.status !== 'active')) { Alert.alert(tr('Геолокація'), tr('Спочатку увімкніть GPS. Обраний район не публікується як ваша позиція.')); return; }
+            try {
+              await firestoreSyncService.saveUserProfile({ id: user.id, name: user.name, shareLocation: enabled, ...(enabled ? { lat: location.lat, lng: location.lng } : {}) });
+              if (current()) dispatch(locationSharingSet(enabled));
+            } catch (err) { if (current()) Alert.alert(tr('Геолокація'), tr(describeAuthError(err))); }
+          }} />
         </Card>
 
         <SectionTitle>{tr('Налаштування')}</SectionTitle>
@@ -168,6 +186,7 @@ export const ProfileScreen = () => {
 
         <View style={{ marginTop: spacing.sm }}>
           <LegalLinks />
+          <Button label={tr('Ліцензії зображень')} icon="file-text" small variant="secondary" onPress={() => setLicensesVisible(true)} />
         </View>
 
         {__DEV__ && (
@@ -190,6 +209,11 @@ export const ProfileScreen = () => {
 
       {editing && <EditProfileSheet onClose={() => setEditing(false)} />}
       {deleting && <DeleteAccountSheet onClose={() => setDeleting(false)} />}
+      {licensesVisible && <Sheet visible title={tr('Ліцензії зображень')} onClose={() => setLicensesVisible(false)}>
+        <Text style={typography.body}>{imageLicenses.name}</Text>
+        <Text style={typography.small}>{imageLicenses.attribution}</Text>
+        <Text style={typography.tiny} selectable>{imageLicenses.license}</Text>
+      </Sheet>}
     </SafeAreaView>
   );
 };
@@ -217,30 +241,63 @@ const EditProfileSheet = ({ onClose }: { onClose: () => void }) => {
   const user = useAppSelector(selectUser);
   const [name, setName] = useState(user.name);
   const [birth, setBirth] = useState(user.birthDate ? isoToDateInput(user.birthDate) : '');
+  const [tagline, setTagline] = useState(user.tagline ?? '');
+  const [bio, setBio] = useState(user.bio ?? '');
+  const [drinks, setDrinks] = useState<DrinkType[]>(user.preferredDrinks ?? []);
+  const [mood, setMood] = useState<MoodType>(user.currentMood ?? 'not_specified');
+  const [payment, setPayment] = useState<PaymentEtiquette>(user.paymentRule ?? 'not_specified');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   const birthIso = birth.trim() ? parseBirthDateInput(birth) : user.birthDate ?? null;
   const age = birthIso ? calculateAge(birthIso) : null;
   const birthError = birth.trim() && (!birthIso || age === null || age < MIN_AGE) ? tr('Вкажіть дату як ДД.ММ.РРРР ({MIN_AGE}+)', { MIN_AGE }) : null;
 
-  const save = () => {
-    if (birthError) return;
-    dispatch(profileUpdated({ name: name.trim() || user.name, ...(birthIso ? { birthDate: birthIso } : {}) }));
-    onClose();
+  const save = async () => {
+    if (birthError || busy) return;
+    setBusy(true); setError('');
+    const current = captureSession(store.getState);
+    try {
+      await authService.updatePersonalProfile(name.trim() || user.name, birthIso !== user.birthDate ? birthIso ?? undefined : undefined);
+      if (!current()) return;
+      const details = { tagline: tagline.trim(), bio: bio.trim(), preferredDrinks: drinks, currentMood: mood, paymentRule: payment };
+      await firestoreSyncService.saveUserProfile({ id: user.id, name: name.trim() || user.name, ...details });
+      if (!current()) return;
+      dispatch(profileUpdated({ name: name.trim() || user.name, ...details, ...(birthIso ? { birthDate: birthIso } : {}) }));
+      onClose();
+    } catch (err) { setError(tr(describeAuthError(err))); }
+    finally { setBusy(false); }
   };
 
   return (
-    <Sheet visible onClose={onClose} title={tr('Редагувати профіль')} footer={<Button label={tr('Зберегти')} icon="check" disabled={!!birthError} onPress={save} />}>
-      <Field label={tr('ІМ’Я')} value={name} onChangeText={setName} autoCapitalize="words" />
+    <Sheet visible onClose={onClose} title={tr('Редагувати профіль')} footer={<Button label={tr('Зберегти')} icon="check" loading={busy} disabled={!!birthError || busy} onPress={save} />}>
+      <Field label={tr('ІМ’Я')} value={name} onChangeText={setName} maxLength={60} autoCapitalize="words" />
       <Field label={tr('ДАТА НАРОДЖЕННЯ (ДД.ММ.РРРР)')} value={birth} onChangeText={setBirth} keyboardType="numbers-and-punctuation" placeholder="15.05.1998" />
+      <Field label={tr('Короткий опис')} value={tagline} onChangeText={setTagline} maxLength={140} />
+      <Field label={tr('Про мене')} value={bio} onChangeText={setBio} maxLength={500} multiline />
+      <SectionTitle>{tr('Напої')}</SectionTitle>
+      <Row style={{ flexWrap: 'wrap' }}>{(Object.keys(DRINK_METADATA) as DrinkType[]).map((drink) => <Chip key={drink} label={tr(DRINK_METADATA[drink].label)} selected={drinks.includes(drink)} onPress={() => setDrinks((previous) => previous.includes(drink) ? previous.filter((d) => d !== drink) : [...previous, drink])} />)}</Row>
+      <SectionTitle>{tr('Настрій')}</SectionTitle>
+      <Row style={{ flexWrap: 'wrap' }}>{(Object.keys(MOOD_METADATA) as MoodType[]).map((value) => <Chip key={value} label={tr(MOOD_METADATA[value].label)} selected={mood === value} onPress={() => setMood(value)} />)}</Row>
+      <SectionTitle>{tr('Оплата')}</SectionTitle>
+      <Row style={{ flexWrap: 'wrap' }}>{(Object.keys(PAYMENT_METADATA) as PaymentEtiquette[]).map((value) => <Chip key={value} label={tr(PAYMENT_METADATA[value].label)} selected={payment === value} onPress={() => setPayment(value)} />)}</Row>
       {!!birthError && <Text style={{ color: colors.red, fontSize: 12 }}>{birthError}</Text>}
+      {!!error && <Text accessibilityRole="alert" style={{ color: colors.red }}>{error}</Text>}
     </Sheet>
   );
 };
 
-/** Permanent deletion; asks for the password again (Firebase requires a recent sign-in for this) */
+/**
+ * Permanent deletion. The person proves it is them again: the password for an email account, the Google dialog for a
+ * Google account (it has no password). The server then removes their data everywhere and the account itself.
+ */
 const DeleteAccountSheet = ({ onClose }: { onClose: () => void }) => {
   const tr = useTr();
   const dispatch = useAppDispatch();
+  const provider = useAppSelector((s) => s.auth.user.provider);
+  const viaGoogle = provider === 'google';
+  const viaApple = provider === 'apple';
+  const noPassword = viaGoogle || viaApple;
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -249,10 +306,10 @@ const DeleteAccountSheet = ({ onClose }: { onClose: () => void }) => {
     setBusy(true);
     setError(null);
     try {
-      await dispatch(deleteAccount(password));
+      await dispatch(deleteAccount(noPassword ? undefined : password));
       // The auth listener returns the app to the sign-in screen
     } catch (err) {
-      setError(tr(describeAuthError(err)));
+      if ((err as { code?: string }).code !== CANCELLED) setError(tr(describeAuthError(err)));
       setBusy(false);
     }
   };
@@ -262,12 +319,27 @@ const DeleteAccountSheet = ({ onClose }: { onClose: () => void }) => {
       visible
       onClose={onClose}
       title={tr('Видалити акаунт')}
-      footer={<Button label={tr('Видалити назавжди')} icon="trash-2" variant="danger" loading={busy} disabled={!password} onPress={confirm} />}
+      footer={
+        <Button
+          label={viaGoogle ? tr('Підтвердити через Google і видалити') : viaApple ? tr('Підтвердити через Apple і видалити') : tr('Видалити назавжди')}
+          icon="trash-2"
+          variant="danger"
+          loading={busy}
+          disabled={!noPassword && !password}
+          onPress={confirm}
+        />
+      }
     >
       <Text style={[typography.small, { marginBottom: spacing.md, lineHeight: 18 }]}>
-        {tr('Профіль, улюблені заклади, друзі та приватні дані будуть видалені без можливості відновлення. Надіслані вами повідомлення залишаться в чатах у зашифрованому вигляді.')}
+        {tr('Профіль, улюблені заклади, друзі, блокування, ваші столики й зустрічі та приватні дані будуть видалені без можливості відновлення. Надіслані повідомлення залишаться в чатах у зашифрованому вигляді, але без вашого імені та фото.')}
       </Text>
-      <Field label={tr('ПІДТВЕРДІТЬ ПАРОЛЬ')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} />
+      {viaGoogle ? (
+        <Text style={[typography.small, { marginBottom: spacing.md, lineHeight: 18 }]}>{tr('Щоб підтвердити, що це ви, увійдіть у свій акаунт Google ще раз.')}</Text>
+      ) : viaApple ? (
+        <Text style={[typography.small, { marginBottom: spacing.md, lineHeight: 18 }]}>{tr('Щоб підтвердити, що це ви, увійдіть через Apple ще раз.')}</Text>
+      ) : (
+        <Field label={tr('ПІДТВЕРДІТЬ ПАРОЛЬ')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} />
+      )}
       {!!error && <Text style={{ color: colors.red, fontSize: 12 }}>{error}</Text>}
     </Sheet>
   );

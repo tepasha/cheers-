@@ -1,3 +1,4 @@
+import { attachBudget, createWithBudget } from './helpers/writeBudget';
 /**
  * Security tests for firestore.rules, run against the Firestore emulator:
  *   npm run test:rules        (needs Java 11+ on the machine)
@@ -10,7 +11,7 @@ import { arrayUnion, deleteField, doc, getDoc, getDocs, collection, query, setDo
 
 let env: RulesTestEnvironment;
 
-const verifiedUser = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true }).firestore();
+const verifiedUser = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true, age_21: true }).firestore();
 const unverifiedUser = (uid: string) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: false }).firestore();
 const anonymous = () => env.unauthenticatedContext().firestore();
 const seed = (fn: (db: any) => Promise<void>) => env.withSecurityRulesDisabled((ctx) => fn(ctx.firestore()));
@@ -49,7 +50,7 @@ describe('authentication gate', () => {
 describe('users', () => {
   it('lets a verified user read other profiles but write only their own', async () => {
     await seed((db) => setDoc(doc(db, 'users/bob'), profile('bob')));
-    await assertSucceeds(getDoc(doc(verifiedUser('alice'), 'users/bob')));
+    await assertFails(getDoc(doc(verifiedUser('alice'), 'users/bob')));
     await assertSucceeds(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice')));
     await assertFails(setDoc(doc(verifiedUser('alice'), 'users/bob'), profile('bob', { name: 'Hacked' })));
     // the fields behind "people nearby" and presence
@@ -108,17 +109,17 @@ describe('hangouts', () => {
 
     it('accepts an expiry up to 4 hours ahead and refuses one that is in the past or too far ahead', async () => {
       const db = verifiedUser('alice');
-      await assertSucceeds(setDoc(doc(db, 'hangouts/ok'), hangout('alice', { id: 'ok', expiresAt: Date.now() + 4 * HOUR })));
-      await assertFails(setDoc(doc(db, 'hangouts/past'), hangout('alice', { id: 'past', expiresAt: Date.now() - 1000 })));
-      await assertFails(setDoc(doc(db, 'hangouts/far'), hangout('alice', { id: 'far', expiresAt: Date.now() + 5 * HOUR })));
-      await assertFails(setDoc(doc(db, 'hangouts/forever'), hangout('alice', { id: 'forever', expiresAt: Date.now() + 365 * 24 * HOUR })));
+      await assertSucceeds(createWithBudget(db, 'hangouts/ok', 'alice', 'hangout', hangout('alice', { id: 'ok', expiresAt: Date.now() + 4 * HOUR })));
+      await assertFails(createWithBudget(db, 'hangouts/past', 'alice', 'hangout', hangout('alice', { id: 'past', expiresAt: Date.now() - 1000 })));
+      await assertFails(createWithBudget(db, 'hangouts/far', 'alice', 'hangout', hangout('alice', { id: 'far', expiresAt: Date.now() + 5 * HOUR })));
+      await assertFails(createWithBudget(db, 'hangouts/forever', 'alice', 'hangout', hangout('alice', { id: 'forever', expiresAt: Date.now() + 365 * 24 * HOUR })));
     });
 
     it('requires a numeric expiry', async () => {
       const db = verifiedUser('alice');
       const { expiresAt: _omit, ...without } = hangout('alice', { id: 'none' });
-      await assertFails(setDoc(doc(db, 'hangouts/none'), without));
-      await assertFails(setDoc(doc(db, 'hangouts/str'), hangout('alice', { id: 'str', expiresAt: 'tomorrow' })));
+      await assertFails(createWithBudget(db, 'hangouts/none', 'alice', 'hangout', without));
+      await assertFails(createWithBudget(db, 'hangouts/str', 'alice', 'hangout', hangout('alice', { id: 'str', expiresAt: 'tomorrow' })));
     });
 
     it('lets the host renew the table, but only for at most 4 hours from now', async () => {
@@ -144,12 +145,12 @@ describe('hangouts', () => {
   });
 
   it('lets verified users create their own hangout only', async () => {
-    await assertSucceeds(setDoc(doc(verifiedUser('alice'), 'hangouts/h1'), hangout('alice')));
-    await assertFails(setDoc(doc(verifiedUser('alice'), 'hangouts/h2'), hangout('bob', { id: 'h2' })));
-    await assertFails(setDoc(doc(verifiedUser('alice'), 'hangouts/h3'), hangout('alice', { id: 'h3', participantsCount: 5 })));
-    await assertFails(setDoc(doc(verifiedUser('alice'), 'hangouts/h4'), hangout('alice', { id: 'h4', joinedUsers: ['alice', 'bob'] })));
-    await assertFails(setDoc(doc(verifiedUser('alice'), 'hangouts/h5'), hangout('alice', { id: 'h5', barName: '' })));
-    await assertFails(setDoc(doc(verifiedUser('alice'), 'hangouts/h6'), hangout('alice', { id: 'h6', slotsAvailable: 99 })));
+    await assertSucceeds(createWithBudget(verifiedUser('alice'), 'hangouts/h1', 'alice', 'hangout', hangout('alice')));
+    await assertFails(createWithBudget(verifiedUser('alice'), 'hangouts/h2', 'alice', 'hangout', hangout('bob', { id: 'h2' })));
+    await assertFails(createWithBudget(verifiedUser('alice'), 'hangouts/h3', 'alice', 'hangout', hangout('alice', { id: 'h3', participantsCount: 5 })));
+    await assertFails(createWithBudget(verifiedUser('alice'), 'hangouts/h4', 'alice', 'hangout', hangout('alice', { id: 'h4', joinedUsers: ['alice', 'bob'] })));
+    await assertFails(createWithBudget(verifiedUser('alice'), 'hangouts/h5', 'alice', 'hangout', hangout('alice', { id: 'h5', barName: '' })));
+    await assertFails(createWithBudget(verifiedUser('alice'), 'hangouts/h6', 'alice', 'hangout', hangout('alice', { id: 'h6', slotsAvailable: 99 })));
   });
 
   it('lets others take a seat exactly once and nothing more', async () => {
@@ -191,27 +192,27 @@ describe('group meetups', () => {
 
     it('requires endsAt and caps how far ahead a meetup can be planned', async () => {
       const db = verifiedUser('alice');
-      await assertSucceeds(setDoc(doc(db, 'group_meetups/ok'), meetup('alice', { id: 'ok', endsAt: Date.now() + 30 * DAY })));
-      await assertSucceeds(setDoc(doc(db, 'group_meetups/edge'), meetup('alice', { id: 'edge', endsAt: Date.now() + 90 * DAY })));
-      await assertFails(setDoc(doc(db, 'group_meetups/far'), meetup('alice', { id: 'far', endsAt: Date.now() + 400 * DAY })));
-      await assertFails(setDoc(doc(db, 'group_meetups/never'), meetup('alice', { id: 'never', endsAt: Number.MAX_SAFE_INTEGER })));
+      await assertSucceeds(createWithBudget(db, 'group_meetups/ok', 'alice', 'meetup', meetup('alice', { id: 'ok', endsAt: Date.now() + 30 * DAY })));
+      await assertSucceeds(createWithBudget(db, 'group_meetups/edge', 'alice', 'meetup', meetup('alice', { id: 'edge', endsAt: Date.now() + 90 * DAY })));
+      await assertFails(createWithBudget(db, 'group_meetups/far', 'alice', 'meetup', meetup('alice', { id: 'far', endsAt: Date.now() + 400 * DAY })));
+      await assertFails(createWithBudget(db, 'group_meetups/never', 'alice', 'meetup', meetup('alice', { id: 'never', endsAt: Number.MAX_SAFE_INTEGER })));
       const { endsAt: _omit, ...without } = meetup('alice', { id: 'none' });
-      await assertFails(setDoc(doc(db, 'group_meetups/none'), without));
-      await assertFails(setDoc(doc(db, 'group_meetups/str'), meetup('alice', { id: 'str', endsAt: 'later' })));
+      await assertFails(createWithBudget(db, 'group_meetups/none', 'alice', 'meetup', without));
+      await assertFails(createWithBudget(db, 'group_meetups/str', 'alice', 'meetup', meetup('alice', { id: 'str', endsAt: 'later' })));
     });
 
     it('the creator can reschedule within the same bounds, and not beyond them', async () => {
       await seed((db) => setDoc(doc(db, 'group_meetups/m1'), meetup('alice')));
       const alice = verifiedUser('alice');
-      await assertSucceeds(setDoc(doc(alice, 'group_meetups/m1'), meetup('alice', { endsAt: Date.now() + 10 * DAY })));
-      await assertFails(setDoc(doc(alice, 'group_meetups/m1'), meetup('alice', { endsAt: Date.now() + 500 * DAY })));
+      await assertSucceeds(createWithBudget(alice, 'group_meetups/m1', 'alice', 'meetup', meetup('alice', { endsAt: Date.now() + 10 * DAY })));
+      await assertFails(createWithBudget(alice, 'group_meetups/m1', 'alice', 'meetup', meetup('alice', { endsAt: Date.now() + 500 * DAY })));
     });
   });
 
   it('creates only as yourself', async () => {
-    await assertSucceeds(setDoc(doc(verifiedUser('alice'), 'group_meetups/m1'), meetup('alice')));
-    await assertFails(setDoc(doc(verifiedUser('alice'), 'group_meetups/m2'), meetup('bob', { id: 'm2' })));
-    await assertFails(setDoc(doc(verifiedUser('alice'), 'group_meetups/m3'), meetup('alice', { id: 'm3', maxParticipants: 500 })));
+    await assertSucceeds(createWithBudget(verifiedUser('alice'), 'group_meetups/m1', 'alice', 'meetup', meetup('alice')));
+    await assertFails(createWithBudget(verifiedUser('alice'), 'group_meetups/m2', 'alice', 'meetup', meetup('bob', { id: 'm2' })));
+    await assertFails(createWithBudget(verifiedUser('alice'), 'group_meetups/m3', 'alice', 'meetup', meetup('alice', { id: 'm3', maxParticipants: 500 })));
   });
 
   it('lets a member change only their own entry', async () => {
@@ -241,16 +242,17 @@ describe('chats and messages', () => {
   const dm = 'dm_alice_bob';
   const dmDoc = (over: Record<string, unknown> = {}) => ({
     members: ['alice', 'bob'], isGroup: false, profiles: { alice: { name: 'Alice', avatar: '' } },
-    lastCipherPayload: 'enc:v1:a:b', lastSenderId: 'alice', lastMessageTime: '12:00', updatedAt: 'now', ...over,
+    lastCipherPayload: '', lastSenderId: 'alice', lastMessageTime: '12:00', updatedAt: 'now', ...over,
   });
   const msg = (uid: string, id = 'm1', over: Record<string, unknown> = {}) => ({
     id, chatId: dm, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text',
     proposalData: null, timestamp: '12:00', isEncrypted: true, createdAt: serverTimestamp(), ...over,
   });
-  const send = (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
+  const send = async (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
     const batch = writeBatch(db);
+    await attachBudget(db, batch, String(m.senderId), 'message', `${chatId}/${m.id}`);
     batch.set(doc(db, `chats/${chatId}/messages/${m.id}`), m);
-    batch.set(doc(db, `chats/${chatId}`), chat, { merge: true });
+    batch.set(doc(db, `chats/${chatId}`), { ...chat, lastMessageId: m.id, lastCipherPayload: m.cipherPayload, lastMessageTime: m.timestamp }, { merge: true });
     return batch.commit();
   };
 
@@ -321,7 +323,7 @@ describe('chats and messages', () => {
     await assertFails(updateDoc(doc(bob, `chats/${dm}`), { lastSenderId: 'carol' }));
     // rewriting the preview text while leaving Alice as its author is also a spoof
     await assertFails(updateDoc(doc(bob, `chats/${dm}`), { lastCipherPayload: 'enc:v1:fake:fake' }));
-    await assertSucceeds(updateDoc(doc(bob, `chats/${dm}`), { lastCipherPayload: 'enc:v1:ok:ok', lastSenderId: 'bob' }));
+    await assertFails(updateDoc(doc(bob, `chats/${dm}`), { lastCipherPayload: 'enc:v1:ok:ok', lastSenderId: 'bob' }));
     await assertFails(updateDoc(doc(bob, `chats/${dm}`), { 'profiles.alice': { name: 'Fake', avatar: '' } }));
     await assertSucceeds(updateDoc(doc(bob, `chats/${dm}`), { 'profiles.bob': { name: 'Bob', avatar: '' } }));
     await assertFails(deleteDoc(doc(bob, `chats/${dm}`)));
@@ -333,7 +335,7 @@ describe('chats and messages', () => {
     const grp = 'grp_alice_1';
     const grpDoc = (over: Record<string, unknown> = {}) => ({
       members: ['alice', 'bob'], isGroup: true, createdBy: 'alice', groupName: 'Пʼятниця', groupTopic: '', groupAvatar: '🍻',
-      participants: [{ id: 'alice', name: 'Alice', avatar: '', role: 'admin' }], lastCipherPayload: 'x', lastSenderId: 'alice', lastMessageTime: '1', updatedAt: 'n', ...over,
+      participants: [{ id: 'alice', name: 'Alice', avatar: '', role: 'admin' }], lastCipherPayload: '', lastSenderId: 'alice', lastMessageTime: '1', updatedAt: 'n', ...over,
     });
 
     it('lets the creator create the group under their own id prefix only', async () => {
@@ -364,11 +366,16 @@ describe('reports', () => {
     categoryTitle: 'Spam', comment: 'x', timestamp: '1', createdAt: 1, status: 'pending', ...over,
   });
 
-  it('lets users file reports as themselves but never read them back', async () => {
-    await assertSucceeds(setDoc(doc(verifiedUser('alice'), 'reports/r1'), report('alice')));
+  it('files reports with a server-time quota, allows own retry reads and keeps the queue private', async () => {
+    const db = verifiedUser('alice');
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'reportRateLimits/alice'), { count: 1, windowStartedAt: serverTimestamp(), lastAt: serverTimestamp(), lastReportId: 'r1' });
+    batch.set(doc(db, 'reports/r1'), { ...report('alice'), receivedAt: serverTimestamp() });
+    await assertSucceeds(batch.commit());
     await assertFails(setDoc(doc(verifiedUser('alice'), 'reports/r2'), report('bob', { id: 'r2' })));
     await assertFails(setDoc(doc(verifiedUser('alice'), 'reports/r3'), report('alice', { id: 'r3', comment: 'x'.repeat(501) })));
-    await assertFails(getDoc(doc(verifiedUser('alice'), 'reports/r1')));
+    await assertSucceeds(getDoc(doc(verifiedUser('alice'), 'reports/r1')));
+    await assertFails(getDoc(doc(verifiedUser('bob'), 'reports/r1')));
     await assertFails(getDocs(collection(verifiedUser('alice'), 'reports')));
     await assertFails(deleteDoc(doc(verifiedUser('alice'), 'reports/r1')));
     await assertFails(updateDoc(doc(verifiedUser('alice'), 'reports/r1'), { status: 'resolved' }));
@@ -393,34 +400,35 @@ describe('malformed shared documents are refused', () => {
   const dm = 'dm_alice_bob';
   const dmDoc = (over: Record<string, unknown> = {}) => ({
     members: ['alice', 'bob'], isGroup: false, profiles: { alice: { name: 'Alice', avatar: '' } },
-    lastCipherPayload: 'enc:v1:a:b', lastSenderId: 'alice', lastMessageTime: '12:00', updatedAt: 'now', ...over,
+    lastCipherPayload: '', lastSenderId: 'alice', lastMessageTime: '12:00', updatedAt: 'now', ...over,
   });
   const grp = 'grp_alice_1';
   const grpDoc = (over: Record<string, unknown> = {}) => ({
     members: ['alice', 'bob'], isGroup: true, createdBy: 'alice', groupName: 'Пʼятниця', groupTopic: '', groupAvatar: '🍻',
-    participants: [{ id: 'alice', name: 'Alice', avatar: '', role: 'admin' }], lastCipherPayload: 'x', lastSenderId: 'alice',
+    participants: [{ id: 'alice', name: 'Alice', avatar: '', role: 'admin' }], lastCipherPayload: '', lastSenderId: 'alice',
     lastMessageTime: '1', updatedAt: 'n', ...over,
   });
   const msg = (uid: string, id = 'm1', over: Record<string, unknown> = {}) => ({
     id, chatId: dm, senderId: uid, senderName: uid, senderAvatar: null, cipherPayload: 'enc:v1:iv:ct', type: 'text',
     proposalData: null, timestamp: '12:00', isEncrypted: true, createdAt: serverTimestamp(), ...over,
   });
-  const send = (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
+  const send = async (db: any, chatId: string, chat: Record<string, unknown>, m: Record<string, unknown>) => {
     const batch = writeBatch(db);
+    await attachBudget(db, batch, String(m.senderId), 'message', `${chatId}/${m.id}`);
     batch.set(doc(db, `chats/${chatId}/messages/${m.id}`), m);
-    batch.set(doc(db, `chats/${chatId}`), chat, { merge: true });
+    batch.set(doc(db, `chats/${chatId}`), { ...chat, lastMessageId: m.id, lastCipherPayload: m.cipherPayload, lastMessageTime: m.timestamp }, { merge: true });
     return batch.commit();
   };
 
   it('tables: every field has its type', async () => {
     const db = verifiedUser('alice');
-    await assertSucceeds(setDoc(doc(db, 'hangouts/ok'), hangout('alice', { id: 'ok' })));
-    await assertSucceeds(setDoc(doc(db, 'hangouts/noloc'), hangout('alice', { id: 'noloc', lat: null, lng: null })));
-    await assertFails(setDoc(doc(db, 'hangouts/a'), hangout('alice', { id: 'a', drinkPreference: { x: 1 } })));
-    await assertFails(setDoc(doc(db, 'hangouts/b'), hangout('alice', { id: 'b', lat: 'north' })));
-    await assertFails(setDoc(doc(db, 'hangouts/c'), hangout('alice', { id: 'c', createdAt: 12345 })));
-    await assertFails(setDoc(doc(db, 'hangouts/d'), hangout('alice', { id: 'd', status: 'weird' })));
-    await assertFails(setDoc(doc(db, 'hangouts/e'), hangout('alice', { id: 'e', userAvatar: 7 })));
+    await assertSucceeds(createWithBudget(db, 'hangouts/ok', 'alice', 'hangout', hangout('alice', { id: 'ok' })));
+    await assertSucceeds(createWithBudget(db, 'hangouts/noloc', 'alice', 'hangout', hangout('alice', { id: 'noloc', lat: null, lng: null })));
+    await assertFails(createWithBudget(db, 'hangouts/a', 'alice', 'hangout', hangout('alice', { id: 'a', drinkPreference: { x: 1 } })));
+    await assertFails(createWithBudget(db, 'hangouts/b', 'alice', 'hangout', hangout('alice', { id: 'b', lat: 'north' })));
+    await assertFails(createWithBudget(db, 'hangouts/c', 'alice', 'hangout', hangout('alice', { id: 'c', createdAt: 12345 })));
+    await assertFails(createWithBudget(db, 'hangouts/d', 'alice', 'hangout', hangout('alice', { id: 'd', status: 'weird' })));
+    await assertFails(createWithBudget(db, 'hangouts/e', 'alice', 'hangout', hangout('alice', { id: 'e', userAvatar: 7 })));
   });
 
   it('tables: the host renews or closes, but cannot rewrite who sits at the table', async () => {
@@ -434,12 +442,12 @@ describe('malformed shared documents are refused', () => {
 
   it('meetups: every top-level field has its type', async () => {
     const db = verifiedUser('alice');
-    await assertSucceeds(setDoc(doc(db, 'group_meetups/ok'), meetup('alice', { id: 'ok' })));
-    await assertFails(setDoc(doc(db, 'group_meetups/a'), meetup('alice', { id: 'a', venueName: ['x'] })));
-    await assertFails(setDoc(doc(db, 'group_meetups/b'), meetup('alice', { id: 'b', creatorName: { evil: true } })));
-    await assertFails(setDoc(doc(db, 'group_meetups/c'), meetup('alice', { id: 'c', scheduledTime: 1900 })));
-    await assertFails(setDoc(doc(db, 'group_meetups/d'), meetup('alice', { id: 'd', lat: 'x' })));
-    await assertFails(setDoc(doc(db, 'group_meetups/e'), meetup('alice', { id: 'e', description: 'x'.repeat(301) })));
+    await assertSucceeds(createWithBudget(db, 'group_meetups/ok', 'alice', 'meetup', meetup('alice', { id: 'ok' })));
+    await assertFails(createWithBudget(db, 'group_meetups/a', 'alice', 'meetup', meetup('alice', { id: 'a', venueName: ['x'] })));
+    await assertFails(createWithBudget(db, 'group_meetups/b', 'alice', 'meetup', meetup('alice', { id: 'b', creatorName: { evil: true } })));
+    await assertFails(createWithBudget(db, 'group_meetups/c', 'alice', 'meetup', meetup('alice', { id: 'c', scheduledTime: 1900 })));
+    await assertFails(createWithBudget(db, 'group_meetups/d', 'alice', 'meetup', meetup('alice', { id: 'd', lat: 'x' })));
+    await assertFails(createWithBudget(db, 'group_meetups/e', 'alice', 'meetup', meetup('alice', { id: 'e', description: 'x'.repeat(301) })));
   });
 
   it('chats: typed preview and description, distinct members, a well-formed profile line', async () => {

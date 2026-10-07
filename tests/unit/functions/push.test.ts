@@ -160,6 +160,18 @@ describe('notifyChatMessage', () => {
 });
 
 describe('sendToExpo', () => {
+  it('retries transient failures, and stops on a permanent rejection', async () => {
+    const wait = vi.fn().mockResolvedValue(undefined);
+    const fetchImpl = vi.fn().mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce(new Response('{}', { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ status: 'ok', id: 'ticket' }] })));
+    expect(await sendToExpo([{ to: 'ExponentPushToken[test]' } as ExpoMessage], { fetchImpl, wait })).toEqual([{ status: 'ok', id: 'ticket' }]);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls.map(([delay]) => delay)).toEqual([250, 500]);
+    fetchImpl.mockReset().mockResolvedValue(new Response('{}', { status: 400 }));
+    await expect(sendToExpo([{ to: 'ExponentPushToken[test]' } as ExpoMessage], { fetchImpl, wait })).rejects.toThrow('HTTP 400');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
   const withServer = async (handler: (body: any) => { status?: number; json: unknown }) => {
     const seen: { body: any; headers: any }[] = [];
     const server = createServer((req, res) => {

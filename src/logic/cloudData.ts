@@ -165,6 +165,8 @@ export function readCloudChat(id: string, v: unknown, myId: string): CloudChat |
     lastSenderId: asOptString(v.lastSenderId),
     lastMessageTime: asOptString(v.lastMessageTime),
     updatedAt: asOptString(v.updatedAt),
+    lastMessageId: asOptString(v.lastMessageId),
+    anonymizedMembers: asStringList(v.anonymizedMembers, 10),
   };
 }
 

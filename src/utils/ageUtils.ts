@@ -5,17 +5,16 @@
 export function calculateAge(birthDateStr?: string | null, now: Date = new Date()): number | null {
   if (!birthDateStr) return null;
   const parts = birthDateStr.split('-');
-  if (parts.length === 3) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(birthDateStr)) {
     const year = parseInt(parts[0], 10);
     const month = parseInt(parts[1], 10) - 1;
     const day = parseInt(parts[2], 10);
     if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
     const birthDate = new Date(year, month, day);
+    if (birthDate.getFullYear() !== year || birthDate.getMonth() !== month || birthDate.getDate() !== day) return null;
     return calculateFromDate(birthDate, now);
   }
-  const d = new Date(birthDateStr);
-  if (isNaN(d.getTime())) return null;
-  return calculateFromDate(d, now);
+  return null;
 }
 
 function calculateFromDate(birthDate: Date, today: Date): number | null {

@@ -1,5 +1,6 @@
+import { dialogs as Alert } from '../services/dialogs';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Circle, MapView, Marker, type Region } from '../components/map';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -36,7 +37,9 @@ export const MapScreen = () => {
   const hangouts = useAppSelector(selectHangouts);
   const favorites = useAppSelector((s) => s.favorites.items);
   const userId = useAppSelector((s) => s.auth.user.id);
-  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selected, setSelection] = useState<Selection | null>(null);
+  const currentHangout = selected?.kind === 'hangout' ? hangouts.find((h) => h.id === selected.hangout.id) : undefined;
+  const selection: Selection | null = selected?.kind === 'hangout' ? (currentHangout ? { kind: 'hangout', hangout: currentHangout } : null) : selected;
   const [locating, setLocating] = useState(false);
 
   const favoriteIds = useMemo(() => new Set(favorites.map((f) => f.id)), [favorites]);
@@ -199,7 +202,7 @@ export const MapScreen = () => {
                     label={selection.hangout.userId === userId || (selection.hangout.joinedUsers ?? []).includes(userId) ? tr('Ви за столиком') : tr('Приєднатись')}
                     icon="log-in"
                     small
-                    disabled={selection.hangout.userId === userId || (selection.hangout.joinedUsers ?? []).includes(userId)}
+                    disabled={selection.hangout.userId === userId || (selection.hangout.joinedUsers ?? []).includes(userId) || selection.hangout.participantsCount >= selection.hangout.slotsAvailable + 1}
                     onPress={() => dispatch(joinHangout(selection.hangout.id))}
                   />
                 </>

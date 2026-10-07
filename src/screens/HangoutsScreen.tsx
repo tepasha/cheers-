@@ -1,5 +1,6 @@
+import { dialogs as Alert } from '../services/dialogs';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography } from '../theme';
@@ -119,7 +120,7 @@ export const HangoutsScreen = () => {
                 <Row style={{ justifyContent: 'space-between' }}>
                   <Text style={typography.tiny}>{tr('За столиком: {count}', { count: h.participantsCount })}</Text>
                   <Row>
-                    {!mine && <IconButton icon="flag" label={tr('Поскаржитись')} color={colors.textDim} onPress={() => setReportTarget({ id: h.userId, name: h.userName, avatar: h.userAvatar, type: 'hangout' })} />}
+                    {!mine && <IconButton icon="flag" label={tr('Поскаржитись')} color={colors.textDim} onPress={() => setReportTarget({ id: h.userId, name: h.userName, avatar: h.userAvatar, type: 'hangout', contextId: h.id })} />}
                     {!mine && <IconButton icon="message-circle" label={tr('Написати організатору')} onPress={() => chatWithHost(h)} />}
                     {mine ? (
                       <Button label={tr('Закрити')} small variant="danger" icon="x" onPress={() => confirmClose(h)} />

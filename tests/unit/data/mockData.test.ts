@@ -21,7 +21,8 @@ describe('mockData integrity tests', () => {
 
   it('should have complete metadata for all moods and payments', () => {
     expect(Object.keys(MOOD_METADATA).length).toBeGreaterThanOrEqual(5);
-    expect(Object.keys(PAYMENT_METADATA).length).toBe(4);
+    expect(Object.keys(PAYMENT_METADATA).length).toBe(5);
+    expect(PAYMENT_METADATA.not_specified.badge).toBe('—');
     expect(PAYMENT_METADATA.split_50_50.badge).toContain('50/50');
   });
 

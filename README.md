@@ -1,6 +1,8 @@
-# **CheersMobApp** — Мобільний додаток для пошуку компанії та організацій зустрічей
+# **Будьмо!** (Budmo) — Мобільний додаток для пошуку компанії та організацій зустрічей
 
-**CheersMobApp** — це мобільний застосунок, створений для швидкого та зручного пошуку компанії за спільними інтересами чи приводом (наприклад, відпочинок, розваги, зустрічі з друзями або нові знайомства).
+**Будьмо!** (`com.budmo.app`, репозиторій `cheers-`) — це мобільний застосунок, створений для швидкого та зручного пошуку компанії за спільними інтересами чи приводом (наприклад, відпочинок, розваги, зустрічі з друзями або нові знайомства).
+
+Підготовка першого публічного релізу: [DEPLOY.md](DEPLOY.md), [модель безпеки](SECURITY.md) і [перевірка залежностей](docs/dependency-audit.md). Перед build/OTA потрібні реальні legal URL, `SUPPORT_EMAIL`, Sentry env та reviewer реквізити; для iOS — перевірена `EXPORT_ENCRYPTION_CLASSIFICATION`. Кодові перевірки не замінюють staging deployment, нативну збірку й перевірки на пристроях.
 
 ---
 
@@ -18,7 +20,7 @@
 * **Фреймворк:** React Native 0.86 + Expo SDK 57 *(iOS та Android з однієї кодової бази)*.
 * **Мова:** TypeScript (`strict`).
 * **Навігація:** React Navigation 7 (нижні таби + native stack).
-* **Стан:** Redux Toolkit + `redux-persist` (AsyncStorage). Побічні ефекти — у thunks, логіка — у чистих функціях.
+* **Стан:** Redux Toolkit + `redux-persist`: кожен слайс зберігається окремим зашифрованим записом в AsyncStorage, ключ шифрування лежить у сховищі ключів ОС (`expo-secure-store`, [src/store/keystore.ts](src/store/keystore.ts)); у веб-перегляді без шифрування. Побічні ефекти — у thunks, логіка — у чистих функціях.
 * **Бекенд:** Firebase JS SDK: Auth (email + підтвердження) та Firestore із закритими правилами (`firestore.rules`), що перевіряються тестами на емуляторі.
 * **Карти та геолокація:** `react-native-maps`, `expo-location`.
 * **Шифрування повідомлень:** AES-GCM через `@noble/ciphers` (Hermes не має `crypto.subtle`).
@@ -34,7 +36,7 @@
 ├── index.ts             # Точка входу
 ├── app.json / eas.json  # Конфігурація Expo та EAS Build/Submit
 ├── assets/              # Іконка, splash, adaptive icon
-├── functions/           # Cloud Function: push-сповіщення про нові повідомлення (окремий пакет)
+├── functions/           # Cloud Functions (окремий пакет): push про нові повідомлення, deleteMyAccount, очищення
 ├── tests/               # Усі тести: unit/ (дзеркало src/ і functions/) і rules/ (емулятор Firestore)
 └── src/
     ├── screens/         # Екрани (Discover, Map, Hangouts, Friends, Chats, ChatRoom, Profile…)
@@ -46,7 +48,7 @@
     │   └── selectors.ts # Похідні дані (відстані, блокування, лічильники)
     ├── logic/           # Чисті правила: гейміфікація, мітапи, сесія, фільтри, дати
     ├── services/        # Firebase, Firestore sync, шифрування, гео, локація, i18n, аналітика
-    ├── hooks/           # useAppLifecycle (сесія, мережа, Firestore-потоки, GPS), useChatSync…
+    ├── hooks/           # useAppLifecycle (сесія, мережа, GPS, push), useCloudSync (Firestore-потоки, присутність, профіль), useChatSync…
     ├── data/            # Заклади, тости, довідники
     └── theme/           # Кольори, відступи, типографіка
 ```
@@ -64,8 +66,8 @@
 
 1. **Клонувати репозиторій:**
    ```bash
-   git clone https://github.com/tepasha/CheersMobApp.git
-   cd CheersMobApp
+   git clone https://github.com/tepasha/cheers-.git
+   cd cheers-
    ```
 
 2. **Встановити залежності:**
@@ -100,6 +102,18 @@
 
 **Не перевірено на пристрої:** сам обмін з Google (потрібні ваші client id та збірка). Перевірено тестами: обмін токена на сесію Firebase, скасування діалогу, помилки, перевірка віку з межею в день 21-річчя, видалення акаунта молодшого за 21.
 
+#### Вхід через Apple (iOS)
+
+App Store вимагає Sign in with Apple поряд із входом через Google (Guideline 4.8), тож на iOS 13+ під кнопкою Google є офіційна кнопка Apple. Працює так само, як Google: новий акаунт створюється автоматично, далі застосунок питає дату народження й застосовує поріг 21 рік. Видалення акаунта Apple підтверджується входом через Apple і відкликає токени Apple, як вимагає Apple.
+
+Що треба налаштувати (код цього зробити не може):
+
+1. **Apple Developer → Identifiers → `com.budmo.app`: увімкнути capability «Sign In with Apple».** EAS Build додасть entitlement сам (`ios.usesAppleSignIn` у `app.json`).
+2. **Firebase Console → Authentication → Sign-in method → Apple: увімкнути.** Для входу з нативного iOS-застосунку Services ID і ключ не потрібні (лише для вебу та Android, яких тут немає).
+3. Перевіряється лише на справжньому iOS-пристрої або симуляторі зі збіркою (не Expo Go).
+
+**Не перевірено на пристрої:** сам діалог Apple. Перевірено тестами: шлях акаунта Apple у застосунку (дата народження, поріг), видалення з повторним входом через Apple.
+
 #### Веб-перегляд (`npm run web`)
 
 Застосунок мобільний, але в браузері (Expo web, вікно перегляду AI Studio) він теж відкривається. Відмінності: замість `react-native-maps` (потрібні нативні SDK) показується список точок ([src/components/map/index.web.tsx](src/components/map/index.web.tsx)); сховище стану не шифрується (немає OS-ключосховища); push недоступні. Без Firebase-змінних застосунок стартує в демо-режимі: екран входу пояснює, що саме не налаштовано, і жодних запитів до Firebase не робить. Щоб побачити решту екранів, потрібні змінні з `.env.example` і підтверджений акаунт.
@@ -109,7 +123,7 @@
 ```bash
 npm run lint        # ESLint (react-hooks) + tsc --noEmit, включно з тестами
 npm test            # tests/unit: логіка, стор, шифрування, локалізація
-npm run test:rules  # tests/rules: правила Firestore + контракт клієнта на емуляторі (Java 11+)
+npm run test:rules  # правила + справжній клієнт на Firestore emulator (Java 21+)
 ```
 
 Усі тести лежать у теці `tests/`: `tests/unit/` віддзеркалює структуру `src/`, `tests/rules/` — тести з емулятором. Код застосунку в тестах імпортується через псевдонім `@/…` (= `src/…`).
@@ -124,18 +138,31 @@ npm run test:rules  # tests/rules: правила Firestore + контракт �
 
 #### Ключі та змінні оточення
 
-У репозиторії ключів немає. Скопіюйте `.env.example` у `.env` (він у `.gitignore`) і заповніть: `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID`, `FIREBASE_STORAGE_BUCKET`, `FIREBASE_FIRESTORE_DATABASE_ID`, `GOOGLE_MAPS_API_KEY`. [app.config.ts](app.config.ts) читає їх і кладе Firebase-конфіг в `extra.firebase`, а ключ карт в `android.config.googleMaps`. Без Firebase-змінних застосунок одразу падає з поясненням. Після зміни `.env` перезапустіть `npx expo start -c`.
+У репозиторії ключів немає. Скопіюйте `.env.example` у `.env` (він у `.gitignore`) і заповніть: `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID`, `FIREBASE_STORAGE_BUCKET`, `FIREBASE_FIRESTORE_DATABASE_ID`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`, `PRIVACY_POLICY_URL`, `TERMS_URL`, `GOOGLE_SERVICES_JSON`. [app.config.ts](app.config.ts) читає їх і кладе Firebase-конфіг в `extra.firebase`, а ключ карт в `android.config.googleMaps`. Без Firebase-змінних (або без `FIREBASE_FIRESTORE_DATABASE_ID`: мовчазного переходу на базу `(default)` більше немає) застосунок стартує в демо-режимі й пояснює, чого бракує; кнопка Google зʼявляється лише тоді, коли задано потрібні для платформи client id. Після зміни `.env` перезапустіть `npx expo start -c`.
 
-**EAS-збірки в хмарі не бачать `.env`** (він не в git): створіть ті самі змінні через `npx eas-cli env:create` (для `preview` і `production`). Ці ключі не є секретами в криптографічному сенсі: вони потрапляють у кожну збірку. Захист їх: правила Firestore та обмеження ключа в Google Cloud (Firebase-ключ, ключ карт за пакетом `com.budmo.app` і SHA-1).
+**EAS-збірки в хмарі не бачать `.env`** (він не в git): створіть ті самі змінні через `npx eas-cli env:create` (для `preview` і `production`) з видимістю **Plain text** або **Sensitive**, не **Secret**: `eas update` і `eas env:exec` Secret-змінних не бачать, тож OTA-оновлення пішло б без них. Для preview- і production-збірок обовʼязкові всі змінні вище: CI перевіряє їх до старту збірки й перед кожним OTA (`eas env:exec <env> 'node scripts/release-check.mjs --env'`), а `app.config.ts` на EAS-воркері зупиняє збірку, якщо чогось бракує (зокрема файлу `GOOGLE_SERVICES_JSON`). Ці ключі не є секретами в криптографічному сенсі: вони потрапляють у кожну збірку. Захист їх: правила Firestore, App Check (ще не підключений, див. [SECURITY.md](SECURITY.md)) і обмеження ключів у Google Cloud. Firebase-ключ (`FIREBASE_API_KEY`) обмежуйте **лише за API** (Identity Toolkit, Token Service, Cloud Firestore), а не за Android/iOS-застосунком: Firebase JS SDK не надсилає заголовків пакета й SHA-1, тож таке обмеження відмовить у вході всім. За пакетом `com.budmo.app` і SHA-1 обмежується лише ключ карт (`GOOGLE_MAPS_API_KEY`), його нативний Maps SDK ці заголовки надсилає.
 
 #### Збірки для сторів (EAS)
 
+Проєкт уже привʼязаний до EAS (`extra.eas.projectId` в `app.json`; `npx eas-cli init` потрібен лише для форку). Локальна збірка:
+
 ```bash
-npx eas-cli init                        # один раз: створює projectId у app.json
 npx eas-cli build --platform android --profile preview
 ```
 
-Для відправки iOS-збірок у TestFlight workflow бере **змінні репозиторію** (Settings → Secrets and variables → Actions → Variables) `ASC_APP_ID` (числовий Apple ID застосунку з App Store Connect) та `APPLE_TEAM_ID`; без них збірка створюється, але в TestFlight не відправляється. У `eas.json` цих значень немає навмисно. Для ручного `eas submit` EAS запитає їх інтерактивно.
+Як іде реліз (докладно, з усіма одноразовими налаштуваннями: [DEPLOY.md](DEPLOY.md)):
+
+* **push у `main`** ([preview.yml](.github/workflows/preview.yml)): CI → правила й functions у **staging**-проєкт → (якщо змінна репозиторію `PREVIEW_BUILDS=true`) Android preview APK і OTA у канал `preview`. Preview-клієнти мусять дивитися на staging: CI порівнює EAS `preview` з GitHub Environment `staging`.
+* **тег `vX.Y.Z`** ([release.yml](.github/workflows/release.yml)): CI → перевірка (тег = версія в `app.json` і `package.json`, коміт у `main`, `STORE_RELEASES=true`, усі ключі сторів, повне EAS-середовище `production`) → **production-бекенд** (після схвалення Environment `production`) → Android у Play internal, iOS у TestFlight. Тобто бойові правила й functions змінюються на тезі, а не на promote. Поки `STORE_RELEASES` не `true`, тег нічого не деплоїть і не збирає.
+* **promote** ([promote.yml](.github/workflows/promote.yml), вручну, схвалення `store-release`): Android з internal у production зі staged rollout, iOS: листинг; бекенд не змінює.
+* **OTA у production** ([ota.yml](.github/workflows/ota.yml), вручну): лише JS і ресурси. Runtime version = нативний fingerprint, тож оновлення доходить тільки до збірок з тим самим нативним кодом; без такої production-збірки для кожної платформи workflow не публікує.
+* Усе, що веде в production, запускається лише з `main` або тегу на коміті з `main` і лише після повного CI.
+
+Профіль `development` збирає development client (`expo-dev-client`): встановіть збірку один раз, а JS вантажте з `npx expo start --dev-client`. Так перевіряються вхід через Google і push без нової збірки на кожну зміну. Він бере змінні EAS-середовища `development` (обовʼязкові лише для preview/production).
+
+Кожна iOS-збірка в CI (`build-ios.yml`) потребує ключа App Store Connect API: секрети `APP_STORE_CONNECT_API_KEY_BASE64`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID` і **змінна репозиторію** (Settings → Secrets and variables → Actions → Variables) `APPLE_TEAM_ID`; без будь-якого з них job зупиняється до старту хмарної збірки. Для відправки в TestFlight потрібна ще змінна `ASC_APP_ID` (числовий Apple ID застосунку з App Store Connect); без неї production-збірка створюється, але в TestFlight не відправляється. У `eas.json` цих значень немає навмисно: `eas.json` входить у fingerprint (runtime version), тож workflow дописує їх лише в окремому кроці `eas submit` після збірки, і OTA-оновлення з чистого checkout збігаються зі збіркою в сторі. Для ручного `eas submit` EAS запитає їх інтерактивно.
+
+Android: tag-реліз відправляє production AAB у Play **internal** track (окремим кроком `eas submit` після збірки), для цього потрібен секрет `GOOGLE_SERVICE_ACCOUNT_BASE64` (без нього job зупиняється до старту хмарної збірки; preview-збірки в Play не йдуть ніколи). Далі [promote.yml](.github/workflows/promote.yml) з `build_id` цієї збірки переводить той самий versionCode з internal у production через Play Developer API ([scripts/play-promote.mjs](scripts/play-promote.mjs)), нічого не завантажуючи вдруге: `rollout` 0.1 → 0.5 → 1.
 
 Workflow збірок нічого не публікує у GitHub Releases і не друкує повний результат `eas build`: він містить посилання на артефакти. У підсумку job лишаються лише id, статус і посилання на сторінку збірки в EAS.
 
@@ -143,18 +170,22 @@ Workflow збірок нічого не публікує у GitHub Releases і �
 
 Коли застосунок закритий, нові повідомлення приходять пушем. Схема: телефон реєструє Expo push-токен у `devices/{id}` (Firestore) → Cloud Function [`functions/`](functions/src/index.ts) спрацьовує на кожне нове повідомлення чату й надсилає пуш через Expo Push Service → тап по пушу відкриває потрібний чат. Поки застосунок відкритий, ОС нічого не показує: працює банер усередині застосунку.
 
-Та сама тека `functions/` містить щогодинне очищення `cleanupExpiredContent`: столики живуть 4 години, зустрічі зникають через 24 години після початку, архів видаляється через 30 днів (див. [SECURITY.md](SECURITY.md)). Воно використовує Cloud Scheduler: API вмикається автоматично при першому деплої функцій (потрібен Blaze).
+Там само живе **`deleteMyAccount`** — видалення акаунта для будь-якого способу входу (застосунок кличе її після повторного входу паролем або через Google; без цієї функції кнопка «Видалити акаунт» повертає помилку). Та сама тека `functions/` містить щогодинне очищення `cleanupExpiredContent`: столики живуть 4 години, зустрічі зникають через 24 години після початку, архів видаляється через 30 днів (див. [SECURITY.md](SECURITY.md)). Воно використовує Cloud Scheduler: API вмикається автоматично при першому деплої функцій (потрібен Blaze).
 
 Що треба зробити один раз (нічого з цього код зробити не може):
 
-1. `npx eas-cli init` — створює `extra.eas.projectId` в `app.json`; без нього токен не видається, а перемикач «Системні сповіщення» покаже «недоступні».
-2. **Android:** створіть проєкт Firebase Cloud Messaging V1, додайте `google-services.json` до проєкту та завантажте ключ сервісного акаунта в EAS (`eas credentials`). **iOS:** EAS створить ключ APNs під час `eas build`. Push не працює в Expo Go, лише у збірці (development / preview / production).
-3. Cloud Functions потребують тарифу **Blaze**. Розгортання:
+1. `extra.eas.projectId` в `app.json` уже є (для форку: `npx eas-cli init`); без нього токен не видається, а перемикач «Системні сповіщення» покаже «недоступні».
+2. **Android:** увімкніть Firebase Cloud Messaging API (V1), передайте `google-services.json` як файлову EAS-змінну `GOOGLE_SERVICES_JSON` і завантажте ключ сервісного акаунта FCM V1 в EAS (`npx eas-cli credentials -p android`). **iOS:** ключ APNs додайте через `npx eas-cli credentials -p ios` (CI збирає в `--non-interactive` і сам його не створить). Push не працює в Expo Go, лише у збірці (development / preview / production).
+3. Cloud Functions потребують тарифу **Blaze**. Звичайно їх розгортає CI ([deploy-backend.yml](.github/workflows/deploy-backend.yml)); вручну так:
    ```bash
    cd functions && npm ci && cd ..
+   # functions/.env.<project-id> (не комітиться: .gitignore містить .env*)
+   echo 'FIRESTORE_DATABASE_ID=<id з "database" у firebase.json>' > functions/.env.<project-id>
+   # необовʼязково, лише якщо в Expo-проєкті увімкнено «enhanced push security»:
+   # echo 'EXPO_ACCESS_TOKEN=<токен>' >> functions/.env.<project-id>
    npx firebase-tools@15.32.1 deploy --only functions --project <project-id>
    ```
-   Параметри функції (`firebase functions:params` / `.env`): `FIRESTORE_DATABASE_ID` — id іменованої бази (`FIREBASE_FIRESTORE_DATABASE_ID` з `.env`), `EXPO_ACCESS_TOKEN` — необовʼязково, якщо в Expo-проєкті увімкнено «enhanced push security».
+   `FIRESTORE_DATABASE_ID` обовʼязковий і не має значення за замовчуванням: без нього деплой зупиниться (у `--non-interactive`) або спитає id, а не привʼяже функції мовчки до бази `(default)`, де чатів немає (тоді пуші й очищення тихо не працюють). Значення має збігатися з `database` у `firebase.json` і `FIREBASE_FIRESTORE_DATABASE_ID` застосунку. `EXPO_ACCESS_TOKEN` функція читає з оточення, тож без нього деплой проходить. Перший деплой функцій у проєкт без `--non-interactive` спитає, скільки днів зберігати образи (Artifact Registry): відповідь 7 нормальна.
 4. Правила з колекцією `devices` треба розгорнути разом (див. [SECURITY.md](SECURITY.md)).
 
 Що бачить пуш: імʼя відправника (або назву групи) і загальний рядок на мові пристрою («Нове повідомлення»). **Текст повідомлення в пуш не потрапляє**, сервер його не розшифровує. Але Expo і Apple/Google бачать імʼя відправника та id чату.

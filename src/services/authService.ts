@@ -1,7 +1,6 @@
 import {
   EmailAuthProvider,
   createUserWithEmailAndPassword,
-  deleteUser,
   reauthenticateWithCredential,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -11,8 +10,11 @@ import {
   updateProfile,
   type User,
 } from 'firebase/auth';
-import { signInWithGoogle } from './googleSignIn';
-import { auth } from './firebase';
+import { httpsCallable } from 'firebase/functions';
+import { reauthenticateWithGoogle, signInWithGoogle } from './googleSignIn';
+import { signOutGoogle } from './googleSignIn';
+import { reauthenticateWithApple, signInWithApple } from './appleSignIn';
+import { auth, functions } from './firebase';
 import { firestoreSyncService } from './firestoreSyncService';
 import { ph } from './i18nService';
 
@@ -47,10 +49,41 @@ export function describeAuthError(err: unknown): string {
       return ph('Вхід через Google працює лише в зібраному застосунку, не в Expo Go');
     case 'google/play-services':
       return ph('Потрібні служби Google Play');
+    case 'apple/no-token':
+      return ph('Apple не підтвердив вхід. Спробуйте ще раз');
+    case 'functions/unavailable':
+    case 'functions/deadline-exceeded':
+      return ph('Немає зв’язку з мережею');
     default:
       return ph('Не вдалося виконати дію. Спробуйте пізніше');
   }
 }
+
+/** Codes the UI treats as "the person changed their mind", not as an error */
+export const CANCELLED = 'auth/cancelled';
+
+const withCode = (code: string, message = code) => Object.assign(new Error(message), { code });
+
+/**
+ * Asks the server to delete the account and everything that belongs to it (functions/src/account.ts). The server
+ * refuses when the sign-in is not recent; that comes back as auth/requires-recent-login, like Firebase's own check.
+ */
+async function deleteOnServer(): Promise<void> {
+  try {
+    await httpsCallable(functions, 'deleteMyAccount')();
+  } catch (err) {
+    const { code, message } = err as { code?: string; message?: string };
+    if (code === 'functions/failed-precondition' && message === 'requires-recent-login') throw withCode('auth/requires-recent-login');
+    throw err;
+  }
+}
+
+/** How this account proves it is its owner again: a password if it has one, otherwise the provider it signed in with */
+const reauthMethodOf = (user: User): 'password' | 'apple' | 'google' => {
+  const ids = user.providerData.map((p) => p.providerId);
+  if (ids.includes('password')) return 'password';
+  return ids.includes('apple.com') ? 'apple' : ids.includes('google.com') ? 'google' : 'password';
+};
 
 const requireUser = (): User => {
   const user = auth.currentUser;
@@ -59,13 +92,26 @@ const requireUser = (): User => {
 };
 
 export const authService = {
+  async completeOnboarding(birthDate: string): Promise<void> {
+    const user = requireUser();
+    await httpsCallable(functions, 'completeOnboarding')({ birthDate, termsAccepted: true });
+    await user.getIdToken(true);
+  },
+
+  async updatePersonalProfile(name: string, birthDate?: string): Promise<void> {
+    const user = requireUser();
+    if (birthDate) await authService.completeOnboarding(birthDate);
+    await updateProfile(user, { displayName: name.trim().slice(0, 60) });
+    await firestoreSyncService.saveUserProfile({ id: user.uid, name: name.trim().slice(0, 60) });
+  },
   /** Creates the account, stores the private profile and sends the verification email */
   async register(input: { email: string; password: string; name: string; birthDate: string }): Promise<User> {
     const email = input.email.trim();
     const cred = await createUserWithEmailAndPassword(auth, email, input.password);
-    await updateProfile(cred.user, { displayName: input.name.trim() || undefined });
+    await updateProfile(cred.user, { displayName: input.name.trim().slice(0, 60) || undefined });
     // Private data first: it needs no verified email, and the public profile is published after verification
     await firestoreSyncService.savePrivateProfile(cred.user.uid, { email, birthDate: input.birthDate });
+    await authService.completeOnboarding(input.birthDate);
     await sendEmailVerification(cred.user);
     return cred.user;
   },
@@ -86,22 +132,34 @@ export const authService = {
   },
 
   /**
-   * Removes the account that has just signed in and turned out to be too young: its data and the Firebase user.
-   * The sign-in is seconds old, so no re-authentication is needed; if deleting still fails, the session is ended.
+   * Sign in with Apple (iOS). Like Google: a new person gets an account, and the app asks for the birth date next.
+   * Apple shares the name only the first time, so it is handed back for the profile.
    */
-  async removeAccountAfterAgeRejection(): Promise<void> {
-    const user = auth.currentUser;
-    if (!user) return;
-    try {
-      await firestoreSyncService.deleteAccountData(user.uid);
-      await deleteUser(user);
-    } catch (err) {
-      console.warn('Could not remove the underage account, signing out instead:', err);
-      await signOut(auth);
-    }
+  async loginWithApple(): Promise<{ user: User; isNewUser: boolean; fullName: string } | null> {
+    const result = await signInWithApple(auth);
+    if (!result) return null;
+    return { user: result.cred.user, isNewUser: getAdditionalUserInfo(result.cred)?.isNewUser === true, fullName: result.fullName };
   },
 
-  async logout(): Promise<void> {
+  /**
+   * Removes the account that has just signed in and turned out to be too young: its data and the Firebase user.
+   * Deletion still requires a recent sign-in. If it expired, sign out and let support handle a verified request.
+   */
+  async removeAccountAfterAgeRejection(): Promise<void> {
+    const owner = auth.currentUser?.uid;
+    if (!owner) return;
+    try {
+      await deleteOnServer();
+    } catch (err) {
+      console.warn('Could not remove the underage account, signing out instead:', err);
+    }
+    if (auth.currentUser?.uid === owner) await signOut(auth).catch(() => {});
+  },
+
+  async logout(expectedUid?: string): Promise<void> {
+    if (expectedUid && auth.currentUser?.uid !== expectedUid) return;
+    await signOutGoogle();
+    if (expectedUid && auth.currentUser?.uid !== expectedUid) return;
     await signOut(auth);
   },
 
@@ -124,12 +182,25 @@ export const authService = {
     return user.emailVerified;
   },
 
-  /** Permanently deletes the account and its Firestore data (App Store / Google Play requirement) */
-  async deleteAccount(password: string): Promise<void> {
+  /**
+   * Permanently deletes the account (App Store / Google Play requirement), for every sign-in method: the person first
+   * proves it is them again (their password, or the Google dialog for a Google account), then the server removes their
+   * data everywhere and the account itself. Throws CANCELLED when they closed the Google dialog.
+   */
+  async deleteAccount(password?: string): Promise<void> {
     const user = requireUser();
-    if (!user.email) throw Object.assign(new Error('No email'), { code: 'auth/requires-recent-login' });
-    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
-    await firestoreSyncService.deleteAccountData(user.uid);
-    await deleteUser(user);
+    const method = reauthMethodOf(user);
+    if (method === 'google') {
+      if (!(await reauthenticateWithGoogle(user))) throw withCode(CANCELLED);
+    } else if (method === 'apple') {
+      // Also revokes the app's Sign in with Apple tokens, as Apple requires on account deletion
+      if (!(await reauthenticateWithApple(auth, user))) throw withCode(CANCELLED);
+    } else {
+      if (!user.email || !password) throw withCode('auth/requires-recent-login');
+      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
+    }
+    await deleteOnServer();
+    // The account no longer exists on the server; drop the local session too
+    await signOut(auth).catch(() => {});
   },
 };

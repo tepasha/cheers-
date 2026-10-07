@@ -3,7 +3,8 @@ import { selectCanUseApp } from '@/store/selectors';
 import { createGuestUser, createUser } from '@/logic/session';
 import type { RootState } from '@/store/index';
 
-const state = (user: ReturnType<typeof createUser>) => ({ auth: { user } }) as unknown as RootState;
+const coordinates = { lat: 50.45, lng: 30.52 };
+const state = (user: ReturnType<typeof createUser>) => ({ auth: { user }, location: { current: coordinates }, settings: { simulateRuBlock: false } }) as unknown as RootState;
 const born = (years: number, offsetDays = 0) => {
   const d = new Date();
   d.setFullYear(d.getFullYear() - years);

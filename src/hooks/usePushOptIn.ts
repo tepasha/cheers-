@@ -1,5 +1,6 @@
+import { dialogs as Alert } from '../services/dialogs';
 import { useEffect } from 'react';
-import { Alert } from 'react-native';
+
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { pushSettingsUpdated } from '../store/slices/settingsSlice';
 import { registerPush } from '../store/thunks/push';
@@ -21,7 +22,10 @@ export function usePushOptIn() {
     if (alreadyAsked) return;
     let cancelled = false;
     const timer = setTimeout(async () => {
-      if ((await getSystemNotificationPermission()) !== 'undetermined' || cancelled) return;
+      const permission = await getSystemNotificationPermission();
+      if (cancelled) return;
+      if (permission === 'granted') { void dispatch(registerPush({ ask: false })); return; }
+      if (permission !== 'undetermined') return;
       dispatch(pushSettingsUpdated({ promptShown: true }));
       Alert.alert(
         tr('Сповіщення про повідомлення'),

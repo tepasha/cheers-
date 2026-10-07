@@ -16,6 +16,9 @@ import { useAppLifecycle, usePendingChatOpen } from './src/hooks/useAppLifecycle
 import { useAppSelector } from './src/store/hooks';
 import { analyticsService } from './src/services/analyticsService';
 import { colors } from './src/theme';
+import { ModalHost } from './src/components/ModalLayer';
+import { DialogHost } from './src/components/DialogHost';
+import { wrapWithMonitoring } from './src/services/telemetry';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -32,6 +35,7 @@ const AppShell = () => {
 
   // The navigator only mounts after sign-in, so a signed-out launch would otherwise wait for the safety timer
   const authReady = useAppSelector((s) => s.ui.authReady);
+  const generation = useAppSelector((s) => s.ui.sessionGeneration);
   useEffect(() => {
     if (authReady) SplashScreen.hideAsync().catch(() => {});
   }, [authReady]);
@@ -60,11 +64,13 @@ const AppShell = () => {
       <RootNavigator />
       <PushBanner />
       <EndedTableModal />
+      <DialogHost key={generation} />
+      <ModalHost />
     </NavigationContainer>
   );
 };
 
-export default function App() {
+function App() {
   useEffect(() => {
     // Safety net: never leave the splash screen up if navigation fails to report ready
     const timer = setTimeout(() => SplashScreen.hideAsync().catch(() => {}), 8000);
@@ -94,6 +100,8 @@ export default function App() {
     </View>
   );
 }
+
+export default wrapWithMonitoring(App);
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },

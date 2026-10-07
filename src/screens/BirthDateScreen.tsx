@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Field } from '../components/ui';
 import { colors, spacing, typography } from '../theme';
@@ -8,6 +8,10 @@ import { logout, submitBirthDate } from '../store/thunks/auth';
 import { parseBirthDateInput } from '../logic/dateInput';
 import { MIN_AGE } from '../logic/session';
 import { useTr } from '../hooks/useT';
+import { LegalLinks } from '../components/LegalLinks';
+import { describeAuthError } from '../services/authService';
+import { useAppSelector } from '../store/hooks';
+import { isoToDateInput } from '../logic/dateInput';
 
 /**
  * Shown after a first Google sign-in (Google does not tell us the birth date) and to any account that has none yet.
@@ -17,11 +21,14 @@ export const BirthDateScreen = () => {
   const tr = useTr();
   const dispatch = useAppDispatch();
   const insets = useSafeAreaInsets();
-  const [input, setInput] = useState('');
+  const birthDate = useAppSelector((s) => s.auth.user.birthDate);
+  const [input, setInput] = useState(birthDate ? isoToDateInput(birthDate) : '');
+  const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
+    if (!accepted || busy) return;
     const iso = parseBirthDateInput(input);
     if (!iso) {
       setError(tr('Вкажіть дату у форматі ДД.ММ.РРРР'));
@@ -33,6 +40,8 @@ export const BirthDateScreen = () => {
       const result = await dispatch(submitBirthDate(iso));
       if (result === 'invalid') setError(tr('Некоректна дата народження'));
       // 'too_young': the account is gone and the sign-in screen takes over; 'ok': the app opens
+    } catch (err) {
+      setError(tr(describeAuthError(err)));
     } finally {
       setBusy(false);
     }
@@ -59,7 +68,9 @@ export const BirthDateScreen = () => {
           </Text>
         )}
 
-        <Button label={tr('Продовжити')} icon="arrow-right" onPress={submit} loading={busy} />
+        <LegalLinks />
+        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: accepted }} onPress={() => setAccepted((v) => !v)} style={{ paddingVertical: spacing.md }}><Text style={typography.body}>{accepted ? '☑ ' : '☐ '}{tr('Я приймаю правила та політику конфіденційності')}</Text></Pressable>
+        <Button label={tr('Продовжити')} icon="arrow-right" onPress={submit} loading={busy} disabled={!accepted || busy} />
         <Button label={tr('Вийти')} variant="ghost" small onPress={() => dispatch(logout())} disabled={busy} style={{ marginTop: spacing.sm }} />
       </ScrollView>
     </KeyboardAvoidingView>

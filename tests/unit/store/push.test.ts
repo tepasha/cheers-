@@ -1,3 +1,4 @@
+import outbox from '@/store/slices/outboxSlice';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
 
@@ -7,7 +8,7 @@ vi.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 0, Medium: 1, Soft: 2, Rigid: 3 },
   NotificationFeedbackType: { Success: 0, Warning: 1, Error: 2 },
 }));
-vi.mock('@/services/systemNotifications', () => ({ registerForPush: vi.fn() }));
+vi.mock('@/services/systemNotifications', () => ({ stopSystemPush: vi.fn().mockResolvedValue(undefined), registerForPush: vi.fn() }));
 vi.mock('@/services/firebase', () => ({ db: {}, auth: {}, firebaseApp: {} }));
 vi.mock('@/services/authService', () => ({ authService: { logout: vi.fn().mockResolvedValue(undefined) } }));
 vi.mock('@/services/cryptoService', () => ({ cryptoService: { decryptMessage: vi.fn(async (p: string) => `dec:${p}`) } }));
@@ -43,7 +44,7 @@ import type { CloudChat } from '@/logic/chats';
 import type { BuddyProfile, ChatThread } from '@/types';
 import type { RootState } from '@/store/index';
 
-const rootReducer = combineReducers({ auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
+const rootReducer = combineReducers({ outbox, auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
 
 function makeStore(verified = true) {
   const store = configureStore({ reducer: rootReducer });
@@ -67,6 +68,17 @@ afterEach(() => {
 });
 
 describe('registerPush', () => {
+  it('ignores a denied permission response from a previous account', async () => {
+    const s = makeStore();
+    register.mockImplementationOnce(async () => {
+      s.dispatch(loggedIn(createUser({ id: 'other', email: 'o@b.co', emailVerified: true, birthDate: '1990-01-01' })));
+      s.dispatch(pushSettingsUpdated({ webPushEnabled: true, deviceToken: 'new-account-token' }));
+      return { status: 'denied' };
+    });
+    expect(await run(s, registerPush({ ask: true }))).toBe('unavailable');
+    expect(st(s).settings.push).toMatchObject({ webPushEnabled: true, deviceToken: 'new-account-token' });
+    expect(sync.saveDevice).not.toHaveBeenCalled();
+  });
   it('registers the phone for the signed-in account and remembers the token', async () => {
     register.mockResolvedValue({ status: 'registered', token: TOKEN, platform: 'ios' });
     const s = makeStore();
@@ -74,7 +86,7 @@ describe('registerPush', () => {
 
     expect(await run(s, registerPush({ ask: true }))).toBe('registered');
     expect(register).toHaveBeenCalledWith(true);
-    expect(sync.saveDevice).toHaveBeenCalledWith('me', TOKEN, 'ios', 'pl');
+    expect(sync.saveDevice).toHaveBeenCalledWith('me', TOKEN, 'ios', 'pl', expect.any(Number));
     expect(st(s).settings.push).toMatchObject({ webPushEnabled: true, deviceToken: TOKEN });
   });
 
@@ -187,8 +199,11 @@ describe('ending the session', () => {
     expect(order).toEqual(['removeDevice', 'logout']);
   });
 
-  it('signs out immediately when no device is registered', () => {
-    run(makeStore(), endSession());
+  it('clears the local session immediately and unregisters native push before Firebase signout', async () => {
+    const s = makeStore();
+    const done = run(s, endSession());
+    expect(st(s).auth.user.isLoggedIn).toBe(false);
+    await done;
     expect(authService.logout).toHaveBeenCalledTimes(1);
   });
 

@@ -6,6 +6,9 @@ import { asString } from '../../logic/cloudData';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { BuddyProfile } from '../../types';
 import { notifyChatMessage } from './notifications';
+import { captureSession } from '../sessionGuard';
+import { inboxSyncStarted, inboxReady } from '../slices/uiSlice';
+import { identityRedacted } from '../actions';
 
 /**
  * Turns the Firestore chat list into local threads. The ciphertext preview is decrypted here, and the
@@ -15,6 +18,9 @@ export const syncChatInbox =
   (cloudChats: CloudChat[]): AppThunk<Promise<void>> =>
   async (dispatch, getState) => {
     const myId = getState().auth.user.id;
+    const current = captureSession(getState);
+    dispatch(inboxSyncStarted());
+    const generation = getState().ui.inboxGeneration;
 
     // One chat that cannot be read is left out of this round; it never stops the others from syncing
     const settled = await Promise.allSettled(
@@ -38,6 +44,7 @@ export const syncChatInbox =
       })
     );
     const chats = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+    if (!current() || generation !== getState().ui.inboxGeneration) return;
     settled.forEach((r) => r.status === 'rejected' && console.warn('[inbox] chat skipped:', r.reason));
 
     // Decide what counts as news against the state from BEFORE the reducer merges this snapshot
@@ -47,7 +54,8 @@ export const syncChatInbox =
     const incoming = chats.filter(({ thread, lastSenderId }) => {
       const existing = threads.find((t) => t.id === thread.id);
       // Only chats this device already matched against the cloud: the first snapshot after a launch is not news
-      if (!existing?.updatedAt || !thread.updatedAt || existing.updatedAt === thread.updatedAt) return false;
+      if (!existing?.updatedAt || !thread.updatedAt) return false;
+      if (thread.lastMessageId ? existing.lastMessageId === thread.lastMessageId : existing.updatedAt === thread.updatedAt || existing.lastMessage === thread.lastMessage) return false;
       return (
         !!thread.lastMessage &&
         !!lastSenderId &&
@@ -59,6 +67,8 @@ export const syncChatInbox =
     });
 
     dispatch(inboxSynced({ myId, openChatId, chats }));
+    new Set(cloudChats.flatMap((chat) => chat.anonymizedMembers ?? [])).forEach((uid) => dispatch(identityRedacted(uid)));
+    dispatch(inboxReady());
 
     // In the foreground the OS shows nothing; this banner is the notification (the server push covers the background)
     incoming.forEach(({ thread, lastSenderId }) => {

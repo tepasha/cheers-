@@ -41,7 +41,7 @@ export function createUser(
     name?: string;
     avatar?: string;
     emailVerified?: boolean;
-    provider?: 'google' | 'email';
+    provider?: 'google' | 'apple' | 'email';
     birthDate?: string;
     joinedAt?: string;
   },
@@ -49,7 +49,7 @@ export function createUser(
 ): AuthUser {
   const email = input.email.trim();
   const fallback = email.split('@')[0].replace(/[._]/g, ' ');
-  const base = input.name?.trim() || fallback || ph('Друг');
+  const base = (input.name?.trim() || fallback || ph('Друг')).slice(0, 60);
   const age = input.birthDate ? calculateAge(input.birthDate) : null;
 
   return {

@@ -1,9 +1,12 @@
 name: 🚀 Release (tag vX.Y.Z)
 
 # Pushing a tag `vX.Y.Z` runs the whole release line:
-#   CI gate → tag/version check → backend to production (needs approval) → Android AAB → Play internal track
-#                                                                         → iOS IPA   → TestFlight
-# Taking the build further (Play production rollout, App Store review) is a separate, approved step: promote.yml.
+#   CI gate → verify (tag = version, commit on main, STORE_RELEASES, store credentials, EAS production variables)
+#           → backend to production (needs approval) → Android AAB → Play internal track
+#                                                    → iOS IPA   → TestFlight
+# The production backend therefore changes HERE, at the tag, not at promotion. Taking the build further (Play
+# production rollout, App Store listing and review) is a separate, approved step: promote.yml, which never touches
+# the backend.
 on:
   push:
     tags:
@@ -23,11 +26,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # the "is this commit on main" check needs main's history
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+      # A tag can be pushed onto any commit, also one of an untested branch: the release goes on only when the
+      # tagged commit is on main (--release-ref), before anything is deployed or built
       - name: 🏷️ release-check
-        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME" --project
+        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME" --project --release-ref
+
+      # The backend job below replaces the PRODUCTION rules and functions (after approval) BEFORE the store builds run.
+      # A tag pushed while the store side is not set up yet would therefore change production and then fail in the
+      # builds: a half-release. So the whole line is off until the operator declares the store accounts ready
+      # (repository variable STORE_RELEASES = 'true', DEPLOY.md stage 0), and every credential the build and submit
+      # jobs need must exist. Only presence is checked here (no value is printed); the build jobs validate the formats.
+      - name: 🏪 Store releases are switched on and credentials exist
+        env:
+          STORE_RELEASES: ${{ vars.STORE_RELEASES }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_BASE64 }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+        run: |
+          if [ "$STORE_RELEASES" != "true" ]; then
+            echo "::error::Tag releases are switched off: set the repository variable STORE_RELEASES to 'true' once the store accounts, keys and EAS variables exist (DEPLOY.md, stage 0). Nothing was deployed or built."
+            exit 1
+          fi
+          missing=""
+          [ -n "$EXPO_TOKEN" ] || missing="$missing secret EXPO_TOKEN,"
+          [ -n "$GOOGLE_SERVICE_ACCOUNT_BASE64" ] || missing="$missing secret GOOGLE_SERVICE_ACCOUNT_BASE64,"
+          [ -n "$APP_STORE_CONNECT_API_KEY_BASE64" ] || missing="$missing secret APP_STORE_CONNECT_API_KEY_BASE64,"
+          [ -n "$APP_STORE_CONNECT_KEY_ID" ] || missing="$missing secret APP_STORE_CONNECT_KEY_ID,"
+          [ -n "$APP_STORE_CONNECT_ISSUER_ID" ] || missing="$missing secret APP_STORE_CONNECT_ISSUER_ID,"
+          [ -n "$APPLE_TEAM_ID" ] || missing="$missing variable APPLE_TEAM_ID,"
+          [ -n "$ASC_APP_ID" ] || missing="$missing variable ASC_APP_ID,"
+          if [ -n "$missing" ]; then
+            echo "::error::A tag release builds and submits both apps, but CI lacks:${missing%,}. Nothing was deployed or built. See DEPLOY.md, stage 0."
+            exit 1
+          fi
+
+      # The same EAS check the build jobs run, but before the production backend changes: a missing (or "Secret")
+      # EAS production variable would otherwise surface only in the builds, after the deploy.
+      - name: 🚀 Setup EAS & Expo CLI
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8
+        with:
+          eas-version: 24.8.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔐 EAS production environment is complete (both platforms)
+        run: eas env:exec production 'node scripts/release-check.mjs --env' --non-interactive
 
   backend:
     name: ☁️ Backend → production

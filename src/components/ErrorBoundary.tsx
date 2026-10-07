@@ -5,6 +5,7 @@ import { useAppSelector } from '../store/hooks';
 import { colors, spacing } from '../theme';
 import type { AppLanguage } from '../types';
 import { Button } from './ui';
+import { captureException } from '../services/telemetry';
 
 interface Props {
   lang: AppLanguage;
@@ -30,6 +31,7 @@ class Boundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    captureException(error);
     console.error('[ErrorBoundary] render failed:', error, info.componentStack);
   }
 

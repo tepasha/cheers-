@@ -1,3 +1,4 @@
+import outbox from '@/store/slices/outboxSlice';
 import { describe, it, expect } from 'vitest';
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
 
@@ -28,7 +29,7 @@ import { createUser, SESSION_DURATION_MS } from '@/logic/session';
 import { BuddyProfile, ChatThread, HangoutAlert, Message, PushNotificationItem } from '@/types';
 import type { RootState } from '@/store/index';
 
-const rootReducer = combineReducers({ auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
+const rootReducer = combineReducers({ outbox, auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
 const makeStore = () => configureStore({ reducer: rootReducer });
 const state = (store: ReturnType<typeof makeStore>) => store.getState() as unknown as RootState;
 

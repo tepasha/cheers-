@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { personalDataReset } from '../actions';
+import { personalDataReset, identityRedacted } from '../actions';
 import { BuddyProfile } from '../../types';
 
 interface FriendsState {
@@ -25,6 +25,7 @@ const friendsSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, () => ({ ids: [], profiles: {} } as FriendsState));
+    builder.addCase(identityRedacted, (state, { payload: uid }) => { state.ids = state.ids.filter((id) => id !== uid); delete state.profiles[uid]; });
   },
 });
 
