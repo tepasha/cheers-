@@ -12,6 +12,8 @@ import { GOOGLE_MAPS_VENUES } from '../data/venuesData';
 import { addDays, formatDateInput, toIsoDateTime } from '../logic/dateInput';
 import { addMeetupToCalendar } from '../services/calendarService';
 import { useTr } from '../hooks/useT';
+import { InlineAd, useCanRequestAds } from './AdBanner';
+import { MEETUPS_AD_EVERY, isAdSlot, withAdSlots } from '../logic/ads';
 import { ph } from '../services/i18nService';
 
 const STATUS_LABEL: Record<GroupMeetup['status'], string> = {
@@ -31,6 +33,8 @@ export const MeetupsSection = ({ onReport }: { onReport: (t: ReportTarget) => vo
   const [inviting, setInviting] = useState<string | null>(null);
 
   const active = useMemo(() => meetups.filter((m) => m.status === 'upcoming' || m.status === 'ongoing'), [meetups]);
+  const canRequestAds = useCanRequestAds();
+  const rows = useMemo(() => (canRequestAds ? withAdSlots(active, MEETUPS_AD_EVERY) : active), [active, canRequestAds]);
 
   const join = (m: GroupMeetup) => {
     if (!dispatch(joinMeetup(m.id))) Alert.alert(tr('Немає місць'), tr('У цій зустрічі вже всі місця зайняті.'));
@@ -47,12 +51,13 @@ export const MeetupsSection = ({ onReport }: { onReport: (t: ReportTarget) => vo
   return (
     <>
       <FlatList
-        data={active}
-        keyExtractor={(m) => m.id}
+        data={rows}
+        keyExtractor={(m) => (isAdSlot(m) ? `ad-${m.adSlot}` : m.id)}
         contentContainerStyle={{ padding: spacing.lg, paddingTop: 0, gap: spacing.md, flexGrow: 1 }}
         ListHeaderComponent={<Button label={tr('Запланувати зустріч')} icon="calendar" onPress={() => setCreating(true)} />}
         ListEmptyComponent={<EmptyState emoji="🗓️" title={tr('Запланованих зустрічей немає')} subtitle={tr('Створи зустріч, вибери заклад і час та запроси друзів.')} />}
         renderItem={({ item: m }) => {
+          if (isAdSlot(m)) return <InlineAd />;
           const me = m.participants.find((p) => p.userId === myId);
           const going = m.participants.filter((p) => p.status === 'going');
           const host = m.creatorId === myId;

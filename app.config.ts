@@ -11,6 +11,9 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  *   GOOGLE_WEB_CLIENT_ID  Web OAuth client of the Firebase project (falls back to FIREBASE_OAUTH_CLIENT_ID); needed for Google sign-in
  *   GOOGLE_IOS_CLIENT_ID  iOS OAuth client; also registers its reversed URL scheme in the iOS app
  *   GOOGLE_SERVICES_JSON  Path to google-services.json (FCM, Android push). On EAS: a file environment variable.
+ *   ADMOB_ANDROID_APP_ID, ADMOB_IOS_APP_ID  AdMob app ids (ca-app-pub-…~…), compiled into the native apps
+ *   ADMOB_{ANDROID,IOS}_{BANNER,INLINE}_ID  AdMob ad units (ca-app-pub-…/…) of the tab-bar strip and the list slots.
+ *                         Optional: without them a build shows Google's test ads (set them for production only)
  * Locally all of them are optional (demo mode without FIREBASE_*); preview and production builds refuse to start
  * without any of them (releaseConfigProblems below). On EAS every one of them must have the visibility "Plain text"
  * or "Sensitive", never "Secret": `eas update` (and `eas env:exec`) cannot read Secret variables, so an OTA update
@@ -21,6 +24,11 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  */
 const env = process.env;
 const clean = (value: string | undefined): string | undefined => value?.trim().replace(/^["']+|["']+$/g, '') || undefined;
+
+/** Google's sample AdMob ids: development builds run on them, a release must not */
+const ADMOB_SAMPLE_APP_ID = { android: 'ca-app-pub-3940256099942544~3347511713', ios: 'ca-app-pub-3940256099942544~1458002511' };
+const isAdMobAppId = (value: string) => /^ca-app-pub-\d{16}~\d{10}$/.test(value) && !value.startsWith('ca-app-pub-3940256099942544');
+const isAdMobUnitId = (value: string) => /^ca-app-pub-\d{16}\/\d{10}$/.test(value);
 
 const isHttpsUrl = (value: string | undefined): boolean => {
   try {
@@ -57,6 +65,18 @@ export function releaseConfigProblems(projectRoot: string, platform?: string): s
   if (clean(env.DONATION_URL) && !isHttpsUrl(clean(env.DONATION_URL))) problems.push('DONATION_URL must be an https URL');
   for (const name of ['PRIVACY_POLICY_URL', 'TERMS_URL']) {
     if (!isHttpsUrl(clean(env[name]))) problems.push(`${name} must be a public https URL`);
+  }
+  for (const os of ['android', 'ios'] as const) {
+    if (platform === (os === 'android' ? 'ios' : 'android')) continue;
+    const appIdName = `ADMOB_${os.toUpperCase()}_APP_ID`;
+    const appId = clean(env[appIdName]);
+    need(appIdName, appId);
+    if (appId && !isAdMobAppId(appId)) problems.push(`${appIdName} must be your AdMob app id (ca-app-pub-…~…), not Google's sample id`);
+    for (const slot of ['BANNER', 'INLINE']) {
+      const unitName = `ADMOB_${os.toUpperCase()}_${slot}_ID`;
+      const unit = clean(env[unitName]);
+      if (unit && !isAdMobUnitId(unit)) problems.push(`${unitName} must be an AdMob ad unit id (ca-app-pub-…/…)`);
+    }
   }
   if (platform !== 'ios') {
     need('GOOGLE_MAPS_API_KEY', clean(env.GOOGLE_MAPS_API_KEY));
@@ -96,6 +116,8 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   // The sign-in plugin refuses to run without a valid reversed client id, so it is only added when one is given
   const googleIosScheme = googleIosClientId ? `com.googleusercontent.apps.${googleIosClientId.replace(/\.apps\.googleusercontent\.com$/, '')}` : undefined;
   const projectId: string | undefined = config.extra?.eas?.projectId;
+  // Without an app id the native AdMob SDK crashes at launch, so local builds fall back to Google's sample ids
+  const admobAppId = { android: clean(env.ADMOB_ANDROID_APP_ID) ?? ADMOB_SAMPLE_APP_ID.android, ios: clean(env.ADMOB_IOS_APP_ID) ?? ADMOB_SAMPLE_APP_ID.ios };
 
   return {
     ...(config as ExpoConfig),
@@ -109,7 +131,14 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     updates: projectId
       ? { url: `https://u.expo.dev/${projectId}`, checkAutomatically: 'ON_LOAD', fallbackToCacheTimeout: 0 }
       : { enabled: false },
-    plugins: [...(config.plugins ?? []), ['@sentry/react-native/expo', { organization: clean(env.SENTRY_ORG), project: clean(env.SENTRY_PROJECT) }], ...(googleIosScheme ? [['@react-native-google-signin/google-signin', { iosUrlScheme: googleIosScheme }] as [string, object]] : [])],
+    plugins: [
+      ...(config.plugins ?? []),
+      // delayAppMeasurementInit: nothing is sent to Google before the consent step (services/ads.ts) has run.
+      // cstr6suwn9: Google's own SKAdNetwork id (iOS install attribution without tracking)
+      ['react-native-google-mobile-ads', { androidAppId: admobAppId.android, iosAppId: admobAppId.ios, delayAppMeasurementInit: true, skAdNetworkItems: ['cstr6suwn9.skadnetwork'] }],
+      ['@sentry/react-native/expo', { organization: clean(env.SENTRY_ORG), project: clean(env.SENTRY_PROJECT) }],
+      ...(googleIosScheme ? [['@react-native-google-signin/google-signin', { iosUrlScheme: googleIosScheme }] as [string, object]] : []),
+    ],
     android: {
       ...config.android,
       ...(servicesFile ? { googleServicesFile: servicesFile } : {}),
@@ -126,6 +155,11 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
       ...config.extra,
       google: { webClientId: googleWebClientId, iosClientId: googleIosClientId },
       monitoring: { dsn: clean(env.SENTRY_DSN) },
+      // Ad units are JS-only (an OTA update can change them); unset ones mean Google's test ads (services/ads.ts)
+      ads: {
+        banner: { android: clean(env.ADMOB_ANDROID_BANNER_ID), ios: clean(env.ADMOB_IOS_BANNER_ID) },
+        inline: { android: clean(env.ADMOB_ANDROID_INLINE_ID), ios: clean(env.ADMOB_IOS_INLINE_ID) },
+      },
       // DONATION_URL overrides the developer's monobank jar (the "Support the developer" button in Profile)
       support: { email: clean(env.SUPPORT_EMAIL), url: clean(env.SUPPORT_URL), donationUrl: clean(env.DONATION_URL) ?? 'https://send.monobank.ua/jar/budmo' },
       legal: { privacyPolicyUrl: clean(env.PRIVACY_POLICY_URL), termsUrl: clean(env.TERMS_URL) },

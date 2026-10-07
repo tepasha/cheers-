@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { BottomTabBar, createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Feather from '@expo/vector-icons/Feather';
 import { colors } from '../theme';
@@ -24,6 +24,7 @@ import { RussiaBlockScreen } from '../screens/RussiaBlockScreen';
 import { BirthDateScreen } from '../screens/BirthDateScreen';
 import { checkAge } from '../logic/session';
 import { GamificationTour } from '../components/GamificationTour';
+import { AdBanner } from '../components/AdBanner';
 import { useTr } from '../hooks/useT';
 import { Button } from '../components/ui';
 import { useAppDispatch } from '../store/hooks';
@@ -42,6 +43,9 @@ const TAB_ICONS: Record<keyof TabParamList, React.ComponentProps<typeof Feather>
   Profile: 'user',
 };
 
+/** The map's own controls sit at the bottom edge; a banner there would invite accidental taps */
+const TABS_WITHOUT_ADS: ReadonlySet<string> = new Set<keyof TabParamList>(['Map']);
+
 const Tabs = () => {
   const t = useT();
   const unreadChats = useAppSelector(selectUnreadChatsCount);
@@ -53,6 +57,12 @@ const Tabs = () => {
   return (
     <>
       <Tab.Navigator
+        tabBar={(props) => (
+          <>
+            <AdBanner visible={!TABS_WITHOUT_ADS.has(props.state.routes[props.state.index].name)} />
+            <BottomTabBar {...props} />
+          </>
+        )}
         screenOptions={({ route }) => ({
           headerShown: false,
           tabBarActiveTintColor: colors.amber,

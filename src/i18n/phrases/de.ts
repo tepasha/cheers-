@@ -1,6 +1,8 @@
 // Phrase translations: the key is the exact Ukrainian text used in the code (see tr()/ph() in i18nService).
 // Keep every {placeholder} identical to the key; the localization test enforces it.
 export const de: Record<string, string> = {
+  "Налаштування реклами": "Werbeeinstellungen",
+  "Реклама": "Anzeige",
   "Ліцензії зображень": "Bildlizenzen",
   "Цей текст порушує правила спільноти. Відредагуйте його.": "Dieser Text verstößt gegen die Community-Regeln. Bitte bearbeite ihn.",
   "Короткий опис": "Kurzbeschreibung",

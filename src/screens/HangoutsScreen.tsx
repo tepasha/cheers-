@@ -8,6 +8,8 @@ import { Avatar, Badge, Button, Card, Chip, EmptyState, Field, IconButton, Row, 
 import { OfflineBanner, ScreenHeader } from '../components/shell';
 import { ReportSheet, ReportTarget } from '../components/ReportSheet';
 import { MeetupsSection } from '../components/MeetupsSection';
+import { InlineAd, useCanRequestAds } from '../components/AdBanner';
+import { HANGOUTS_AD_EVERY, isAdSlot, withAdSlots } from '../logic/ads';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectBuddies, selectHangouts, selectLocation } from '../store/selectors';
 import { closeHangout, joinHangout, openDirectChat, publishHangout } from '../store/thunks/social';
@@ -37,6 +39,8 @@ export const HangoutsScreen = () => {
     () => (filter === 'nearby' ? hangouts.filter((h) => (h.distanceKm ?? 999) <= NEARBY_KM) : hangouts),
     [hangouts, filter]
   );
+  const canRequestAds = useCanRequestAds();
+  const rows = useMemo(() => (canRequestAds ? withAdSlots(visible, HANGOUTS_AD_EVERY) : visible), [visible, canRequestAds]);
 
   const chatWithHost = useCallback(
     (h: HangoutAlert) => {
@@ -85,8 +89,8 @@ export const HangoutsScreen = () => {
         <MeetupsSection onReport={setReportTarget} />
       ) : (
         <FlatList
-          data={visible}
-          keyExtractor={(h) => h.id}
+          data={rows}
+          keyExtractor={(h) => (isAdSlot(h) ? `ad-${h.adSlot}` : h.id)}
           contentContainerStyle={{ padding: spacing.lg, paddingTop: 0, gap: spacing.md, flexGrow: 1 }}
           ListEmptyComponent={
             <EmptyState
@@ -97,6 +101,7 @@ export const HangoutsScreen = () => {
             />
           }
           renderItem={({ item: h }) => {
+            if (isAdSlot(h)) return <InlineAd />;
             const mine = h.userId === user.id;
             const joined = mine || (h.joinedUsers ?? []).includes(user.id);
             const free = Math.max(0, h.slotsAvailable - Math.max(0, h.participantsCount - 1));

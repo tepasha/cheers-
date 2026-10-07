@@ -1,0 +1,28 @@
+Google AdMob інтеграція — стан роботи (оновлюється по ходу)
+
+План:
+[x] 1. Пакет react-native-google-mobile-ads@^17.2.0 (npm install)
+[x] 2. src/logic/ads.ts — вставка слотів у списки (кожні N карток) + тести
+[x] 3. src/services/ads.ts (+ .web.ts) — згода UMP, ініціалізація SDK, ID блоків
+[x] 4. src/components/AdBanner.tsx (+ .web.tsx) — нижня смужка 320x50 і слот у списку 320x100
+[x] 5. RootNavigator: смужка над таб-баром (усі вкладки, крім Карти)
+[x] 6. Кличі: «Зараз» — слот кожні 10 карток, «Заплановані» (MeetupsSection) — кожні 5
+[x] 7. Профіль: кнопка «Налаштування реклами» (коли UMP вимагає) + переклади en/de/pl
+[x] 8. app.config.ts: плагін + ADMOB_* змінні; release-check.mjs + тести
+[x] 9. .env.example, DEPLOY.md, docs/store/data-disclosure.md, privacy policy
+[x] 10. lint + test (427 тестів ок), expo export web/android ок, плагін у native-конфігу перевірено
+
+Рішення:
+- Реклама неперсоналізована (requestNonPersonalizedAdsOnly), без ATT.
+- Список коротший за інтервал — слотів немає.
+- Без ADMOB_*_BANNER_ID і в __DEV__ — тестові блоки Google.
+
+СТАН: код завершено 2026-10-07, не закомічено.
+
+Лишилось зробити вручну (див. DEPLOY.md → «Реклама (Google AdMob)»):
+- створити застосунки й блоки в AdMob, задати ADMOB_* в EAS (блоки — лише production)
+- опублікувати GDPR-повідомлення в AdMob → Privacy & messaging
+- заблокувати чутливі категорії (алкоголь, азартні ігри, знайомства)
+- app-ads.txt на домені розробника
+- оновити Data safety (Play) і App Privacy (App Store), позначку «містить рекламу»
+- нова нативна збірка (EAS build), перевірка на пристрої

@@ -1,6 +1,6 @@
 import { dialogs as Alert } from '../services/dialogs';
 import Constants from 'expo-constants';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { MIN_AGE } from '../logic/session';
 import { Linking, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,6 +20,7 @@ import { CANCELLED, describeAuthError, authService } from '../services/authServi
 import { firestoreSyncService } from '../services/firestoreSyncService';
 import { SUPPORTED_LANGUAGES } from '../services/i18nService';
 import { analyticsService } from '../services/analyticsService';
+import { adsService } from '../services/ads';
 import { requestDeviceLocation } from '../services/locationService';
 import { disablePush, registerPush } from '../store/thunks/push';
 import { LegalLinks } from '../components/LegalLinks';
@@ -51,6 +52,8 @@ export const ProfileScreen = () => {
   const settings = useAppSelector(selectSettings);
   const location = useAppSelector(selectLocation);
   const favorites = useAppSelector((s) => s.favorites.items);
+  // Google's consent rules (EEA/UK) require a way to change the ad consent choice later
+  const adsPrivacyOptions = useSyncExternalStore(adsService.subscribe, adsService.getState).privacyOptionsRequired;
   const blockedCount = useAppSelector((s) => s.safety.blockedUsers.length);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -186,6 +189,7 @@ export const ProfileScreen = () => {
 
         <View style={{ marginTop: spacing.sm }}>
           <LegalLinks />
+          {adsPrivacyOptions && <Button label={tr('Налаштування реклами')} icon="sliders" small variant="secondary" onPress={() => void adsService.showPrivacyOptions().catch(() => {})} />}
           <Button label={tr('Ліцензії зображень')} icon="file-text" small variant="secondary" onPress={() => setLicensesVisible(true)} />
         </View>
 

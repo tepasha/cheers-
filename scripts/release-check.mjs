@@ -42,11 +42,22 @@ export const REQUIRED_ENV = [
   'SENTRY_AUTH_TOKEN',
 ];
 
-/** Needed by one platform's binary only: the Android Maps SDK key (iOS uses Apple Maps), the iOS Google client id */
+/**
+ * Needed by one platform's binary only: the Android Maps SDK key (iOS uses Apple Maps), the iOS Google client id,
+ * each platform's AdMob app id
+ */
 export const PLATFORM_ENV = {
-  android: ['GOOGLE_MAPS_API_KEY'],
-  ios: ['GOOGLE_IOS_CLIENT_ID', 'EXPORT_ENCRYPTION_CLASSIFICATION'],
+  android: ['GOOGLE_MAPS_API_KEY', 'ADMOB_ANDROID_APP_ID'],
+  ios: ['GOOGLE_IOS_CLIENT_ID', 'EXPORT_ENCRYPTION_CLASSIFICATION', 'ADMOB_IOS_APP_ID'],
 };
+
+/** Optional AdMob ad units (unset: Google's test ads); when given they must be well-formed */
+const ADMOB_UNIT_ENV = {
+  android: ['ADMOB_ANDROID_BANNER_ID', 'ADMOB_ANDROID_INLINE_ID'],
+  ios: ['ADMOB_IOS_BANNER_ID', 'ADMOB_IOS_INLINE_ID'],
+};
+const isAdMobAppId = (value) => /^ca-app-pub-\d{16}~\d{10}$/.test(value) && !value.startsWith('ca-app-pub-3940256099942544');
+const isAdMobUnitId = (value) => /^ca-app-pub-\d{16}\/\d{10}$/.test(value);
 
 /** app.config.ts accepts these names instead */
 const ALTERNATIVE_ENV = { GOOGLE_WEB_CLIENT_ID: 'FIREBASE_OAUTH_CLIENT_ID' };
@@ -100,6 +111,13 @@ export function checkEnv(env, { platform } = {}) {
   if (value('SUPPORT_EMAIL') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value('SUPPORT_EMAIL'))) problems.push('SUPPORT_EMAIL must be a valid email address');
   if (value('SENTRY_DSN') && !isHttpsUrl(value('SENTRY_DSN'))) problems.push('SENTRY_DSN must be an https URL');
   if (platform !== 'android' && value('EXPORT_ENCRYPTION_CLASSIFICATION') && !['exempt', 'non-exempt'].includes(value('EXPORT_ENCRYPTION_CLASSIFICATION'))) problems.push('EXPORT_ENCRYPTION_CLASSIFICATION must be exempt or non-exempt after operator review');
+  for (const os of platform ? [platform] : Object.keys(PLATFORM_ENV)) {
+    const appIdName = `ADMOB_${os.toUpperCase()}_APP_ID`;
+    if (value(appIdName) && !isAdMobAppId(value(appIdName))) problems.push(`${appIdName} must be your AdMob app id (ca-app-pub-…~…), not Google's sample id`);
+    for (const name of ADMOB_UNIT_ENV[os]) {
+      if (value(name) && !isAdMobUnitId(value(name))) problems.push(`${name} must be an AdMob ad unit id (ca-app-pub-…/…)`);
+    }
+  }
   if (value('FIREBASE_FIRESTORE_DATABASE_ID') === '(default)') {
     problems.push('FIREBASE_FIRESTORE_DATABASE_ID must name the database firestore.rules and the functions are deployed to, not (default)');
   }

@@ -25,6 +25,8 @@ function fullEnv(): Record<string, string> {
   env.SUPPORT_EMAIL = 'support@example.com';
   env.SENTRY_DSN = 'https://public-key@sentry.example.com/1';
   env.EXPORT_ENCRYPTION_CLASSIFICATION = 'exempt';
+  env.ADMOB_ANDROID_APP_ID = 'ca-app-pub-1234567890123456~1234567890';
+  env.ADMOB_IOS_APP_ID = 'ca-app-pub-1234567890123456~0987654321';
   return env;
 }
 
@@ -33,6 +35,13 @@ describe('release-check', () => {
     expect(checkEnv({ ...fullEnv(), SUPPORT_EMAIL: 'not-an-email' })).toContain('SUPPORT_EMAIL must be a valid email address');
     expect(checkEnv({ ...fullEnv(), SENTRY_DSN: 'http://insecure.example.com/1' })).toContain('SENTRY_DSN must be an https URL');
     expect(checkEnv({ ...fullEnv(), EXPORT_ENCRYPTION_CLASSIFICATION: 'unknown' })).toContain('EXPORT_ENCRYPTION_CLASSIFICATION must be exempt or non-exempt after operator review');
+  });
+  it('refuses the sample AdMob app id and malformed ad units, and accepts unset units (test ads)', () => {
+    const sample = { ...fullEnv(), ADMOB_ANDROID_APP_ID: 'ca-app-pub-3940256099942544~3347511713' };
+    expect(checkEnv(sample, { platform: 'android' })[0]).toMatch(/ADMOB_ANDROID_APP_ID must be your AdMob app id/);
+    expect(checkEnv(sample, { platform: 'ios' })).toEqual([]);
+    expect(checkEnv({ ...fullEnv(), ADMOB_IOS_BANNER_ID: 'ca-app-pub-1234567890123456~1234567890' })[0]).toMatch(/ADMOB_IOS_BANNER_ID must be an AdMob ad unit id/);
+    expect(checkEnv({ ...fullEnv(), ADMOB_IOS_INLINE_ID: 'ca-app-pub-1234567890123456/1234567890' })).toEqual([]);
   });
   it('accepts a tag that names the app version', () => {
     expect(checkVersions({ tag: 'v1.2.0', appVersion: '1.2.0', packageVersion: '1.2.0' })).toEqual([]);
