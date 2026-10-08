@@ -1,17 +1,22 @@
 name: 🧪 Preview (main)
 
-# Every merge to main: CI gate, then the staging backend, and, once the repository variable PREVIEW_BUILDS is 'true'
-# (set it after `eas init`, the EAS variables and the staging environment exist), an internal Android build and a
-# preview OTA update. iOS preview builds need registered test devices, so they stay a manual run of build-ios.yml.
+# Every push to main: CI gate, staging backend, internal Android build, then a preview OTA update.
+# iOS preview builds need registered test devices, so they stay a manual run of build-ios.yml.
 #
 # The preview clients talk to the staging backend: build-android.yml and ota.yml refuse an EAS `preview` environment
 # whose Firebase project / database differ from the GitHub Environment `staging` (see DEPLOY.md).
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# Keep the whole pipeline in commit order: an older build must not publish after a newer update.
+concurrency:
+  group: expo-preview-main
+  cancel-in-progress: false
 
 jobs:
   ci:
@@ -27,6 +32,7 @@ jobs:
     needs: ci
     uses: ./.github/workflows/deploy-backend.yml
     with:
+      ci_checked: true
       environment: staging
     permissions:
       contents: read
@@ -38,18 +44,18 @@ jobs:
   android:
     name: 🤖 Android preview build
     needs: [ci, backend]
-    if: vars.PREVIEW_BUILDS == 'true'
     uses: ./.github/workflows/build-android.yml
     with:
+      ci_checked: true
       profile: preview
       submit: false
     secrets: inherit
 
   ota:
     name: 📡 OTA → preview channel
-    needs: [ci, backend]
-    if: vars.PREVIEW_BUILDS == 'true'
+    needs: [ci, backend, android]
     uses: ./.github/workflows/ota.yml
     with:
+      ci_checked: true
       channel: preview
     secrets: inherit

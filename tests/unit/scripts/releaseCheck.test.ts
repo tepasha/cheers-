@@ -5,6 +5,7 @@ import {
   checkBackend,
   checkEnv,
   checkOnMain,
+  checkProductionTrigger,
   checkReleaseRef,
   checkStore,
   checkIdentifiers,
@@ -15,6 +16,15 @@ import appConfig, { releaseConfigProblems } from '../../../app.config';
 
 const PLATFORMS = ['android', 'ios'] as const;
 const ALL_ENV = [...REQUIRED_ENV, ...PLATFORMS.flatMap((p) => PLATFORM_ENV[p])];
+
+describe('production requires an explicit manual run', () => {
+  it('allows the Run workflow button', () => {
+    expect(checkProductionTrigger('workflow_dispatch')).toEqual([]);
+  });
+  it.each(['push', 'pull_request', 'schedule', 'workflow_run', 'repository_dispatch', undefined])('refuses %s', (event) => {
+    expect(checkProductionTrigger(event)).toHaveLength(1);
+  });
+});
 
 /** A complete, valid environment (every value well-formed) */
 function fullEnv(): Record<string, string> {

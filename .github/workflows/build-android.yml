@@ -1,14 +1,18 @@
 name: 🤖 Android build (reusable)
 
-# Called by release.yml (tag) and preview.yml (main), or started by hand.
+# Called by release.yml (manual) and preview.yml (main), or started by hand.
 # EAS builds in the cloud; nothing is published to GitHub Releases. The EAS output contains artifact links, so it is
 # summarised (id, status, link to the EAS page) and never uploaded or printed whole.
 # A production (store) build comes only from main or a release tag on main, after the full CI; a preview build must
 # be configured for the staging backend (GitHub Environment `staging`).
 on:
-  # Callers must run ci-check.yml before calling (release.yml and preview.yml do); a manual start runs it below
+  # A caller sets ci_checked only after its CI gate succeeds; an independent manual run performs CI below.
   workflow_call:
     inputs:
+      ci_checked:
+        description: 'Caller has successfully completed ci-check.yml for this commit'
+        type: boolean
+        default: false
       profile:
         description: 'EAS profile: preview (APK) or production (AAB)'
         type: string
@@ -74,7 +78,7 @@ jobs:
   ci:
     name: ✅ CI gate
     needs: gate
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ !inputs.ci_checked }}
     uses: ./.github/workflows/ci-check.yml
 
   # Every non-production client talks to the staging backend. Its Firebase project and database are variables of the
@@ -108,11 +112,11 @@ jobs:
   build-android:
     name: 🤖 Build Android (${{ inputs.profile }})
     needs: [gate, ci, staging]
-    # A skipped CI is accepted only when another workflow called this one (and ran ci-check.yml itself);
+  # A skipped CI is accepted only when the caller explicitly completed ci-check.yml;
     # a skipped staging job only for a production build
     if: >-
       !cancelled() && needs.gate.result == 'success'
-      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && github.event_name != 'workflow_dispatch'))
+      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && inputs.ci_checked))
       && (needs.staging.result == 'success' || (needs.staging.result == 'skipped' && inputs.profile == 'production'))
     runs-on: ubuntu-latest
     timeout-minutes: 90

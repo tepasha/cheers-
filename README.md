@@ -152,11 +152,11 @@ npx eas-cli build --platform android --profile preview
 
 Як іде реліз (докладно, з усіма одноразовими налаштуваннями: [DEPLOY.md](DEPLOY.md)):
 
-* **push у `main`** ([preview.yml](.github/workflows/preview.yml)): CI → правила й functions у **staging**-проєкт → (якщо змінна репозиторію `PREVIEW_BUILDS=true`) Android preview APK і OTA у канал `preview`. Preview-клієнти мусять дивитися на staging: CI порівнює EAS `preview` з GitHub Environment `staging`.
-* **тег `vX.Y.Z`** ([release.yml](.github/workflows/release.yml)): CI → перевірка (тег = версія в `app.json` і `package.json`, коміт у `main`, `STORE_RELEASES=true`, усі ключі сторів, повне EAS-середовище `production`) → **production-бекенд** (після схвалення Environment `production`) → Android у Play internal, iOS у TestFlight. Тобто бойові правила й functions змінюються на тезі, а не на promote. Поки `STORE_RELEASES` не `true`, тег нічого не деплоїть і не збирає.
+* **push у `main`** ([preview.yml](.github/workflows/preview.yml)): CI → правила й functions у **staging**-проєкт → Android preview APK → OTA у канал `preview`. Автоматично, без прапорця ввімкнення. Посилання на встановлення є в підсумку Android job. Preview-клієнти мусять дивитися на staging: CI порівнює EAS `preview` з GitHub Environment `staging`. [Як почати тестування](docs/expo-testing.md).
+* **кнопка Run workflow → Production release (manual)** ([release.yml](.github/workflows/release.yml)): CI → перевірка версій, коміту в `main`, `STORE_RELEASES=true`, ключів сторів і EAS `production` → **production-бекенд** (після схвалення Environment `production`) → Android у Play internal, iOS у TestFlight. Push і створення тегу не запускають production-реліз.
 * **promote** ([promote.yml](.github/workflows/promote.yml), вручну, схвалення `store-release`): Android з internal у production зі staged rollout, iOS: листинг; бекенд не змінює.
 * **OTA у production** ([ota.yml](.github/workflows/ota.yml), вручну): лише JS і ресурси. Runtime version = нативний fingerprint, тож оновлення доходить тільки до збірок з тим самим нативним кодом; без такої production-збірки для кожної платформи workflow не публікує.
-* Усе, що веде в production, запускається лише з `main` або тегу на коміті з `main` і лише після повного CI.
+* Усе, що веде в production, запускається лише кнопкою Run workflow з `main` або тегу на коміті з `main` і лише після повного CI. Спільна перевірка відхиляє автоматичні події навіть у reusable workflow.
 
 Профіль `development` збирає development client (`expo-dev-client`): встановіть збірку один раз, а JS вантажте з `npx expo start --dev-client`. Так перевіряються вхід через Google і push без нової збірки на кожну зміну. Він бере змінні EAS-середовища `development` (обовʼязкові лише для preview/production).
 

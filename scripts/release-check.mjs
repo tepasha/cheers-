@@ -11,7 +11,7 @@
  *   node scripts/release-check.mjs --backend      the app's Firebase project / database (EAS variables, run through
  *                                                 `eas env:exec`) are the ones the channel's backend is deployed to
  *                                                 (EXPECTED_FIREBASE_PROJECT_ID / EXPECTED_FIRESTORE_DATABASE_ID)
- *   node scripts/release-check.mjs --release-ref  this run (GITHUB_REF / GITHUB_SHA) is main or a release tag on main
+ *   node scripts/release-check.mjs --release-ref  manual workflow run, from main or a release tag on main
  *   node scripts/release-check.mjs --on-main SHA  the commit is on main (needs a checkout with fetch-depth: 0)
  * Exits 1 and prints every problem, not just the first.
  */
@@ -172,6 +172,12 @@ export function checkBackend(env) {
 const RELEASE_REF = /^refs\/(heads\/main|tags\/v\d+\.\d+\.\d+)$/;
 const COMMIT = /^[0-9a-f]{7,40}$/;
 
+/** Every production entry point uses this gate, including reusable workflows called by another workflow. */
+export function checkProductionTrigger(eventName) {
+  return eventName === 'workflow_dispatch' ? []
+    : ['production requires a manual Run workflow action (workflow_dispatch); pushes, tags and scheduled runs cannot deploy production'];
+}
+
 /**
  * `onMain` is the answer of `git merge-base --is-ancestor <sha> origin/main`: true, false, or a string explaining why
  * git could not answer (an unknown commit, a shallow checkout).
@@ -192,7 +198,7 @@ export function checkOnMain({ sha, onMain, what = 'commit' }) {
  */
 export function checkReleaseRef({ ref, sha, onMain }) {
   if (!RELEASE_REF.test(ref ?? '')) {
-    return [`production is reached only from main or a release tag vX.Y.Z, not from ${ref || '(no ref)'}: run the workflow from main, or push a tag`];
+    return [`production is reached only from main or a release tag vX.Y.Z, not from ${ref || '(no ref)'}: use Run workflow on main or an existing release tag`];
   }
   return checkOnMain({ sha, onMain, what: ref });
 }
@@ -240,7 +246,10 @@ function main(argv) {
     ...(flag('--env') ? checkEnv(process.env, { platform: platformIndex >= 0 ? argv[platformIndex + 1] : undefined }) : []),
     ...(flag('--store') ? checkStore({ storeConfigText: readFileSync(new URL('../store.config.json', import.meta.url), 'utf8'), env: process.env }) : []),
     ...(flag('--backend') ? checkBackend(process.env) : []),
-    ...(flag('--release-ref') ? checkReleaseRef({ ref, sha, onMain: isOnMain(sha) }) : []),
+    ...(flag('--release-ref') ? [
+      ...checkProductionTrigger(process.env.GITHUB_EVENT_NAME),
+      ...checkReleaseRef({ ref, sha, onMain: isOnMain(sha) }),
+    ] : []),
     ...(onMainIndex >= 0 ? checkOnMain({ sha: onMainSha, onMain: isOnMain(onMainSha) }) : []),
   ];
 

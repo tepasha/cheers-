@@ -1,5 +1,7 @@
 # Деплой і релізи (App Store + Google Play)
 
+Автоматичне тестування та ручний production: [інструкція Expo](docs/expo-testing.md). Push у `main` автоматично збирає Android preview APK і публікує preview-OTA. Production запускається тільки через **Run workflow**; створення тегу нічого не викочує.
+
 ## Зміни для першого публічного релізу — 2026-10-07
 
 Цей розділ має пріоритет над історичним планом нижче. Код містить нові callable functions, серверні вікові claims, квоти публікації, приватний пошук, outbox, Sentry та модераторську чергу. Старі dev збірки не сумісні з новими rules: для першого релізу спочатку розгорніть backend у staging, виконайте onboarding тестових акаунтів, потім зберіть нові нативні binaries. Для вже публічних версій потрібний окремий план міграції.
@@ -31,12 +33,12 @@ push у main (preview.yml)
   → CI
   → backend у STAGING (deploy-backend.yml, на КОЖЕН push; якщо Environment `staging` не налаштовано,
     деплой пропускається з ::notice::)
-  → лише якщо змінна репозиторію PREVIEW_BUILDS = 'true' і staging-деплой успішний:
-      Android preview APK (EAS, internal) + EAS Update у канал `preview`
+  → після успішного staging-деплою:
+      Android preview APK (EAS, internal) → EAS Update у канал `preview`
 
-тег vX.Y.Z (release.yml)
+кнопка Run workflow (release.yml, main або release-тег)
   → CI
-  → verify: тег = версія в app.json і package.json, коміт тегу є в main, є projectId,
+  → verify: версії в app.json і package.json збігаються, коміт є в main, є projectId,
             STORE_RELEASES = 'true', є всі секрети й змінні сторів, EAS-середовище `production` повне
   → backend у PRODUCTION (чекає схвалення Environment `production`)
   → паралельно: Android AAB → Play internal track, iOS → TestFlight
@@ -52,9 +54,9 @@ push у main (preview.yml)
 
 Головне:
 
-- **Production-бекенд змінюється на тезі, а не на promote.** Після схвалення `production` правила й functions замінюються, і лише потім стартують збірки; `promote.yml` бекенд не чіпає. Хто схвалює `production` для тегу, схвалює саме деплой правил і functions для всіх користувачів.
-- **Щоб тег не дав пів-релізу** (бекенд оновлено, а збірки впали на відсутньому ключі), verify-job `release.yml` зупиняє реліз до будь-якого деплою, якщо змінна репозиторію `STORE_RELEASES` не `true`, якщо бракує `EXPO_TOKEN`, ключа App Store Connect, `APPLE_TEAM_ID`, `ASC_APP_ID` чи `GOOGLE_SERVICE_ACCOUNT_BASE64`, або якщо EAS-середовище `production` неповне. Ставте `STORE_RELEASES=true` лише після всього етапу 0 (зокрема першого AAB у Play і сертифіката iOS, яких CI перевірити не може).
-- **Усе, що веде в production** (OTA-канал production, production-збірки, backend у production, promote), іде лише з `main` або з тегу `vX.Y.Z`, коміт якого є в `main` (`release-check.mjs --release-ref`). Ручний запуск будь-якого з цих workflow спершу ганяє весь `ci-check.yml` (≈10+ хв), обійти CI не можна.
+- **Production-бекенд змінюється після ручного запуску release.yml, а не на promote.** Після схвалення `production` правила й functions замінюються, і лише потім стартують збірки; `promote.yml` бекенд не чіпає. Push і створення тегу не запускають цей конвеєр.
+- **Щоб ручний запуск не дав пів-релізу** (бекенд оновлено, а збірки впали на відсутньому ключі), verify-job `release.yml` зупиняє реліз до будь-якого деплою, якщо змінна репозиторію `STORE_RELEASES` не `true`, якщо бракує `EXPO_TOKEN`, ключа App Store Connect, `APPLE_TEAM_ID`, `ASC_APP_ID` чи `GOOGLE_SERVICE_ACCOUNT_BASE64`, або якщо EAS-середовище `production` неповне. Ставте `STORE_RELEASES=true` лише після всього етапу 0 (зокрема першого AAB у Play і сертифіката iOS, яких CI перевірити не може).
+- **Усе, що веде в production** (OTA-канал production, production-збірки, backend у production, promote), потребує події `workflow_dispatch` з `main` або тегу `vX.Y.Z`, коміт якого є в `main` (`release-check.mjs --release-ref`). Перевірку тригера проходять і reusable workflow. CI виконується один раз у батьківському конвеєрі; окремий ручний запуск також запускає весь CI.
 - **Preview-клієнти говорять лише зі staging-бекендом:** preview-збірки й preview-OTA порівнюють Firebase-проєкт і базу EAS-середовища `preview` зі змінними GitHub Environment `staging`; production-OTA порівнює EAS `production` з GitHub `production`.
 - **Порядок для цього першого релізу: staging backend, нові binaries, перевірка, production.** Нові age claims і квоти несумісні зі старими dev збірками. Для наступних публічних версій підтримуйте сумісність або готуйте окрему міграцію до посилення rules.
 
@@ -78,7 +80,7 @@ push у main (preview.yml)
    - **Видалення чи перейменування функції.** CI деплоїть без `--force`, тому функцію, якої вже немає в коді, він не видалить, а зупиниться («deletion cannot proceed in non-interactive mode»). Видаляйте її явно перед релізом: `npx firebase-tools@15.32.1 functions:delete <name> --region us-central1 --project <project-id>` (для обох проєктів). При перейменуванні спершу задеплойте нову функцію, потім видаліть стару, щоб не втратити події.
    - **Параметри functions** пише CI у `functions/.env.<project-id>`: `FIRESTORE_DATABASE_ID` зі змінної середовища (обовʼязковий, значення за замовчуванням немає) і `EXPO_ACCESS_TOKEN` із секрету, лише якщо він є. Для ручного деплою див. «Бекенд вручну» нижче.
 7. **Ключ Google Maps:** обмежити за `com.budmo.app` та SHA-1 (і ключ Play App Signing, і ключ завантаження).
-8. **GitHub:** середовища `staging`, `production`, `store-release` з reviewers, правилами гілок і змінними за [таблицею нижче](#налаштування-github-settings--environments--variables--secrets). Коли готові EAS-змінні `preview` і середовище `staging`: змінна репозиторію `PREVIEW_BUILDS=true`. **Останнім**, коли зроблено кроки 1–7 і перший AAB уже в Play: `STORE_RELEASES=true`; до того тег зупиняється на verify, нічого не деплоївши.
+8. **GitHub:** середовища `staging`, `production`, `store-release` з reviewers, правилами гілок і змінними за [таблицею нижче](#налаштування-github-settings--environments--variables--secrets). Preview автоматично запускається після push у `main`, коли готові EAS `preview` і GitHub `staging`. **Останнім**, коли зроблено кроки 1–7 і перший AAB уже в Play: `STORE_RELEASES=true`; до того ручний production-реліз зупиняється на verify, нічого не деплоївши.
 
 #### 0.1. Упорядкований чек-лист одноразових кроків
 
@@ -89,15 +91,15 @@ push у main (preview.yml)
 5. Expo: `EXPO_TOKEN` у секрети репозиторію; EAS-змінні `preview` (staging-проєкт) і `production` (бойовий), видимість Plain text / Sensitive; FCM V1 і APNs у `eas credentials`; за потреби секрет `EXPO_ACCESS_TOKEN`.
 6. GitHub Environments `staging` і `production`: чотири змінні кожному, `FIRESTORE_DATABASE_ID` у `production` = `ai-studio-df109a92-91f7-44f7-944f-c92e7aa387b8`; ті самі змінні на рівні репозиторію видалити. Reviewers і правила гілок для `production` і `store-release`.
 7. Перший деплой бекенду: staging (push у main або `deploy-backend.yml`), production (`deploy-backend.yml` вручну з `main`); якщо CI не має прав на cleanup policy, `functions:artifacts:setpolicy` вручну й перезапуск.
-8. `PREVIEW_BUILDS=true`.
+8. Preview автоматично запускається після push у `main`; прапорець `PREVIEW_BUILDS` не потрібний.
 9. Apple: запис застосунку, capability Sign In with Apple, командний ключ API → три секрети, змінні `APPLE_TEAM_ID`, `ASC_APP_ID`; сертифікат дистрибуції інтерактивно (`npx eas-cli credentials -p ios`).
 10. Google Play: застосунок, перший production-AAB вручну в internal testing, сервісний акаунт з правами випуску → `GOOGLE_SERVICE_ACCOUNT_BASE64`; SHA ключа Play App Signing у Firebase і в обмеження ключа карт.
 11. `STORE_RELEASES=true`, далі перший реліз за розділом «Реліз» нижче.
 
-### Реліз (тег `vX.Y.Z`)
+### Реліз (кнопка Run workflow)
 
 1. Підніміть версію однаково в `app.json` (`expo.version`) і `package.json`; `buildNumber` / `versionCode` EAS веде сам (`appVersionSource: remote`, `autoIncrement`). Злийте в `main` і дочекайтесь зеленого `preview.yml` (staging-бекенд і preview-клієнти цього коміту).
-2. `git tag vX.Y.Z <коміт у main> && git push origin vX.Y.Z`. Перед пушем можна перевірити локально: `node scripts/release-check.mjs --tag vX.Y.Z --project`.
+2. GitHub → Actions → **Production release (manual)** → **Run workflow**, оберіть `main`. За потреби спочатку створіть тег `vX.Y.Z` на коміті в `main` та виберіть його при ручному запуску; сам push тегу не запускає реліз. Локальна перевірка версії тегу: `node scripts/release-check.mjs --tag vX.Y.Z --project`.
 3. `release.yml`: CI → verify → **схваліть `production`** (це деплой правил і functions у бойовий проєкт) → збірки й відправка в Play internal і TestFlight. Id збірок є в підсумку job.
 4. Якщо збірка чи відправка впала вже після деплою бекенду, зупиніть публікацію й перевірте сумісність активних клієнтів. Цей перший реліз змінює контракт rules; старі dev клієнти не підтримуються. Після усунення причини повторіть невдалий job. Для наступних публічних релізів план сумісності та відкату потрібен до деплою.
 5. Перевірте збірки в internal testing і TestFlight, далі promote.
@@ -110,7 +112,7 @@ push у main (preview.yml)
 ### OTA-оновлення
 
 - **Що це:** EAS Update доставляє JS і ресурси без рев'ю стору. `runtimeVersion` = нативний **fingerprint** (`runtimeVersion: { policy: 'fingerprint' }` у [app.config.ts](app.config.ts)): оновлення доходить лише до збірок з тим самим нативним кодом. **Не перемикайте на `appVersion`:** тоді оновлення діставалося б збірок тієї самої версії з іншим нативним кодом і падало б у них. `extra` (EAS-змінні) і версія у fingerprint не входять ([fingerprint.config.js](fingerprint.config.js)): кожне оновлення несе їх у маніфесті. Будь-яка нативна зміна (залежності, плагіни, ключ карт, iOS client id, `google-services.json`, `eas.json`) потребує store-збірки.
-- **preview:** автоматично на кожен push у `main` (коли `PREVIEW_BUILDS=true`), після staging-деплою.
+- **preview:** автоматично на кожен push у `main`, після staging-деплою та успішної Android preview-збірки.
 - **production:** `ota.yml` вручну з `main` або тегу, `channel: production`, після CI і схвалення `production`. Перед публікацією workflow перевіряє повноту EAS `production`, що вона вказує на бекенд GitHub `production`, і що для **кожної** платформи є завершена production-збірка з тим самим runtime (інакше падає: оновлення нікому б не дійшло; спершу store-збірка). Після публікації перевіряє фактичний runtime ще раз.
 - **Відкат:** `npx eas-cli update:rollback` (публікує попередню групу оновлень каналу, а якщо її немає, повертає вбудований у збірку бандл) або новий OTA з виправленням.
 
@@ -157,8 +159,8 @@ push у main (preview.yml)
 |----|------|----|
 | CI (lint, тести, правила в емуляторі, бандл, prebuild, functions) як reusable gate для всіх релізів; actions закріплені за SHA, `eas-cli` 24.8.0, `firebase-tools` 15.32.1 | зроблено | [ci-check.yml](.github/workflows/ci-check.yml) |
 | Обійти gate не можна: ручний запуск `ota.yml`, `build-*.yml`, `deploy-backend.yml`, `promote.yml` спершу ганяє `ci-check.yml`. Усе production лише з `main` або тегу на коміті з `main` (`--release-ref`); `promote.yml` (Android) приймає лише production-збірку з коміту в `main` (`--on-main`) | зроблено | усі workflow, [scripts/release-check.mjs](scripts/release-check.mjs) |
-| Тег → CI → verify (версія, `main`, `projectId`, `STORE_RELEASES`, секрети сторів, EAS `production`) → backend у production (схвалення) → Play internal + TestFlight. Без `STORE_RELEASES=true` тег нічого не деплоїть | зроблено | [release.yml](.github/workflows/release.yml) |
-| Push у `main` → CI → backend у staging (кожен push) → після успіху й `PREVIEW_BUILDS=true` Android preview + preview-OTA, обидва перевіряють, що EAS `preview` вказує на staging | зроблено | [preview.yml](.github/workflows/preview.yml) |
+| Run workflow → CI → verify (версія, `main`, `projectId`, `STORE_RELEASES`, секрети сторів, EAS `production`) → backend у production (схвалення) → Play internal + TestFlight. Push і теги не запускають production | зроблено | [release.yml](.github/workflows/release.yml) |
+| Push у `main` → CI → backend у staging (кожен push) → Android preview → preview-OTA, обидва перевіряють, що EAS `preview` вказує на staging | зроблено | [preview.yml](.github/workflows/preview.yml) |
 | Деплой правил і functions (Workload Identity, база на середовище, production-база = `firebase.json`, автоматична cleanup policy на першому деплої, без `--force`) | зроблено | [deploy-backend.yml](.github/workflows/deploy-backend.yml) |
 | Збірки: перевірка EAS-змінних до старту (`--env`), ключі сторів перевіряються до хмарної збірки, `eas.json` до збірки не змінюється, відправка окремим кроком після збірки | зроблено | [build-android.yml](.github/workflows/build-android.yml), [build-ios.yml](.github/workflows/build-ios.yml), [app.config.ts](app.config.ts) |
 | OTA через EAS Update; runtime = fingerprint (без `extra` і версії); перед і після публікації перевірка, що є збірка каналу з тим самим runtime (production: інакше падає) | зроблено | [ota.yml](.github/workflows/ota.yml), [fingerprint.config.js](fingerprint.config.js) |
@@ -174,23 +176,23 @@ push у main (preview.yml)
 
 Знахідки `expo prebuild`: прибрано зайві дозволи Android (`READ/WRITE_EXTERNAL_STORAGE`, `SYSTEM_ALERT_WINDOW`: застосунок не пише у спільне сховище; налагоджувальні збірки зберігають `SYSTEM_ALERT_WINDOW` у debug-маніфесті), додано `expo-system-ui` (інакше `userInterfaceStyle` на Android ігнорувався). iOS-проєкт на Windows не генерується; його перевіряє CI на Linux.
 
-Поки `STORE_RELEASES` не `true`, тег зупиняється на verify з `::error::` і нічого не деплоїть і не збирає. `preview.yml` деплоїть staging (або пропускає його, якщо `staging` не налаштовано), але нічого не збирає й не публікує, доки `PREVIEW_BUILDS` не `true`.
+Поки `STORE_RELEASES` не `true`, ручний production-реліз зупиняється на verify з `::error::` і нічого не деплоїть і не збирає. `preview.yml` автоматично намагається зібрати APK та опублікувати OTA після staging-деплою; без GitHub staging-змінних або повної конфігурації EAS `preview` викатка зупиняється з поясненням.
 
 ### Налаштування GitHub (Settings → Environments / Variables / Secrets)
 
 | Environment | Reviewers | Deployment branches and tags | Variables |
 |-------------|-----------|------------------------------|-----------|
 | `staging` | не потрібні | без обмежень (preview можна зібрати з будь-якої гілки, після CI) | `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` (порожні: деплой у staging пропускається, а preview-збірки й preview-OTA відмовляються збиратися). `FIREBASE_PROJECT_ID` / `FIRESTORE_DATABASE_ID` мають збігатися з EAS `preview` |
-| `production` | **так** (backend на тезі й вручну, production-OTA) | **Selected branches and tags:** гілка `main` і тег `v*` | ті самі чотири змінні для бойового проєкту; `FIRESTORE_DATABASE_ID` = база з `firebase.json` (`ai-studio-df109a92-91f7-44f7-944f-c92e7aa387b8`), той самий `FIREBASE_FIRESTORE_DATABASE_ID`, що в EAS `production` |
+| `production` | **так** (ручний backend-реліз, production-OTA) | **Selected branches and tags:** гілка `main` і тег `v*` | ті самі чотири змінні для бойового проєкту; `FIRESTORE_DATABASE_ID` = база з `firebase.json` (`ai-studio-df109a92-91f7-44f7-944f-c92e7aa387b8`), той самий `FIREBASE_FIRESTORE_DATABASE_ID`, що в EAS `production` |
 | `store-release` | **так** (promote) | **Selected branches and tags:** гілка `main` і тег `v*` | (немає: юридичні посилання promote бере з EAS-середовища `production`; старі `PRIVACY_POLICY_URL` / `TERMS_URL` тут можна видалити) |
 
-Обмеження гілок у середовищах дублює перевірку `release-check.mjs --release-ref` у самих workflow (та ще й відкидає тег, поставлений на коміт поза `main`). Тег `v*` потрібен у `production`, бо `release.yml` деплоїть backend з тегу.
+Обмеження гілок у середовищах дублює перевірку `release-check.mjs --release-ref` у самих workflow (та ще й відкидає тег, поставлений на коміт поза `main`). Дозвіл на тег `v*` потрібний лише для ручних запусків з існуючого release-тегу.
 
 **Увага, `FIRESTORE_DATABASE_ID`:** зараз змінна називає базу `cheers_db`, якої не існує. Задайте в `production` id бази з `firebase.json` (і id staging-бази в `staging`). Доки значення не збігається з `firebase.json`, `deploy-backend.yml` у production зупиняється з `::error::`, а production-OTA – на порівнянні з EAS `production`. Якщо `FIRESTORE_DATABASE_ID` (чи `FIREBASE_PROJECT_ID`) задано як змінну **репозиторію**, вона діє в кожному середовищі, де її не перевизначено: тримайте ці дві змінні лише в середовищах.
 
-**Рівень репозиторію** (Settings → Secrets and variables → Actions). Секрети сторів мають бути саме секретами **репозиторію**, не середовища: job-и збірок за тегом і verify-job працюють без Environment і секретів середовища не бачать.
+**Рівень репозиторію** (Settings → Secrets and variables → Actions). Секрети сторів мають бути саме секретами **репозиторію**, не середовища: job-и збірок і verify-job працюють без Environment і секретів середовища не бачать.
 
-- Variables: `STORE_RELEASES` (`true` після етапу 0), `PREVIEW_BUILDS` (`true`, коли готові EAS `preview` і `staging`), `APPLE_TEAM_ID`, `ASC_APP_ID`.
+- Variables: `STORE_RELEASES` (`true` після етапу 0), `APPLE_TEAM_ID`, `ASC_APP_ID`.
 - Secrets: `EXPO_TOKEN`, `APP_STORE_CONNECT_API_KEY_BASE64`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `GOOGLE_SERVICE_ACCOUNT_BASE64`, опційно `EXPO_ACCESS_TOKEN` (лише з Expo «enhanced push security»).
 
 **Не перевірено, бо потребує ваших акаунтів:** реальний запуск workflow (перевірено синтаксис YAML, звʼязки `needs`, `bash -n` скриптів і локальні скрипти), `eas build/submit/update`, Workload Identity, Play Developer API, `eas metadata:push`.
@@ -200,7 +202,7 @@ push у main (preview.yml)
 | Де | Що |
 |----|----|
 | GitHub Secrets (репозиторій) | `EXPO_TOKEN`, `APP_STORE_CONNECT_API_KEY_BASE64`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `GOOGLE_SERVICE_ACCOUNT_BASE64`, (опційно) `EXPO_ACCESS_TOKEN` |
-| GitHub Variables (репозиторій) | `STORE_RELEASES`, `PREVIEW_BUILDS`, `ASC_APP_ID`, `APPLE_TEAM_ID` |
+| GitHub Variables (репозиторій) | `STORE_RELEASES`, `ASC_APP_ID`, `APPLE_TEAM_ID` |
 | GitHub Environments `staging`, `production` | `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` (Workload Identity: довгоживучого ключа Google у GitHub немає) |
 | EAS env (preview/production; Plain text або Sensitive, не Secret) | `FIREBASE_*` (з `FIREBASE_FIRESTORE_DATABASE_ID`), `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_MAPS_API_KEY`, `ADMOB_ANDROID_APP_ID`, `ADMOB_IOS_APP_ID`, `PRIVACY_POLICY_URL`, `TERMS_URL`, файл `GOOGLE_SERVICES_JSON`; лише в production: `ADMOB_{ANDROID,IOS}_{BANNER,INLINE}_ID` |
 | EAS credentials | keystore Android, сертифікат дистрибуції й профілі iOS, ключ APNs, FCM V1 |
@@ -212,7 +214,7 @@ push у main (preview.yml)
 - **Перший Android-реліз і закритий тест** визначають календар більше, ніж код.
 - **Збірки на `ubuntu-latest` не потребують macOS:** iOS будується в хмарі EAS. Ліміти безкоштовного плану EAS (черга, число збірок) варто звірити з очікуваною частотою релізів.
 - **Правила, що змінюють формат чи умови доступу**, можуть відмовляти старим клієнтам. Нові onboarding claims і квоти — така зміна. Для вже публічної версії потрібні staging-перевірка, період сумісності або погоджений перехід, а не припущення про автоматичну сумісність.
-- **Production-збірки за тегом не порівнюють** Firebase-проєкт EAS `production` з GitHub `production` (це додало б друге схвалення кожному тегу); це робить production-OTA, а `--env` і `app.config.ts` вимагають самих значень.
+- **Production-збірки не порівнюють** Firebase-проєкт EAS `production` з GitHub `production` (це додало б друге схвалення кожному ручному релізу); це робить production-OTA, а `--env` і `app.config.ts` вимагають самих значень.
 - **iOS promote** не може перевірити, яку збірку відправлять на рев'ю: її обирають руками в App Store Connect.
 
 ## 6. Оцінка (що лишилось)

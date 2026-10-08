@@ -9,3 +9,4 @@ export function checkIdentifiers(appJson: unknown): string[];
 export function checkBackend(env: Record<string, string | undefined>): string[];
 export function checkOnMain(input: { sha?: string; onMain: boolean | string; what?: string }): string[];
 export function checkReleaseRef(input: { ref?: string; sha?: string; onMain: boolean | string }): string[];
+export function checkProductionTrigger(eventName?: string): string[];

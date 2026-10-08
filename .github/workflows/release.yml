@@ -1,19 +1,21 @@
-name: 🚀 Release (tag vX.Y.Z)
+name: 🚀 Production release (manual)
 
-# Pushing a tag `vX.Y.Z` runs the whole release line:
-#   CI gate → verify (tag = version, commit on main, STORE_RELEASES, store credentials, EAS production variables)
+# Only the Run workflow button starts the production release line:
+#   CI gate → verify (versions agree, commit on main, STORE_RELEASES, store credentials, EAS production variables)
 #           → backend to production (needs approval) → Android AAB → Play internal track
 #                                                    → iOS IPA   → TestFlight
-# The production backend therefore changes HERE, at the tag, not at promotion. Taking the build further (Play
+# The production backend therefore changes HERE, on this manual run, not at promotion. Taking the build further (Play
 # production rollout, App Store listing and review) is a separate, approved step: promote.yml, which never touches
 # the backend.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
 
 jobs:
   ci:
@@ -21,7 +23,7 @@ jobs:
     uses: ./.github/workflows/ci-check.yml
 
   verify:
-    name: 🏷️ Tag matches the app version
+    name: 🏷️ Versions and production configuration
     needs: ci
     runs-on: ubuntu-latest
     steps:
@@ -34,10 +36,15 @@ jobs:
       # A tag can be pushed onto any commit, also one of an untested branch: the release goes on only when the
       # tagged commit is on main (--release-ref), before anything is deployed or built
       - name: 🏷️ release-check
-        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME" --project --release-ref
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            node scripts/release-check.mjs --tag "$GITHUB_REF_NAME" --project --release-ref
+          else
+            node scripts/release-check.mjs --project --release-ref
+          fi
 
       # The backend job below replaces the PRODUCTION rules and functions (after approval) BEFORE the store builds run.
-      # A tag pushed while the store side is not set up yet would therefore change production and then fail in the
+      # A manual run while the store side is not set up yet would therefore change production and then fail in the
       # builds: a half-release. So the whole line is off until the operator declares the store accounts ready
       # (repository variable STORE_RELEASES = 'true', DEPLOY.md stage 0), and every credential the build and submit
       # jobs need must exist. Only presence is checked here (no value is printed); the build jobs validate the formats.
@@ -53,7 +60,7 @@ jobs:
           ASC_APP_ID: ${{ vars.ASC_APP_ID }}
         run: |
           if [ "$STORE_RELEASES" != "true" ]; then
-            echo "::error::Tag releases are switched off: set the repository variable STORE_RELEASES to 'true' once the store accounts, keys and EAS variables exist (DEPLOY.md, stage 0). Nothing was deployed or built."
+            echo "::error::Store releases are switched off: set the repository variable STORE_RELEASES to 'true' once the store accounts, keys and EAS variables exist (DEPLOY.md, stage 0). Nothing was deployed or built."
             exit 1
           fi
           missing=""
@@ -65,7 +72,7 @@ jobs:
           [ -n "$APPLE_TEAM_ID" ] || missing="$missing variable APPLE_TEAM_ID,"
           [ -n "$ASC_APP_ID" ] || missing="$missing variable ASC_APP_ID,"
           if [ -n "$missing" ]; then
-            echo "::error::A tag release builds and submits both apps, but CI lacks:${missing%,}. Nothing was deployed or built. See DEPLOY.md, stage 0."
+            echo "::error::A production release builds and submits both apps, but CI lacks:${missing%,}. Nothing was deployed or built. See DEPLOY.md, stage 0."
             exit 1
           fi
 
@@ -88,6 +95,7 @@ jobs:
     needs: verify
     uses: ./.github/workflows/deploy-backend.yml
     with:
+      ci_checked: true
       environment: production
     permissions:
       contents: read
@@ -99,6 +107,7 @@ jobs:
     needs: backend
     uses: ./.github/workflows/build-android.yml
     with:
+      ci_checked: true
       profile: production
       submit: true
     secrets: inherit
@@ -108,6 +117,7 @@ jobs:
     needs: backend
     uses: ./.github/workflows/build-ios.yml
     with:
+      ci_checked: true
       profile: production
       submit: true
     secrets: inherit

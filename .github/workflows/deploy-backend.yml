@@ -13,6 +13,10 @@ name: ☁️ Backend deploy (Firestore rules + Cloud Functions)
 on:
   workflow_call:
     inputs:
+      ci_checked:
+        description: 'Caller has successfully completed ci-check.yml for this commit'
+        type: boolean
+        default: false
       environment:
         type: string
         required: true
@@ -66,16 +70,16 @@ jobs:
   ci:
     name: ✅ CI gate
     needs: gate
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ !inputs.ci_checked }}
     uses: ./.github/workflows/ci-check.yml
 
   deploy:
     name: ☁️ Deploy to ${{ inputs.environment }}
     needs: [gate, ci]
-    # A skipped CI is accepted only when another workflow called this one (and ran ci-check.yml itself)
+    # A skipped CI is accepted only when the caller explicitly completed ci-check.yml
     if: >-
       !cancelled() && needs.gate.result == 'success'
-      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && github.event_name != 'workflow_dispatch'))
+      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && inputs.ci_checked))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ inputs.environment }}

@@ -6,9 +6,13 @@ name: 📡 OTA update (EAS Update)
 #   production  (by hand)     real users: only from main or a release tag, after the full CI, and after approval
 #                             of the GitHub Environment `production`
 on:
-  # Callers must run ci-check.yml before calling (preview.yml does); the CI job below runs only for a manual start
+  # A caller sets ci_checked only after its CI gate succeeds; an independent manual run performs CI below.
   workflow_call:
     inputs:
+      ci_checked:
+        description: 'Caller has successfully completed ci-check.yml for this commit'
+        type: boolean
+        default: false
       channel:
         type: string
         default: 'preview'
@@ -64,16 +68,16 @@ jobs:
   ci:
     name: ✅ CI gate
     needs: gate
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ !inputs.ci_checked }}
     uses: ./.github/workflows/ci-check.yml
 
   update:
     name: 📡 Publish to ${{ inputs.channel }}
     needs: [gate, ci]
-    # A skipped CI is accepted only when another workflow called this one (and ran ci-check.yml itself)
+    # A skipped CI is accepted only when the caller explicitly completed ci-check.yml
     if: >-
       !cancelled() && needs.gate.result == 'success'
-      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && github.event_name != 'workflow_dispatch'))
+      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && inputs.ci_checked))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ inputs.channel == 'production' && 'production' || 'staging' }}
