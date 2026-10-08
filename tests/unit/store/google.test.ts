@@ -39,7 +39,7 @@ import favorites from '@/store/slices/favoritesSlice';
 import ui, { authNoticeSet } from '@/store/slices/uiSlice';
 import { authService } from '@/services/authService';
 import { firestoreSyncService } from '@/services/firestoreSyncService';
-import { handleFirebaseUser, submitBirthDate } from '@/store/thunks/auth';
+import { handleFirebaseUser, prefillGoogleBirthDate, submitBirthDate } from '@/store/thunks/auth';
 import type { RootState } from '@/store/index';
 
 const rootReducer = combineReducers({ outbox, auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
@@ -75,6 +75,23 @@ beforeEach(() => {
 });
 
 describe('Google sign-in: the account', () => {
+  it('prefills the current account without accepting terms or completing server onboarding', () => {
+    const s = makeStore();
+    run(s, handleFirebaseUser(googleUser()));
+    run(s, prefillGoogleBirthDate('g1', '1990-05-15'));
+    expect(st(s).auth.user.birthDate).toBe('1990-05-15');
+    expect(authService.completeOnboarding).not.toHaveBeenCalled();
+    run(s, prefillGoogleBirthDate('g1', '1991-05-15'));
+    expect(st(s).auth.user.birthDate).toBe('1990-05-15');
+  });
+
+  it('ignores a late birthday from another account and invalid dates', () => {
+    const s = makeStore();
+    run(s, handleFirebaseUser(googleUser('g2')));
+    run(s, prefillGoogleBirthDate('g1', '1990-05-15'));
+    run(s, prefillGoogleBirthDate('g2', '1990-02-30'));
+    expect(st(s).auth.user.birthDate).toBeFalsy();
+  });
   it('is mirrored as a Google, already verified user with its own photo', async () => {
     const s = makeStore();
     run(s, handleFirebaseUser(googleUser()));

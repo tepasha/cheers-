@@ -24,6 +24,13 @@ const providerOf = (fb: User): 'google' | 'apple' | 'email' => {
 /** Accounts created by earlier builds stored a DiceBear URL as their avatar; drop it so the name is no longer sent out */
 const withoutHostedPlaceholder = (avatar: string) => (/(^|\/\/)api\.dicebear\.com\//.test(avatar) ? '' : avatar);
 
+/** Prefill only this session; the server still requires onboarding and explicit terms acceptance. */
+export const prefillGoogleBirthDate = (uid: string, birthDate: string): AppThunk => (dispatch, getState) => {
+  const { user } = getState().auth;
+  if (!user.isLoggedIn || user.id !== uid || user.birthDate || checkAge(birthDate) === 'invalid') return;
+  dispatch(profileUpdated({ birthDate }));
+};
+
 /**
  * Signs out of Firebase. The push device is removed first, while the account can still write: afterwards the
  * phone would keep showing this person's chat notifications to whoever holds it.

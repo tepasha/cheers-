@@ -22,8 +22,16 @@ import type { RootScreenProps } from '../navigation/types';
 import { useTr } from '../hooks/useT';
 import { usePushOptIn } from '../hooks/usePushOptIn';
 import { ph } from '../services/i18nService';
+import { DateTimeField } from '../components/DateTimeField';
+import { addDays, formatDateInput, toIsoDateTime } from '../logic/dateInput';
+import { useCurrentTime } from '../hooks/useCurrentTime';
 
-const QUICK_TIMES = [ph('Сьогодні о 19:00'), ph('Сьогодні о 20:30'), ph('Завтра о 19:00'), ph('У п’ятницю о 20:00')];
+const QUICK_TIMES = [
+  { label: ph('Сьогодні о 19:00'), days: 0, time: '19:00' },
+  { label: ph('Сьогодні о 20:30'), days: 0, time: '20:30' },
+  { label: ph('Завтра о 19:00'), days: 1, time: '19:00' },
+  { label: ph('У п’ятницю о 20:00'), days: 'friday', time: '20:00' },
+] as const;
 
 export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'>) => {
   const tr = useTr();
@@ -143,8 +151,8 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
         </View>
       </KeyboardAvoidingView>
 
-      <ProposalSheet
-        visible={sheet === 'proposal'}
+      {sheet === 'proposal' && <ProposalSheet
+        visible
         defaultBar={chat.buddy.favoriteBars[0]}
         onClose={() => setSheet(null)}
         onSend={(barName, address, time) => {
@@ -158,7 +166,7 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
           );
           setSheet(null);
         }}
-      />
+      />}
 
       <SecuritySheet visible={sheet === 'security'} chatId={chatId} lastCipher={[...chat.messages].reverse().find((m) => m.cipherPayload)?.cipherPayload} onClose={() => setSheet(null)} />
 
@@ -351,15 +359,24 @@ const ProposalSheet = ({
   const tr = useTr();
   const [bar, setBar] = useState(defaultBar ?? '');
   const [address, setAddress] = useState('');
-  const [time, setTime] = useState(() => tr(QUICK_TIMES[1]));
+  const [date, setDate] = useState(() => formatDateInput(new Date()));
+  const [time, setTime] = useState('20:30');
   const kyiv = useMemo(() => GOOGLE_MAPS_VENUES.filter((v) => v.cityId === 'kyiv').slice(0, 12), []);
+  const now = useCurrentTime();
+  const today = new Date(now);
+  const iso = toIsoDateTime(date, time);
+  const future = iso !== null && Date.parse(iso) > now;
+  const send = () => {
+    if (!bar.trim() || !iso || Date.parse(iso) <= Date.now()) return;
+    onSend(bar.trim(), address.trim() || tr('Київ'), tr('{date} о {time}', { date, time }));
+  };
 
   return (
     <Sheet
       visible={visible}
       onClose={onClose}
       title={tr('Запропонувати місце')}
-      footer={<Button label={tr('Надіслати пропозицію')} icon="send" disabled={!bar.trim()} onPress={() => onSend(bar.trim(), address.trim() || tr('Київ'), time.trim())} />}
+      footer={<Button label={tr('Надіслати пропозицію')} icon="send" disabled={!bar.trim() || !future} onPress={send} />}
     >
       <Text style={typography.label}>{tr('ПОПУЛЯРНІ ЗАКЛАДИ')}</Text>
       <Row style={{ flexWrap: 'wrap', marginVertical: spacing.sm }}>
@@ -379,11 +396,15 @@ const ProposalSheet = ({
       <Field label={tr('АДРЕСА')} value={address} onChangeText={setAddress} placeholder={tr('Вулиця, район')} />
       <Text style={typography.label}>{tr('КОЛИ')}</Text>
       <Row style={{ flexWrap: 'wrap', marginVertical: spacing.sm }}>
-        {QUICK_TIMES.map((t) => (
-          <Chip key={t} label={tr(t)} selected={time === tr(t)} onPress={() => setTime(tr(t))} />
-        ))}
+        {QUICK_TIMES.map((option) => {
+          const offset = option.days === 'friday' ? (5 - today.getDay() + 7) % 7 : option.days;
+          const quickDate = formatDateInput(addDays(today, offset));
+          return <Chip key={option.label} label={tr(option.label)} selected={date === quickDate && time === option.time} onPress={() => { setDate(quickDate); setTime(option.time); }} />;
+        })}
       </Row>
-      <Field label={tr('АБО СВІЙ ЧАС')} value={time} onChangeText={setTime} />
+      <DateTimeField label={tr('ДАТА')} value={date} onChange={setDate} minimumDate={today} />
+      <DateTimeField label={tr('ЧАС')} value={time} onChange={setTime} mode="time" />
+      {!future && <Text accessibilityRole="alert" style={{ color: colors.red, fontSize: 12, marginBottom: spacing.sm }}>{tr('Оберіть майбутню дату та час зустрічі')}</Text>}
     </Sheet>
   );
 };

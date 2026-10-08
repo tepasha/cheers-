@@ -133,6 +133,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
       : { enabled: false },
     plugins: [
       ...(config.plugins ?? []),
+      '@react-native-community/datetimepicker',
       // delayAppMeasurementInit: nothing is sent to Google before the consent step (services/ads.ts) has run.
       // cstr6suwn9: Google's own SKAdNetwork id (iOS install attribution without tracking)
       ['react-native-google-mobile-ads', { androidAppId: admobAppId.android, iosAppId: admobAppId.ios, delayAppMeasurementInit: true, skAdNetworkItems: ['cstr6suwn9.skadnetwork'] }],

@@ -11,7 +11,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
-import { reauthenticateWithGoogle, signInWithGoogle } from './googleSignIn';
+import { getGoogleBirthDate, reauthenticateWithGoogle, signInWithGoogle } from './googleSignIn';
 import { signOutGoogle } from './googleSignIn';
 import { reauthenticateWithApple, signInWithApple } from './appleSignIn';
 import { auth, functions } from './firebase';
@@ -40,7 +40,18 @@ export function describeAuthError(err: unknown): string {
     case 'auth/requires-recent-login':
       return ph('Підтвердіть пароль ще раз');
     case 'auth/operation-not-allowed':
-      return ph('Вхід за email вимкнений у проєкті Firebase');
+      return ph('Цей спосіб входу вимкнений у проєкті Firebase');
+    case 'auth/unauthorized-domain':
+      return ph('Цей домен не дозволений для входу. Додайте його до Authorized domains у Firebase Authentication');
+    case 'auth/popup-blocked':
+      return ph('Браузер заблокував вікно входу. Дозвольте спливні вікна для цього сайту');
+    case 'auth/auth-domain-config-required':
+      return ph('Не налаштовано домен авторизації Firebase (FIREBASE_AUTH_DOMAIN)');
+    case 'auth/operation-not-supported-in-this-environment':
+      return ph('Вхід недоступний у цьому вікні. Відкрийте застосунок в окремому браузері');
+    case '10':
+    case 'DEVELOPER_ERROR':
+      return ph('Помилка налаштування Google: перевірте OAuth Client ID, назву пакета та SHA-1 сертифіката цієї збірки');
     case 'auth/account-exists-with-different-credential':
       return ph('Акаунт із таким email уже існує. Увійдіть за паролем');
     case 'google/not-configured':
@@ -49,6 +60,8 @@ export function describeAuthError(err: unknown): string {
       return ph('Вхід через Google працює лише в зібраному застосунку, не в Expo Go');
     case 'google/play-services':
       return ph('Потрібні служби Google Play');
+    case 'google/no-token':
+      return ph('Google не підтвердив вхід. Перевірте GOOGLE_WEB_CLIENT_ID');
     case 'apple/no-token':
       return ph('Apple не підтвердив вхід. Спробуйте ще раз');
     case 'functions/unavailable':
@@ -125,10 +138,11 @@ export const authService = {
    * Google sign-in. A person who has no account yet gets one automatically (Firebase creates it on the first sign-in).
    * Returns null when the user closed the Google dialog. The age check happens after sign-in, in the app.
    */
-  async loginWithGoogle(): Promise<{ user: User; isNewUser: boolean } | null> {
+  async loginWithGoogle(): Promise<{ user: User; isNewUser: boolean; birthDate: string | null } | null> {
     const cred = await signInWithGoogle(auth);
     if (!cred) return null;
-    return { user: cred.user, isNewUser: getAdditionalUserInfo(cred)?.isNewUser === true };
+    const birthDate = await getGoogleBirthDate(cred);
+    return { user: cred.user, isNewUser: getAdditionalUserInfo(cred)?.isNewUser === true, birthDate };
   },
 
   /**

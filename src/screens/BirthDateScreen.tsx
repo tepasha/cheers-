@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Field } from '../components/ui';
+import { Button } from '../components/ui';
+import { BirthDatePicker } from '../components/BirthDatePicker';
 import { colors, spacing, typography } from '../theme';
 import { useAppDispatch } from '../store/hooks';
 import { logout, submitBirthDate } from '../store/thunks/auth';
@@ -14,7 +15,7 @@ import { useAppSelector } from '../store/hooks';
 import { isoToDateInput } from '../logic/dateInput';
 
 /**
- * Shown after a first Google sign-in (Google does not tell us the birth date) and to any account that has none yet.
+ * Confirms a date supplied by Google, or asks for one when unavailable. Terms acceptance is always explicit.
  * Too young: the account is removed and the sign-in screen says to wait until {MIN_AGE}.
  */
 export const BirthDateScreen = () => {
@@ -31,7 +32,7 @@ export const BirthDateScreen = () => {
     if (!accepted || busy) return;
     const iso = parseBirthDateInput(input);
     if (!iso) {
-      setError(tr('Вкажіть дату у форматі ДД.ММ.РРРР'));
+      setError(tr('Оберіть дату народження'));
       return;
     }
     setError(null);
@@ -52,16 +53,12 @@ export const BirthDateScreen = () => {
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.content, { paddingTop: insets.top + spacing.xl * 2, paddingBottom: insets.bottom + spacing.xl }]}>
         <View style={{ gap: spacing.sm, marginBottom: spacing.xl }}>
           <Text style={[typography.title, { fontSize: 24 }]}>{tr('Ще один крок')}</Text>
-          <Text style={typography.small}>{tr('Застосунок доступний з {MIN_AGE} років. Вкажіть дату народження, щоб продовжити.', { MIN_AGE })}</Text>
+          <Text style={typography.small}>{birthDate
+            ? tr('Застосунок доступний з {MIN_AGE} років. Перевірте дату народження та прийміть правила, щоб продовжити.', { MIN_AGE })
+            : tr('Застосунок доступний з {MIN_AGE} років. Вкажіть дату народження, щоб продовжити.', { MIN_AGE })}</Text>
         </View>
 
-        <Field
-          label={tr('ДАТА НАРОДЖЕННЯ')}
-          value={input}
-          onChangeText={setInput}
-          placeholder={tr('ДД.ММ.РРРР')}
-          keyboardType="numbers-and-punctuation"
-        />
+        <BirthDatePicker value={input} onChange={(value) => { setInput(value); setError(null); }} disabled={busy} />
         {!!error && (
           <Text style={styles.error} accessibilityRole="alert">
             {error}

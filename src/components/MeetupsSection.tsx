@@ -15,6 +15,8 @@ import { useTr } from '../hooks/useT';
 import { InlineAd, useCanRequestAds } from './AdBanner';
 import { MEETUPS_AD_EVERY, isAdSlot, withAdSlots } from '../logic/ads';
 import { ph } from '../services/i18nService';
+import { DateTimeField } from './DateTimeField';
+import { useCurrentTime } from '../hooks/useCurrentTime';
 
 const STATUS_LABEL: Record<GroupMeetup['status'], string> = {
   upcoming: ph('Заплановано'),
@@ -115,7 +117,8 @@ const CreateMeetupSheet = ({ onClose }: { onClose: () => void }) => {
   const dispatch = useAppDispatch();
   const buddies = useAppSelector(selectBuddies);
   const location = useAppSelector(selectLocation);
-  const today = useMemo(() => new Date(), []);
+  const now = useCurrentTime();
+  const today = new Date(now);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [venue, setVenue] = useState('');
@@ -138,11 +141,12 @@ const CreateMeetupSheet = ({ onClose }: { onClose: () => void }) => {
   );
 
   const iso = toIsoDateTime(date, time);
+  const future = iso !== null && Date.parse(iso) > now;
   const maxNum = Math.min(30, Math.max(2, parseInt(max, 10) || 6));
-  const valid = title.trim() && venue.trim() && iso;
+  const valid = title.trim() && venue.trim() && future;
 
   const submit = () => {
-    if (!iso) return;
+    if (!valid || !iso || Date.parse(iso) <= Date.now()) return;
     dispatch(
       createMeetup({
         title,
@@ -193,15 +197,10 @@ const CreateMeetupSheet = ({ onClose }: { onClose: () => void }) => {
           return <Chip key={offset} label={offset === 0 ? tr('Сьогодні') : offset === 1 ? tr('Завтра') : offset === 2 ? tr('Післязавтра') : tr('Через тиждень')} selected={date === d} onPress={() => setDate(d)} />;
         })}
       </Row>
-      <Row>
-        <View style={{ flex: 1 }}>
-          <Field label={tr('ДАТА (ДД.ММ.РРРР)')} value={date} onChangeText={setDate} keyboardType="numbers-and-punctuation" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field label={tr('ЧАС (ГГ:ХХ)')} value={time} onChangeText={setTime} keyboardType="numbers-and-punctuation" />
-        </View>
-      </Row>
+      <DateTimeField label={tr('ДАТА')} value={date} onChange={setDate} minimumDate={today} />
+      <DateTimeField label={tr('ЧАС')} value={time} onChange={setTime} mode="time" />
       {!iso && <Text style={{ color: colors.red, fontSize: 12, marginBottom: spacing.sm }}>{tr('Перевірте формат дати та часу')}</Text>}
+      {!!iso && !future && <Text accessibilityRole="alert" style={{ color: colors.red, fontSize: 12, marginBottom: spacing.sm }}>{tr('Оберіть майбутню дату та час зустрічі')}</Text>}
       <Field label={tr('ЩО П’ЄМО')} value={drink} onChangeText={setDrink} placeholder={tr('Келих за смаком')} />
       <Field label={tr('МАКС. УЧАСНИКІВ (2–30)')} value={max} onChangeText={setMax} keyboardType="number-pad" />
       {buddies.length > 0 && (

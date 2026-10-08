@@ -42,7 +42,7 @@ describe('Google sign-in (native)', () => {
 
     const result = await signInWithGoogle(auth);
 
-    expect(configure).toHaveBeenCalledWith({ webClientId: 'web-id.apps.googleusercontent.com', iosClientId: 'ios-id.apps.googleusercontent.com' });
+    expect(configure).toHaveBeenCalledWith({ webClientId: 'web-id.apps.googleusercontent.com', iosClientId: 'ios-id.apps.googleusercontent.com', scopes: ['https://www.googleapis.com/auth/user.birthday.read'] });
     expect(credentialFromToken).toHaveBeenCalledWith('google-id-token');
     expect(signInWithCredential).toHaveBeenCalledWith(auth, { token: 'google-id-token' });
     expect(result).toEqual({ user: { uid: 'u1' } });

@@ -4,10 +4,12 @@ import { Image } from 'expo-image';
 import appIcon from '../../assets/logo.png'; // 256 px copy: the 1024 px store icon would cost 1 MB of bundle
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Field, SegmentedControl } from '../components/ui';
+import { BirthDatePicker } from '../components/BirthDatePicker';
 import { colors, radius, spacing, typography } from '../theme';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { authNoticeSet, authErrorSet, authOperationSet } from '../store/slices/uiSlice';
 import { profileUpdated } from '../store/slices/authSlice';
+import { prefillGoogleBirthDate } from '../store/thunks/auth';
 import { authService, describeAuthError } from '../services/authService';
 import { firebaseConfigured } from '../services/firebase';
 import { analyticsService } from '../services/analyticsService';
@@ -51,7 +53,7 @@ export const AuthScreen = () => {
     birth: !registering
       ? null
       : birthIso === null
-        ? tr('Вкажіть дату у форматі ДД.ММ.РРРР')
+        ? tr('Оберіть дату народження')
         : age === null
           ? tr('Некоректна дата народження')
           : age < MIN_AGE
@@ -86,7 +88,9 @@ export const AuthScreen = () => {
     try {
       if (method === 'google') {
         const result = await authService.loginWithGoogle();
+        if (result?.birthDate) dispatch(prefillGoogleBirthDate(result.user.uid, result.birthDate));
         if (result) analyticsService.trackEvent(result.isNewUser ? 'sign_up' : 'login', { method });
+        else setInfo(tr('Вікно Google закрилося без завершення входу. Якщо ви його не закривали, перевірте налаштування Google-входу'));
       } else {
         const result = await authService.loginWithApple();
         if (result) {
@@ -215,13 +219,7 @@ export const AuthScreen = () => {
         {submitted && errors.password && <Text style={styles.error}>{tr(errors.password)}</Text>}
         {registering && (
           <>
-            <Field
-              label={tr('ДАТА НАРОДЖЕННЯ')}
-              value={birthInput}
-              onChangeText={setBirthInput}
-              placeholder={tr('ДД.ММ.РРРР')}
-              keyboardType="numbers-and-punctuation"
-            />
+            <BirthDatePicker value={birthInput} onChange={setBirthInput} disabled={busy} />
             {age !== null && age >= MIN_AGE && <Text style={styles.hint}>{tr('Вік: {age}', { age })}</Text>}
             {(submitted || (birthIso && age !== null && age < MIN_AGE)) && errors.birth && <Text style={styles.error}>{tr(errors.birth)}</Text>}
           </>

@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography } from '../theme';
 import { Avatar, Badge, Button, Card, Chip, Field, IconButton, Row, SectionTitle, Sheet } from '../components/ui';
+import { BirthDatePicker } from '../components/BirthDatePicker';
 import { OfflineBanner, ScreenHeader } from '../components/shell';
 import { GamificationCard } from '../components/GamificationCard';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -255,7 +256,9 @@ const EditProfileSheet = ({ onClose }: { onClose: () => void }) => {
 
   const birthIso = birth.trim() ? parseBirthDateInput(birth) : user.birthDate ?? null;
   const age = birthIso ? calculateAge(birthIso) : null;
-  const birthError = birth.trim() && (!birthIso || age === null || age < MIN_AGE) ? tr('Вкажіть дату як ДД.ММ.РРРР ({MIN_AGE}+)', { MIN_AGE }) : null;
+  const birthError = !birth.trim() ? null : !birthIso || age === null
+    ? tr('Некоректна дата народження')
+    : age < MIN_AGE ? tr('Додаток доступний з {MIN_AGE} років', { MIN_AGE }) : null;
 
   const save = async () => {
     if (birthError || busy) return;
@@ -276,7 +279,7 @@ const EditProfileSheet = ({ onClose }: { onClose: () => void }) => {
   return (
     <Sheet visible onClose={onClose} title={tr('Редагувати профіль')} footer={<Button label={tr('Зберегти')} icon="check" loading={busy} disabled={!!birthError || busy} onPress={save} />}>
       <Field label={tr('ІМ’Я')} value={name} onChangeText={setName} maxLength={60} autoCapitalize="words" />
-      <Field label={tr('ДАТА НАРОДЖЕННЯ (ДД.ММ.РРРР)')} value={birth} onChangeText={setBirth} keyboardType="numbers-and-punctuation" placeholder="15.05.1998" />
+      <BirthDatePicker value={birth} onChange={setBirth} disabled={busy} />
       <Field label={tr('Короткий опис')} value={tagline} onChangeText={setTagline} maxLength={140} />
       <Field label={tr('Про мене')} value={bio} onChangeText={setBio} maxLength={500} multiline />
       <SectionTitle>{tr('Напої')}</SectionTitle>

@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { fetchGoogleBirthday, GOOGLE_BIRTHDAY_SCOPE } from './googleBirthday';
 import { GoogleAuthProvider, reauthenticateWithCredential, signInWithCredential, type Auth, type User, type UserCredential } from 'firebase/auth';
 
 /**
@@ -30,7 +31,7 @@ export function isGoogleSignInConfigured(os: string): boolean {
 }
 
 /** The Google dialog's ID token, or null when the person closed it */
-async function googleIdToken(): Promise<string | null> {
+async function googleIdToken(requestBirthday = false): Promise<string | null> {
   const { webClientId, iosClientId } = googleExtra();
   if (!webClientId) throw new GoogleSignInError('google/not-configured', 'GOOGLE_WEB_CLIENT_ID is not set');
 
@@ -42,7 +43,7 @@ async function googleIdToken(): Promise<string | null> {
   }
   const { GoogleSignin, statusCodes, isErrorWithCode } = lib;
 
-  GoogleSignin.configure({ webClientId, iosClientId });
+  GoogleSignin.configure({ webClientId, iosClientId, ...(requestBirthday ? { scopes: [GOOGLE_BIRTHDAY_SCOPE] } : {}) });
   try {
     await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
     const response = await GoogleSignin.signIn();
@@ -60,8 +61,18 @@ async function googleIdToken(): Promise<string | null> {
 }
 
 export async function signInWithGoogle(auth: Auth): Promise<UserCredential | null> {
-  const idToken = await googleIdToken();
+  const idToken = await googleIdToken(true);
   return idToken ? signInWithCredential(auth, GoogleAuthProvider.credential(idToken)) : null;
+}
+
+export async function getGoogleBirthDate(_credential: UserCredential): Promise<string | null> {
+  try {
+    const { GoogleSignin } = await import('@react-native-google-signin/google-signin');
+    const { accessToken } = await GoogleSignin.getTokens();
+    return await fetchGoogleBirthday(accessToken);
+  } catch {
+    return null;
+  }
 }
 
 export async function signOutGoogle(): Promise<void> {
