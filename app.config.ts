@@ -14,8 +14,9 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  *   ADMOB_ANDROID_APP_ID, ADMOB_IOS_APP_ID  AdMob app ids (ca-app-pub-…~…), compiled into the native apps
  *   ADMOB_{ANDROID,IOS}_{BANNER,INLINE}_ID  AdMob ad units (ca-app-pub-…/…) of the tab-bar strip and the list slots.
  *                         Optional: without them a build shows Google's test ads (set them for production only)
- * Locally all of them are optional (demo mode without FIREBASE_*); preview and production builds refuse to start
- * without any of them (releaseConfigProblems below). On EAS every one of them must have the visibility "Plain text"
+ * Locally all of them are optional (demo mode without FIREBASE_*). Preview requires Firebase/Google configuration;
+ * legal links, support email, Sentry and real AdMob app ids are optional. Production requires all of them.
+ * On EAS every one of them must have the visibility "Plain text"
  * or "Sensitive", never "Secret": `eas update` (and `eas env:exec`) cannot read Secret variables, so an OTA update
  * would ship without them (a Firebase-less, demo-mode app) although the store build had them.
  * OTA updates (expo-updates) switch on by themselves once `extra.eas.projectId` exists (`eas init`); until then the
@@ -25,7 +26,7 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
 const env = process.env;
 const clean = (value: string | undefined): string | undefined => value?.trim().replace(/^["']+|["']+$/g, '') || undefined;
 
-/** Google's sample AdMob ids: development builds run on them, a release must not */
+/** Google's sample AdMob ids: preview/development builds run on them, production must not */
 const ADMOB_SAMPLE_APP_ID = { android: 'ca-app-pub-3940256099942544~3347511713', ios: 'ca-app-pub-3940256099942544~1458002511' };
 const isAdMobAppId = (value: string) => /^ca-app-pub-\d{16}~\d{10}$/.test(value) && !value.startsWith('ca-app-pub-3940256099942544');
 const isAdMobUnitId = (value: string) => /^ca-app-pub-\d{16}\/\d{10}$/.test(value);
@@ -46,8 +47,10 @@ const isHttpsUrl = (value: string | undefined): boolean => {
  * (`scripts/release-check.mjs --env` through `eas env:exec`); tests/unit/scripts/releaseCheck.test.ts keeps the two
  * in step. `platform` is unset outside a build worker: then both platforms' needs are checked.
  */
-export function releaseConfigProblems(projectRoot: string, platform?: string): string[] {
+export function releaseConfigProblems(projectRoot: string, platform?: string, profile = 'production'): string[] {
   const problems: string[] = [];
+  if (!['preview', 'production'].includes(profile)) return [`unknown profile "${profile}" (preview or production)`];
+  const production = profile === 'production';
   const need = (name: string, value: string | undefined) => {
     if (!value) problems.push(`${name} is not set`);
   };
@@ -58,20 +61,24 @@ export function releaseConfigProblems(projectRoot: string, platform?: string): s
   need('FIREBASE_FIRESTORE_DATABASE_ID', databaseId);
   if (databaseId === '(default)') problems.push('FIREBASE_FIRESTORE_DATABASE_ID must name the database firestore.rules and the functions are deployed to, not (default)');
   need('GOOGLE_WEB_CLIENT_ID (or FIREBASE_OAUTH_CLIENT_ID)', clean(env.GOOGLE_WEB_CLIENT_ID) ?? clean(env.FIREBASE_OAUTH_CLIENT_ID));
-  for (const name of ['SUPPORT_EMAIL', 'SENTRY_DSN', 'SENTRY_ORG', 'SENTRY_PROJECT', 'SENTRY_AUTH_TOKEN']) need(name, clean(env[name]));
+  if (production) {
+    for (const name of ['SUPPORT_EMAIL', 'SENTRY_DSN', 'SENTRY_ORG', 'SENTRY_PROJECT', 'SENTRY_AUTH_TOKEN']) need(name, clean(env[name]));
+  }
   const supportEmail = clean(env.SUPPORT_EMAIL);
   if (supportEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail)) problems.push('SUPPORT_EMAIL must be a valid email address');
   if (clean(env.SENTRY_DSN) && !isHttpsUrl(clean(env.SENTRY_DSN))) problems.push('SENTRY_DSN must be an https URL');
   if (clean(env.DONATION_URL) && !isHttpsUrl(clean(env.DONATION_URL))) problems.push('DONATION_URL must be an https URL');
   for (const name of ['PRIVACY_POLICY_URL', 'TERMS_URL']) {
-    if (!isHttpsUrl(clean(env[name]))) problems.push(`${name} must be a public https URL`);
+    const url = clean(env[name]);
+    if ((production || url) && !isHttpsUrl(url)) problems.push(`${name} must be a public https URL`);
   }
   for (const os of ['android', 'ios'] as const) {
     if (platform === (os === 'android' ? 'ios' : 'android')) continue;
     const appIdName = `ADMOB_${os.toUpperCase()}_APP_ID`;
     const appId = clean(env[appIdName]);
-    need(appIdName, appId);
-    if (appId && !isAdMobAppId(appId)) problems.push(`${appIdName} must be your AdMob app id (ca-app-pub-…~…), not Google's sample id`);
+    if (production) need(appIdName, appId);
+    const validAppId = appId && (production ? isAdMobAppId(appId) : /^ca-app-pub-\d{16}~\d{10}$/.test(appId));
+    if (appId && !validAppId) problems.push(`${appIdName} must be ${production ? 'your' : 'an'} AdMob app id (ca-app-pub-…~…)${production ? ", not Google's sample id" : ''}`);
     for (const slot of ['BANNER', 'INLINE']) {
       const unitName = `ADMOB_${os.toUpperCase()}_${slot}_ID`;
       const unit = clean(env[unitName]);
@@ -99,7 +106,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   // values that end up in the binary are known (a Secret variable is visible on the worker, so CI's check is stricter).
   const buildProfile = env.EAS_BUILD_PROFILE;
   if (buildProfile === 'preview' || buildProfile === 'production') {
-    const problems = releaseConfigProblems(projectRoot, env.EAS_BUILD_PLATFORM);
+    const problems = releaseConfigProblems(projectRoot, env.EAS_BUILD_PLATFORM, buildProfile);
     if (problems.length > 0) {
       throw new Error(
         `The EAS environment of the "${buildProfile}" build is incomplete:\n  - ${problems.join('\n  - ')}\n` +
@@ -116,8 +123,10 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   // The sign-in plugin refuses to run without a valid reversed client id, so it is only added when one is given
   const googleIosScheme = googleIosClientId ? `com.googleusercontent.apps.${googleIosClientId.replace(/\.apps\.googleusercontent\.com$/, '')}` : undefined;
   const projectId: string | undefined = config.extra?.eas?.projectId;
-  // Without an app id the native AdMob SDK crashes at launch, so local builds fall back to Google's sample ids
+  // Without an app id the native AdMob SDK crashes at launch, so preview/local builds use Google's sample ids
   const admobAppId = { android: clean(env.ADMOB_ANDROID_APP_ID) ?? ADMOB_SAMPLE_APP_ID.android, ios: clean(env.ADMOB_IOS_APP_ID) ?? ADMOB_SAMPLE_APP_ID.ios };
+  // The plugin installs native upload hooks. Omit them when upload credentials are absent.
+  const sentryUploadConfigured = ['SENTRY_ORG', 'SENTRY_PROJECT', 'SENTRY_AUTH_TOKEN'].every((name) => clean(env[name]));
 
   return {
     ...(config as ExpoConfig),
@@ -137,7 +146,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
       // delayAppMeasurementInit: nothing is sent to Google before the consent step (services/ads.ts) has run.
       // cstr6suwn9: Google's own SKAdNetwork id (iOS install attribution without tracking)
       ['react-native-google-mobile-ads', { androidAppId: admobAppId.android, iosAppId: admobAppId.ios, delayAppMeasurementInit: true, skAdNetworkItems: ['cstr6suwn9.skadnetwork'] }],
-      ['@sentry/react-native/expo', { organization: clean(env.SENTRY_ORG), project: clean(env.SENTRY_PROJECT) }],
+      ...(sentryUploadConfigured ? [['@sentry/react-native/expo', { organization: clean(env.SENTRY_ORG), project: clean(env.SENTRY_PROJECT) }] as [string, object]] : []),
       ...(googleIosScheme ? [['@react-native-google-signin/google-signin', { iosUrlScheme: googleIosScheme }] as [string, object]] : []),
     ],
     android: {

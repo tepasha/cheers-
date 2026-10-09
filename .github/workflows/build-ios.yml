@@ -143,16 +143,12 @@ jobs:
       - name: 🏷️ Project is linked to EAS
         run: node scripts/release-check.mjs --project
 
-      # The EAS variables app.config.ts compiles into the app: Firebase config (with the named database), Google client
-      # ids, legal URLs and, per platform, the Maps key / iOS client id. A missing one does not fail `eas build`; the
-      # app used to fall back silently (no Terms/Privacy links, the '(default)' database, a Map tab that crashes, a
-      # Google button that only shows a configuration error). `eas env:exec` runs the check with exactly the
-      # "Plain text" and "Sensitive" variables of the profile's EAS environment (eas.json names it after the profile),
-      # which is what `eas build` and later `eas update` read. A "Secret" variable is reported as missing on purpose:
-      # `eas update` cannot read it, so OTA updates would ship without it. app.config.ts repeats the check (and the
-      # google-services.json file) on the build worker.
+      # Validate the profile's Plain text / Sensitive EAS variables before queueing a build. Preview allows missing
+      # legal links, support email, Sentry and real AdMob app ids; Firebase/Google remain required. Production requires
+      # everything. app.config.ts repeats the check on the build worker. Secret variables remain unsuitable for runtime
+      # config: OTA updates cannot read them.
       - name: 🔐 EAS environment is complete
-        run: eas env:exec "$PROFILE" 'node scripts/release-check.mjs --env --platform ios' --non-interactive
+        run: eas env:exec "$PROFILE" "node scripts/release-check.mjs --env --platform ios --profile $PROFILE" --non-interactive
 
       # The app's Firebase project and named database must be the staging backend's (see build-android.yml)
       - name: 🎯 The preview app talks to the staging backend

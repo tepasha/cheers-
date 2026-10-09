@@ -106,9 +106,10 @@ jobs:
 
       # The update carries its own `extra` (Firebase config, Google client ids, legal URLs), built from this EAS
       # environment: a missing or "Secret" variable would ship a demo-mode or half-configured app to everyone on the
-      # channel, while the run stays green. Same check as before a store build, for both platforms.
+      # channel, while the run stays green. Same profile check as before a build, for both platforms; preview allows
+      # missing legal links, support email, Sentry and real AdMob app ids.
       - name: 🔐 EAS environment is complete
-        run: eas env:exec "$CHANNEL" 'node scripts/release-check.mjs --env' --non-interactive
+        run: eas env:exec "$CHANNEL" "node scripts/release-check.mjs --env --profile $CHANNEL" --non-interactive
 
       # The update's Firebase project and named database come from the EAS environment of the channel, while the rules
       # and functions are deployed (deploy-backend.yml) with the variables of this job's GitHub Environment: `staging`
@@ -188,4 +189,9 @@ jobs:
           exit "$failed"
 
       - name: Upload source maps for crash reports
-        run: eas env:exec "$CHANNEL" 'npx sentry-expo-upload-sourcemaps dist' --non-interactive
+        run: |
+          eas env:exec "$CHANNEL" 'if [ -n "$SENTRY_ORG" ] && [ -n "$SENTRY_PROJECT" ] && [ -n "$SENTRY_AUTH_TOKEN" ]; then
+            npx sentry-expo-upload-sourcemaps dist
+          else
+            echo "Sentry source-map upload skipped: upload credentials are not configured"
+          fi' --non-interactive

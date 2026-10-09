@@ -3,7 +3,7 @@
  * Pre-release checks, run by CI before any store build and by hand before tagging:
  *   node scripts/release-check.mjs --tag v1.2.0   the tag must equal the app version (app.json == package.json)
  *   node scripts/release-check.mjs --project      `extra.eas.projectId` exists (after `eas init`)
- *   node scripts/release-check.mjs --env [--platform android|ios]
+ *   node scripts/release-check.mjs --env [--platform android|ios] [--profile preview|production]
  *                                                 the variables app.config.ts compiles into a build or OTA update are
  *                                                 set and sane. CI runs it through `eas env:exec <environment>` before
  *                                                 every build and update, so it sees exactly what EAS will use.
@@ -20,10 +20,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Variables app.config.ts compiles into every build AND every OTA update (both platforms). Missing ones used to fall
+ * Variables required for production builds AND OTA updates (both platforms). Missing ones used to fall
  * back silently: no Terms/Privacy links, the '(default)' Firestore database, a Google button that only shows a
  * configuration error. app.config.ts throws for the same list on the EAS build worker (releaseConfigProblems), and
- * tests/unit/scripts/releaseCheck.test.ts keeps the two in step.
+ * tests/unit/scripts/releaseCheck.test.ts keeps the two in step. Preview excludes PREVIEW_OPTIONAL_ENV below.
  */
 export const REQUIRED_ENV = [
   'FIREBASE_API_KEY',
@@ -64,6 +64,12 @@ const ALTERNATIVE_ENV = { GOOGLE_WEB_CLIENT_ID: 'FIREBASE_OAUTH_CLIENT_ID' };
 
 export const LEGAL_ENV = ['PRIVACY_POLICY_URL', 'TERMS_URL'];
 
+/** Internal testing can run without store contacts, monitoring or real AdMob app ids. */
+export const PREVIEW_OPTIONAL_ENV = [
+  ...LEGAL_ENV, 'SUPPORT_EMAIL', 'SENTRY_DSN', 'SENTRY_ORG', 'SENTRY_PROJECT', 'SENTRY_AUTH_TOKEN',
+  'ADMOB_ANDROID_APP_ID', 'ADMOB_IOS_APP_ID',
+];
+
 // The same normalisation app.config.ts applies (surrounding blanks and quotes do not count as a value)
 const clean = (value) => String(value ?? '').trim().replace(/^["']+|["']+$/g, '');
 
@@ -100,9 +106,11 @@ export function checkProject(appJson) {
  * platform's variables are required. GOOGLE_SERVICES_JSON is not checked here: it is a file variable, and only the
  * build worker materialises its file, so app.config.ts checks it there.
  */
-export function checkEnv(env, { platform } = {}) {
+export function checkEnv(env, { platform, profile = 'production' } = {}) {
   if (platform !== undefined && !PLATFORM_ENV[platform]) return [`unknown platform "${platform}" (android or ios)`];
-  const names = [...REQUIRED_ENV, ...(platform ? PLATFORM_ENV[platform] : Object.values(PLATFORM_ENV).flat())];
+  if (!['preview', 'production'].includes(profile)) return [`unknown profile "${profile}" (preview or production)`];
+  const names = [...REQUIRED_ENV, ...(platform ? PLATFORM_ENV[platform] : Object.values(PLATFORM_ENV).flat())]
+    .filter((name) => profile !== 'preview' || !PREVIEW_OPTIONAL_ENV.includes(name));
   const value = (name) => clean(env[name]) || clean(env[ALTERNATIVE_ENV[name]]);
   const problems = names.filter((name) => !value(name)).map((name) => `environment variable ${name} is not set`);
   for (const name of LEGAL_ENV) {
@@ -113,7 +121,9 @@ export function checkEnv(env, { platform } = {}) {
   if (platform !== 'android' && value('EXPORT_ENCRYPTION_CLASSIFICATION') && !['exempt', 'non-exempt'].includes(value('EXPORT_ENCRYPTION_CLASSIFICATION'))) problems.push('EXPORT_ENCRYPTION_CLASSIFICATION must be exempt or non-exempt after operator review');
   for (const os of platform ? [platform] : Object.keys(PLATFORM_ENV)) {
     const appIdName = `ADMOB_${os.toUpperCase()}_APP_ID`;
-    if (value(appIdName) && !isAdMobAppId(value(appIdName))) problems.push(`${appIdName} must be your AdMob app id (ca-app-pub-…~…), not Google's sample id`);
+    const appId = value(appIdName);
+    const validAppId = profile === 'preview' ? /^ca-app-pub-\d{16}~\d{10}$/.test(appId) : isAdMobAppId(appId);
+    if (appId && !validAppId) problems.push(`${appIdName} must be ${profile === 'preview' ? 'an' : 'your'} AdMob app id (ca-app-pub-…~…)${profile === 'preview' ? '' : ", not Google's sample id"}`);
     for (const name of ADMOB_UNIT_ENV[os]) {
       if (value(name) && !isAdMobUnitId(value(name))) problems.push(`${name} must be an AdMob ad unit id (ca-app-pub-…/…)`);
     }
@@ -230,6 +240,7 @@ function main(argv) {
   const flag = (name) => argv.includes(name);
   const tagIndex = argv.indexOf('--tag');
   const platformIndex = argv.indexOf('--platform');
+  const profileIndex = argv.indexOf('--profile');
   const onMainIndex = argv.indexOf('--on-main');
   const onMainSha = onMainIndex >= 0 ? argv[onMainIndex + 1] : undefined;
   const ref = process.env.GITHUB_REF;
@@ -243,7 +254,10 @@ function main(argv) {
     }),
     ...checkIdentifiers(appJson),
     ...(flag('--project') ? checkProject(appJson) : []),
-    ...(flag('--env') ? checkEnv(process.env, { platform: platformIndex >= 0 ? argv[platformIndex + 1] : undefined }) : []),
+    ...(flag('--env') ? checkEnv(process.env, {
+      platform: platformIndex >= 0 ? argv[platformIndex + 1] : undefined,
+      profile: profileIndex >= 0 ? (argv[profileIndex + 1] ?? '') : 'production',
+    }) : []),
     ...(flag('--store') ? checkStore({ storeConfigText: readFileSync(new URL('../store.config.json', import.meta.url), 'utf8'), env: process.env }) : []),
     ...(flag('--backend') ? checkBackend(process.env) : []),
     ...(flag('--release-ref') ? [

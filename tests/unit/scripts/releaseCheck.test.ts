@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PLATFORM_ENV,
+  PREVIEW_OPTIONAL_ENV,
   REQUIRED_ENV,
   checkBackend,
   checkEnv,
@@ -40,7 +41,29 @@ function fullEnv(): Record<string, string> {
   return env;
 }
 
+function previewEnv(): Record<string, string> {
+  return Object.fromEntries(Object.entries(fullEnv()).filter(([name]) => !PREVIEW_OPTIONAL_ENV.includes(name)));
+}
+
 describe('release-check', () => {
+  it.each(PLATFORMS)('allows an %s preview without legal links, support, Sentry or real AdMob ids', (platform) => {
+    const env = previewEnv();
+    expect(checkEnv(env, { platform, profile: 'preview' })).toEqual([]);
+    expect(checkEnv(env, { profile: 'preview' })).toEqual([]); // OTA checks both platforms
+    expect(checkEnv(env, { platform }).length).toBeGreaterThan(0);
+    expect(checkEnv(env, { platform, profile: 'production' }).length).toBeGreaterThan(0);
+  });
+
+  it('still checks Firebase, Google and supplied optional values in preview', () => {
+    expect(checkEnv({ ...previewEnv(), FIREBASE_API_KEY: '' }, { profile: 'preview' })).toContain('environment variable FIREBASE_API_KEY is not set');
+    expect(checkEnv({ ...previewEnv(), GOOGLE_MAPS_API_KEY: '' }, { profile: 'preview', platform: 'android' })).toContain('environment variable GOOGLE_MAPS_API_KEY is not set');
+    expect(checkEnv({ ...previewEnv(), TERMS_URL: 'http://example.com/terms' }, { profile: 'preview' })).toContain('TERMS_URL must be a public https URL');
+    expect(checkEnv({ ...previewEnv(), SUPPORT_EMAIL: 'invalid', SENTRY_DSN: 'http://sentry.example.com/1' }, { profile: 'preview' })).toHaveLength(2);
+    expect(checkEnv({ ...previewEnv(), ADMOB_ANDROID_APP_ID: 'invalid' }, { profile: 'preview' })[0]).toMatch(/AdMob app id/);
+    expect(checkEnv({ ...previewEnv(), ADMOB_ANDROID_APP_ID: 'ca-app-pub-3940256099942544~3347511713' }, { profile: 'preview' })).toEqual([]);
+    expect(checkEnv(fullEnv(), { profile: 'typo' })[0]).toMatch(/unknown profile/);
+  });
+
   it('rejects invalid operator contacts and monitoring endpoints', () => {
     expect(checkEnv({ ...fullEnv(), SUPPORT_EMAIL: 'not-an-email' })).toContain('SUPPORT_EMAIL must be a valid email address');
     expect(checkEnv({ ...fullEnv(), SENTRY_DSN: 'http://insecure.example.com/1' })).toContain('SENTRY_DSN must be an https URL');
@@ -199,6 +222,37 @@ describe('app.config.ts release gate', () => {
   const root = process.cwd();
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each(PLATFORMS)('applies the same preview requirements on the %s build worker', (platform) => {
+    const env = { ...previewEnv(), GOOGLE_SERVICES_JSON: 'package.json' };
+    stubEnv(env);
+    expect(releaseConfigProblems(root, platform, 'preview')).toEqual([]);
+    expect(releaseConfigProblems(root, platform).length).toBeGreaterThan(0);
+    for (const name of [...REQUIRED_ENV, ...PLATFORM_ENV[platform]].filter((name) => !PREVIEW_OPTIONAL_ENV.includes(name))) {
+      stubEnv({ ...env, [name]: undefined });
+      expect(checkEnv({ ...env, [name]: undefined }, { platform, profile: 'preview' }).length, name).toBeGreaterThan(0);
+      expect(releaseConfigProblems(root, platform, 'preview').join('\n'), name).toContain(name);
+    }
+    stubEnv({ ...env, TERMS_URL: 'http://example.com/terms', SUPPORT_EMAIL: 'invalid', SENTRY_DSN: 'http://sentry.example.com/1', ADMOB_ANDROID_APP_ID: 'invalid' });
+    expect(releaseConfigProblems(root, platform, 'preview')).toHaveLength(platform === 'android' ? 4 : 3);
+  });
+
+  it('builds preview using sample AdMob ids and omits Sentry upload hooks without credentials', () => {
+    const context = { config: { name: 'Budmo', slug: 'budmo-app' }, projectRoot: root } as never;
+    stubEnv({ ...previewEnv(), GOOGLE_SERVICES_JSON: 'package.json', EAS_BUILD_PROFILE: 'preview', EAS_BUILD_PLATFORM: 'android' });
+    const config = appConfig(context);
+    expect(config.plugins).toContainEqual(['react-native-google-mobile-ads', expect.objectContaining({ androidAppId: 'ca-app-pub-3940256099942544~3347511713', iosAppId: 'ca-app-pub-3940256099942544~1458002511' })]);
+    expect(config.plugins?.some((plugin) => Array.isArray(plugin) && plugin[0] === '@sentry/react-native/expo')).toBe(false);
+    expect(config.extra?.monitoring?.dsn).toBeUndefined();
+    for (const name of ['SENTRY_ORG', 'SENTRY_PROJECT', 'SENTRY_AUTH_TOKEN']) {
+      stubEnv({ ...fullEnv(), [name]: undefined });
+      expect(appConfig(context).plugins?.some((plugin) => Array.isArray(plugin) && plugin[0] === '@sentry/react-native/expo'), name).toBe(false);
+    }
+    stubEnv({ ...fullEnv(), SENTRY_AUTH_TOKEN: 'private-upload-token' });
+    const monitored = appConfig(context);
+    expect(monitored.plugins).toContainEqual(['@sentry/react-native/expo', { organization: 'x', project: 'x' }]);
+    expect(JSON.stringify(monitored)).not.toContain('private-upload-token');
   });
 
   it.each(PLATFORMS)('demands exactly what release-check demands for an %s build', (platform) => {
