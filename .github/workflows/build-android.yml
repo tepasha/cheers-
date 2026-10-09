@@ -1,16 +1,21 @@
 name: 🤖 Android build (reusable)
 
-# Called by release.yml (manual) and preview.yml (main), or started by hand.
+# Called by release.yml (manual) and preview.yml (stage branch), or started by hand.
 # EAS builds in the cloud; nothing is published to GitHub Releases. The EAS output contains artifact links, so it is
 # summarised (id, status, link to the EAS page) and never uploaded or printed whole.
 # A production (store) build comes only from main or a release tag on main, after the full CI; a preview build must
-# be configured for the staging backend (GitHub Environment `staging`).
+# be configured for the staging backend (GitHub Environment `staging`), unless the caller skips that comparison
+# (preview.yml on the stage branch, which publishes to expo.dev only).
 on:
   # A caller sets ci_checked only after its CI gate succeeds; an independent manual run performs CI below.
   workflow_call:
     inputs:
       ci_checked:
         description: 'Caller has successfully completed ci-check.yml for this commit'
+        type: boolean
+        default: false
+      skip_backend_check:
+        description: 'Preview only: do not compare EAS preview with the GitHub Environment staging (expo.dev-only line)'
         type: boolean
         default: false
       profile:
@@ -85,10 +90,11 @@ jobs:
   # GitHub Environment `staging`, which deploy-backend.yml deploys the rules and functions with; the build job then
   # checks that the EAS environment of the profile names the same ones. Only this small job enters the environment,
   # so a production build never needs a `staging` deployment (nor a production one, whose approval guards the backend).
+  # A caller that publishes to expo.dev only (preview.yml, stage branch) skips it with skip_backend_check.
   staging:
     name: 🎯 Staging backend
     needs: gate
-    if: inputs.profile != 'production'
+    if: inputs.profile != 'production' && !inputs.skip_backend_check
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: staging
@@ -113,11 +119,12 @@ jobs:
     name: 🤖 Build Android (${{ inputs.profile }})
     needs: [gate, ci, staging]
   # A skipped CI is accepted only when the caller explicitly completed ci-check.yml;
-    # a skipped staging job only for a production build
+    # a skipped staging job only for a production build or when the caller skips the backend comparison
     if: >-
       !cancelled() && needs.gate.result == 'success'
       && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && inputs.ci_checked))
-      && (needs.staging.result == 'success' || (needs.staging.result == 'skipped' && inputs.profile == 'production'))
+      && (needs.staging.result == 'success'
+          || (needs.staging.result == 'skipped' && (inputs.profile == 'production' || inputs.skip_backend_check)))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -140,6 +147,17 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm ci
 
+      # File variables arrive as filenames in EAS CLI. Download their contents so the
+      # submitting machine hashes the same google-services.json as the build worker.
+      # .eas/ is ignored; the dotenv file stays outside the uploaded project archive.
+      - name: Download EAS files for native fingerprinting
+        run: |
+          eas env:pull "$PROFILE" --path "$RUNNER_TEMP/eas-build.env" --non-interactive
+          if [ ! -f .eas/.env/GOOGLE_SERVICES_JSON ]; then
+            echo "::error::GOOGLE_SERVICES_JSON must be a Sensitive file variable in EAS $PROFILE so local and worker fingerprints include the same contents."
+            exit 1
+          fi
+
       - name: 🏷️ Project is linked to EAS
         run: node scripts/release-check.mjs --project
 
@@ -154,7 +172,7 @@ jobs:
       # backend's, or testers' data lands in the production database and the build is tested against rules that
       # were deployed somewhere else.
       - name: 🎯 The preview app talks to the staging backend
-        if: inputs.profile != 'production'
+        if: inputs.profile != 'production' && !inputs.skip_backend_check
         env:
           EXPECTED_FIREBASE_PROJECT_ID: ${{ needs.staging.outputs.project }}
           EXPECTED_FIRESTORE_DATABASE_ID: ${{ needs.staging.outputs.database }}

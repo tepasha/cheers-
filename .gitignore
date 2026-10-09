@@ -10,6 +10,7 @@ coverage/
 
 # Expo / React Native
 .expo/
+.eas/
 expo-env.d.ts
 *.tsbuildinfo
 web-build/

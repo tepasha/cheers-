@@ -2,7 +2,8 @@ name: 📡 OTA update (EAS Update)
 
 # Ships JavaScript and asset changes to installed apps without a store review. The runtime version is the native
 # fingerprint (app.config.ts), so an update only reaches binaries whose native code it was built against.
-#   preview     (from main)   tested by internal builds; talks to the staging backend (GitHub Environment `staging`)
+#   preview     (from stage)  tested by internal builds; talks to the staging backend (GitHub Environment `staging`),
+#                             unless the caller skips that comparison (preview.yml, expo.dev only)
 #   production  (by hand)     real users: only from main or a release tag, after the full CI, and after approval
 #                             of the GitHub Environment `production`
 on:
@@ -11,6 +12,10 @@ on:
     inputs:
       ci_checked:
         description: 'Caller has successfully completed ci-check.yml for this commit'
+        type: boolean
+        default: false
+      skip_backend_check:
+        description: 'Preview only: do not compare EAS preview with the GitHub Environment staging (expo.dev-only line)'
         type: boolean
         default: false
       channel:
@@ -80,7 +85,8 @@ jobs:
       && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && inputs.ci_checked))
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: ${{ inputs.channel == 'production' && 'production' || 'staging' }}
+    # No GitHub Environment at all when a preview caller skips the backend comparison (an empty name means none)
+    environment: ${{ inputs.channel == 'production' && 'production' || (!inputs.skip_backend_check && 'staging' || '') }}
     env:
       CHANNEL: ${{ inputs.channel }}
     steps:
@@ -101,6 +107,16 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm ci
 
+      # Match the Android build's native fingerprint, including the file variable's
+      # contents even when `eas update --environment` disables dotenv loading.
+      - name: Download EAS files for native fingerprinting
+        run: |
+          eas env:pull "$CHANNEL" --path "$RUNNER_TEMP/eas-update.env" --non-interactive
+          if [ ! -f .eas/.env/GOOGLE_SERVICES_JSON ]; then
+            echo "::error::GOOGLE_SERVICES_JSON must be a Sensitive file variable in EAS $CHANNEL so the update fingerprint matches Android builds."
+            exit 1
+          fi
+
       - name: 🏷️ Project is linked to EAS
         run: node scripts/release-check.mjs --project
 
@@ -117,6 +133,7 @@ jobs:
       # otherwise write testers' data into the production database, or test against rules deployed elsewhere.
       # A staging environment without these variables refuses preview clients instead of skipping silently.
       - name: 🎯 The update talks to this channel's backend
+        if: ${{ inputs.channel == 'production' || !inputs.skip_backend_check }}
         env:
           EXPECTED_FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           EXPECTED_FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}

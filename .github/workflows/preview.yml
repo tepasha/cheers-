@@ -1,13 +1,13 @@
-name: 🧪 Preview (main)
+name: 🧪 Preview (stage)
 
-# Every push to main: CI gate, staging backend, internal Android build, then a preview OTA update.
+# Every push to the `stage` branch: CI gate, internal Android build, then a preview OTA update, all on expo.dev only.
+# Nothing is deployed to Firebase here: the staging backend is deployed by hand (deploy-backend.yml), and the
+# comparison of EAS `preview` with the GitHub Environment `staging` is skipped, so this line needs only EXPO_TOKEN and
+# the EAS `preview` environment. A push to main runs only CI (ci-check.yml).
 # iOS preview builds need registered test devices, so they stay a manual run of build-ios.yml.
-#
-# The preview clients talk to the staging backend: build-android.yml and ota.yml refuse an EAS `preview` environment
-# whose Firebase project / database differ from the GitHub Environment `staging` (see DEPLOY.md).
 on:
   push:
-    branches: [ main ]
+    branches: [ stage ]
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ permissions:
 
 # Keep the whole pipeline in commit order: an older build must not publish after a newer update.
 concurrency:
-  group: expo-preview-main
+  group: expo-preview-stage
   cancel-in-progress: false
 
 jobs:
@@ -23,39 +23,23 @@ jobs:
     name: ✅ CI gate
     uses: ./.github/workflows/ci-check.yml
 
-  # Deployed on EVERY push, not only when firestore.rules / functions changed: a diff against the previous push
-  # loses a change whenever that push's run was cancelled (a newer push queues behind it) or failed, and staging then
-  # kept the old rules until the next backend change, while the preview clients already expected the new ones.
-  # A full deploy is cheap: the rules are one file, and firebase-tools skips functions whose source is unchanged.
-  backend:
-    name: ☁️ Backend → staging
-    needs: ci
-    uses: ./.github/workflows/deploy-backend.yml
-    with:
-      ci_checked: true
-      environment: staging
-    permissions:
-      contents: read
-      id-token: write
-    secrets: inherit
-
-  # The backend first, as in a release: the preview clients of this commit may rely on its rules and functions, so
-  # they are built and published only after the staging deploy has succeeded.
   android:
     name: 🤖 Android preview build
-    needs: [ci, backend]
+    needs: ci
     uses: ./.github/workflows/build-android.yml
     with:
       ci_checked: true
+      skip_backend_check: true
       profile: preview
       submit: false
     secrets: inherit
 
   ota:
     name: 📡 OTA → preview channel
-    needs: [ci, backend, android]
+    needs: [ci, android]
     uses: ./.github/workflows/ota.yml
     with:
       ci_checked: true
+      skip_backend_check: true
       channel: preview
     secrets: inherit

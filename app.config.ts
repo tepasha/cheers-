@@ -26,6 +26,17 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
 const env = process.env;
 const clean = (value: string | undefined): string | undefined => value?.trim().replace(/^["']+|["']+$/g, '') || undefined;
 
+function googleServicesFile(projectRoot: string): string | undefined {
+  const configured = clean(env.GOOGLE_SERVICES_JSON);
+  if (configured && existsSync(resolve(projectRoot, configured))) return configured;
+  // EAS CLI supplies a file variable's name, but only workers materialise its contents.
+  // `eas env:pull` downloads Sensitive files here before local build/update fingerprinting.
+  // Never let a local copy mask a missing file on the worker.
+  const downloaded = resolve(projectRoot, '.eas/.env/GOOGLE_SERVICES_JSON');
+  if (env.EAS_BUILD !== 'true' && existsSync(downloaded)) return downloaded;
+  return configured;
+}
+
 /** Google's sample AdMob ids: preview/development builds run on them, production must not */
 const ADMOB_SAMPLE_APP_ID = { android: 'ca-app-pub-3940256099942544~3347511713', ios: 'ca-app-pub-3940256099942544~1458002511' };
 const isAdMobAppId = (value: string) => /^ca-app-pub-\d{16}~\d{10}$/.test(value) && !value.startsWith('ca-app-pub-3940256099942544');
@@ -117,7 +128,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
 
   const appId = clean(env.FIREBASE_APP_ID);
   const mapsKey = clean(env.GOOGLE_MAPS_API_KEY);
-  const servicesFile = clean(env.GOOGLE_SERVICES_JSON);
+  const servicesFile = googleServicesFile(projectRoot);
   const googleWebClientId = clean(env.GOOGLE_WEB_CLIENT_ID) ?? clean(env.FIREBASE_OAUTH_CLIENT_ID);
   const googleIosClientId = clean(env.GOOGLE_IOS_CLIENT_ID);
   // The sign-in plugin refuses to run without a valid reversed client id, so it is only added when one is given
