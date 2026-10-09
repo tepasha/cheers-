@@ -100,6 +100,10 @@ jobs:
         id: cfg
         run: |
           if [ -n "$PROJECT_ID" ] && [ -n "$DATABASE_ID" ] && [ -n "$WIF_PROVIDER" ] && [ -n "$WIF_SERVICE_ACCOUNT" ]; then
+            if [[ ! "$WIF_PROVIDER" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[^/[:space:]]+/providers/[^/[:space:]]+$ ]]; then
+              echo "::error::GitHub Environment '$TARGET': GCP_WORKLOAD_IDENTITY_PROVIDER must be projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID. Copy the provider resource name from Google Cloud Workload Identity Federation; principal:// and principalSet:// identify IAM members, not providers. Do not include //iam.googleapis.com/ or a /subject/... suffix (see DEPLOY.md)."
+              exit 1
+            fi
             echo "configured=true" >> "$GITHUB_OUTPUT"
           elif [ "$TARGET" = "production" ]; then
             echo "::error::Environment 'production' lacks FIREBASE_PROJECT_ID / FIRESTORE_DATABASE_ID / GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT"

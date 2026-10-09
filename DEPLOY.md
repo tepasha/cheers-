@@ -188,6 +188,18 @@ push у main (preview.yml)
 
 Обмеження гілок у середовищах дублює перевірку `release-check.mjs --release-ref` у самих workflow (та ще й відкидає тег, поставлений на коміт поза `main`). Дозвіл на тег `v*` потрібний лише для ручних запусків з існуючого release-тегу.
 
+**Workload Identity Provider:** `GCP_WORKLOAD_IDENTITY_PROVIDER` у кожному GitHub Environment має містити resource name провайдера у форматі `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID`. Пул `cheers-app` лежить у проєкті `cheers-511106` (номер `556814809418`), OIDC-провайдер для GitHub — `github` (умова `assertion.repository=='tepasha/cheers-'`), тож значення: `projects/556814809418/locations/global/workloadIdentityPools/cheers-app/providers/github`. Провайдер `cheers` у тому ж пулі — це AWS-провайдер, для GitHub він не підходить. Перевірити список провайдерів можна в Google Cloud → IAM & Admin → Workload Identity Federation → пул → Providers або виконайте в Google Cloud Shell:
+
+```sh
+gcloud iam workload-identity-pools providers list \
+  --project=cheers-511106 \
+  --location=global \
+  --workload-identity-pool=cheers-app \
+  --format="value(name)"
+```
+
+Оберіть провайдер для GitHub Actions і скопіюйте його повний `name` у GitHub → Settings → Environments → `staging` → Environment variables → `GCP_WORKLOAD_IDENTITY_PROVIDER` (аналогічно для `production`, якщо вона також налаштована неправильно). `principal://…/subject/…` і `principalSet://…` — IAM members для надання прав, а не значення цієї змінної. Для input `workload_identity_provider` не додавайте префікс `//iam.googleapis.com/`: action формує STS audience самостійно. [Формат input у google-github-actions/auth](https://github.com/google-github-actions/auth/tree/v2#inputs-workload-identity-federation). `GCP_SERVICE_ACCOUNT` містить email сервісного акаунта, який використовує деплой.
+
 **Увага, `FIRESTORE_DATABASE_ID`:** зараз змінна називає базу `cheers_db`, якої не існує. Задайте в `production` id бази з `firebase.json` (і id staging-бази в `staging`). Доки значення не збігається з `firebase.json`, `deploy-backend.yml` у production зупиняється з `::error::`, а production-OTA – на порівнянні з EAS `production`. Якщо `FIRESTORE_DATABASE_ID` (чи `FIREBASE_PROJECT_ID`) задано як змінну **репозиторію**, вона діє в кожному середовищі, де її не перевизначено: тримайте ці дві змінні лише в середовищах.
 
 **Рівень репозиторію** (Settings → Secrets and variables → Actions). Секрети сторів мають бути саме секретами **репозиторію**, не середовища: job-и збірок і verify-job працюють без Environment і секретів середовища не бачать.
