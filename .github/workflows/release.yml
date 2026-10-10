@@ -1,12 +1,10 @@
 name: 🚀 Production release (manual)
 
 # Only the Run workflow button starts the production release line:
-#   CI gate → verify (versions agree, commit on main, STORE_RELEASES, store credentials, EAS production variables)
+#   CI gate → verify (versions agree, commit on main, STORE_RELEASES, Play credentials, EAS production variables)
 #           → backend to production (needs approval) → Android AAB → Play internal track
-#                                                    → iOS IPA   → TestFlight
-# The production backend therefore changes HERE, on this manual run, not at promotion. Taking the build further (Play
-# production rollout, App Store listing and review) is a separate, approved step: promote.yml, which never touches
-# the backend.
+# iOS is not deployed. The production backend changes HERE, on this manual run, not at promotion. Taking the build
+# further (Play production rollout) is a separate, approved step: promote.yml, which never touches the backend.
 on:
   workflow_dispatch:
 
@@ -53,11 +51,6 @@ jobs:
           STORE_RELEASES: ${{ vars.STORE_RELEASES }}
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           GOOGLE_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_BASE64 }}
-          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          ASC_APP_ID: ${{ vars.ASC_APP_ID }}
         run: |
           if [ "$STORE_RELEASES" != "true" ]; then
             echo "::error::Store releases are switched off: set the repository variable STORE_RELEASES to 'true' once the store accounts, keys and EAS variables exist (DEPLOY.md, stage 0). Nothing was deployed or built."
@@ -66,13 +59,8 @@ jobs:
           missing=""
           [ -n "$EXPO_TOKEN" ] || missing="$missing secret EXPO_TOKEN,"
           [ -n "$GOOGLE_SERVICE_ACCOUNT_BASE64" ] || missing="$missing secret GOOGLE_SERVICE_ACCOUNT_BASE64,"
-          [ -n "$APP_STORE_CONNECT_API_KEY_BASE64" ] || missing="$missing secret APP_STORE_CONNECT_API_KEY_BASE64,"
-          [ -n "$APP_STORE_CONNECT_KEY_ID" ] || missing="$missing secret APP_STORE_CONNECT_KEY_ID,"
-          [ -n "$APP_STORE_CONNECT_ISSUER_ID" ] || missing="$missing secret APP_STORE_CONNECT_ISSUER_ID,"
-          [ -n "$APPLE_TEAM_ID" ] || missing="$missing variable APPLE_TEAM_ID,"
-          [ -n "$ASC_APP_ID" ] || missing="$missing variable ASC_APP_ID,"
           if [ -n "$missing" ]; then
-            echo "::error::A production release builds and submits both apps, but CI lacks:${missing%,}. Nothing was deployed or built. See DEPLOY.md, stage 0."
+            echo "::error::A production release builds and submits the Android app, but CI lacks:${missing%,}. Nothing was deployed or built. See DEPLOY.md, stage 0."
             exit 1
           fi
 
@@ -87,8 +75,8 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm ci
 
-      - name: 🔐 EAS production environment is complete (both platforms)
-        run: eas env:exec production 'node scripts/release-check.mjs --env' --non-interactive
+      - name: 🔐 EAS production environment is complete (Android)
+        run: eas env:exec production 'node scripts/release-check.mjs --env --platform android' --non-interactive
 
   backend:
     name: ☁️ Backend → production
@@ -106,16 +94,6 @@ jobs:
     name: 🤖 Android → Play internal
     needs: backend
     uses: ./.github/workflows/build-android.yml
-    with:
-      ci_checked: true
-      profile: production
-      submit: true
-    secrets: inherit
-
-  ios:
-    name: 🍏 iOS → TestFlight
-    needs: backend
-    uses: ./.github/workflows/build-ios.yml
     with:
       ci_checked: true
       profile: production

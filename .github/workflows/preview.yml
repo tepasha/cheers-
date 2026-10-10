@@ -5,7 +5,7 @@ name: 🧪 Preview (stage)
 # Environment `staging`, EAS `preview`); a staging environment without its variables skips the backend deploy with a
 # notice. The comparison of EAS `preview` with the GitHub Environment `staging` is skipped. A push to main runs only
 # CI (ci-check.yml).
-# iOS preview builds need registered test devices, so they stay a manual run of build-ios.yml.
+# iOS is not deployed: there is no iOS build or update anywhere in CI.
 on:
   push:
     branches: [ stage ]

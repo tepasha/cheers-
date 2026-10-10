@@ -1,28 +1,18 @@
 name: 📣 Promote to production (stores)
 
-# Takes an already tested build out to real users. Always started by hand and held by the GitHub Environment
-# `store-release` (add required reviewers in Settings → Environments).
-#   Android  moves the chosen EAS build, which the tag release already put on the Google Play internal track, to
-#            production with a staged rollout. Run it again with the same build_id to raise the rollout
-#            (0.1 → 0.5) and with 1 to complete it. Nothing is uploaded again (see the step below).
-#   iOS      pushes the store listing (store.config.json). EAS cannot press "Submit for Review": do that in
-#            App Store Connect once the TestFlight build is verified.
+# Takes an already tested Android build out to real users (iOS is not deployed). Always started by hand and held by
+# the GitHub Environment `store-release` (add required reviewers in Settings → Environments).
+# Moves the chosen EAS build, which the release already put on the Google Play internal track, to production with a
+# staged rollout. Run it again with the same build_id to raise the rollout (0.1 → 0.5) and with 1 to complete it.
+# Nothing is uploaded again (see the step below).
 # Runs only from main or a release tag on main, after the full CI, and an Android build is promoted only if EAS
 # reports it as a production build made from a commit on main.
 on:
   workflow_dispatch:
     inputs:
-      platform:
-        description: 'Платформа'
-        required: true
-        default: 'android'
-        type: choice
-        options:
-          - android
-          - ios
       build_id:
         description: 'Android: id збірки EAS (production AAB, яка вже пройшла internal-тест)'
-        required: false
+        required: true
         type: string
       rollout:
         description: 'Android: частка користувачів (0.1 → 0.5 → 1; 1 = 100%, завершити розгортання)'
@@ -34,7 +24,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: promote-${{ inputs.platform }}
+  group: promote-android
   cancel-in-progress: false
 
 jobs:
@@ -65,13 +55,12 @@ jobs:
     uses: ./.github/workflows/ci-check.yml
 
   promote:
-    name: 📣 Promote (${{ inputs.platform }})
+    name: 📣 Promote (android)
     needs: [gate, ci]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: store-release
     env:
-      PLATFORM: ${{ inputs.platform }}
       BUILD_ID: ${{ inputs.build_id }}
       ROLLOUT: ${{ inputs.rollout }}
     steps:
@@ -99,15 +88,9 @@ jobs:
 
       # The build being promoted had its EAS variables checked when it was made (build-*.yml, and app.config.ts on the
       # build worker). Checked again because the production OTA hotfixes its users will get are built from this same
-      # environment. For iOS the store check (no REPLACE_ME, https legal pages) also runs here, against the legal URLs
-      # of the EAS production environment, i.e. the ones compiled into the app, not a separate copy that no build reads.
+      # environment.
       - name: 🔐 EAS production environment is complete
-        run: |
-          checks="--env --platform $PLATFORM"
-          if [ "$PLATFORM" = "ios" ]; then
-            checks="$checks --store"
-          fi
-          eas env:exec production "node scripts/release-check.mjs $checks" --non-interactive
+        run: eas env:exec production "node scripts/release-check.mjs --env --platform android" --non-interactive
 
       # Google Play refuses a second upload of a version code it already has, and `eas submit` always uploads, so the
       # build the tag release sent to the internal track cannot reach production through EAS Submit. Instead the
@@ -116,7 +99,6 @@ jobs:
       # same build_id raise it, and 1 completes it. The versionCode, the package and the build's kind come from EAS,
       # so a preview APK or an unfinished build is refused before Play is touched.
       - name: 🤖 Google Play internal → production (staged rollout)
-        if: env.PLATFORM == 'android'
         env:
           GOOGLE_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_BASE64 }}
           KEY_DIR: ${{ runner.temp }}/play
@@ -176,42 +158,6 @@ jobs:
             echo "::notice::versionCode $VERSION_CODE is live for a fraction $ROLLOUT of production users. Run this workflow again with the same build_id and a larger rollout (1 = 100%) to widen it; halt it in Play Console if needed."
           fi
 
-      # `eas metadata:push --non-interactive` authenticates only with an App Store Connect API key taken from
-      # EXPO_ASC_API_KEY_PATH / EXPO_ASC_KEY_ID / EXPO_ASC_ISSUER_ID, from the submit profile, or from the EAS
-      # credentials service; a decoded file nobody points at is ignored ('No App Store Connect API Key found').
-      # With the key from the environment it also needs the team id and team type, which it would otherwise prompt
-      # for. The team type only tells eas-cli whether the team is an Enterprise (in-house) one, which cannot publish
-      # to the App Store anyway. The key is decoded outside the workspace and removed in the last step.
-      - name: 🍏 Push the App Store listing
-        if: env.PLATFORM == 'ios'
-        env:
-          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-          EXPO_ASC_API_KEY_PATH: ${{ runner.temp }}/asc/AuthKey.p8
-          EXPO_ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          EXPO_ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          EXPO_APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          EXPO_APPLE_TEAM_TYPE: COMPANY_OR_ORGANIZATION
-        run: |
-          missing=""
-          [ -n "$APP_STORE_CONNECT_API_KEY_BASE64" ] || missing="$missing secret APP_STORE_CONNECT_API_KEY_BASE64,"
-          [ -n "$EXPO_ASC_KEY_ID" ] || missing="$missing secret APP_STORE_CONNECT_KEY_ID,"
-          [ -n "$EXPO_ASC_ISSUER_ID" ] || missing="$missing secret APP_STORE_CONNECT_ISSUER_ID,"
-          [ -n "$EXPO_APPLE_TEAM_ID" ] || missing="$missing variable APPLE_TEAM_ID,"
-          if [ -n "$missing" ]; then
-            echo "::error::eas metadata:push needs the App Store Connect API key. Missing:${missing%,}. See DEPLOY.md, stage 0, step 3."
-            exit 1
-          fi
-          mkdir -p "$(dirname "$EXPO_ASC_API_KEY_PATH")"
-          chmod 700 "$(dirname "$EXPO_ASC_API_KEY_PATH")"
-          if ! echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$EXPO_ASC_API_KEY_PATH" 2>/dev/null \
-             || ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$EXPO_ASC_API_KEY_PATH"; then
-            echo "::error::APP_STORE_CONNECT_API_KEY_BASE64 is not a base64-encoded .p8 key (encode it with: base64 -w0 AuthKey_<id>.p8)"
-            exit 1
-          fi
-          chmod 600 "$EXPO_ASC_API_KEY_PATH"
-          eas metadata:push --non-interactive
-          echo "::notice::The listing is updated. Press 'Submit for Review' in App Store Connect after checking the TestFlight build."
-
       - name: 🧹 Remove store keys
         if: always()
-        run: rm -rf "$RUNNER_TEMP/play" "$RUNNER_TEMP/asc"
+        run: rm -rf "$RUNNER_TEMP/play"

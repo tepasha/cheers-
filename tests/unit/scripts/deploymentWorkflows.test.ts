@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
@@ -44,15 +44,23 @@ describe('Expo deployment entry points', () => {
     expect(ota.environment).toContain("inputs.channel == 'production' && 'production'");
   });
 
+  it('deploys Android only: no iOS build, submit or update', () => {
+    expect(existsSync('.github/workflows/build-ios.yml')).toBe(false);
+    expect(Object.keys(workflow('release').jobs)).not.toContain('ios');
+    expect(workflow('promote').on.workflow_dispatch.inputs.platform).toBeUndefined();
+    const publish = workflow('ota').jobs.update.steps.find((step: { name: string }) => step.name.includes('Publish the update'));
+    expect(publish.run).toContain('eas update --platform android');
+  });
+
   it('lets child workflows skip CI only when the parent completed its CI gate', () => {
     for (const parent of ['preview', 'release']) {
       const { jobs } = workflow(parent);
       expect(jobs.ci.uses).toBe('./.github/workflows/ci-check.yml');
-      for (const name of parent === 'preview' ? ['backend', 'android', 'ota'] : ['backend', 'android', 'ios']) {
+      for (const name of parent === 'preview' ? ['backend', 'android', 'ota'] : ['backend', 'android']) {
         expect(jobs[name].with.ci_checked).toBe(true);
       }
     }
-    for (const child of ['ota', 'build-android', 'build-ios', 'deploy-backend']) {
+    for (const child of ['ota', 'build-android', 'deploy-backend']) {
       const config = workflow(child);
       expect(config.on.workflow_call.inputs.ci_checked.default).toBe(false);
       expect(config.on.workflow_dispatch.inputs.ci_checked).toBeUndefined();

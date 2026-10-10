@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ConfigContext, ExpoConfig } from 'expo/config';
+import { withGradleProperties, type ConfigPlugin } from 'expo/config-plugins';
 
 /**
  * Dynamic Expo config on top of app.json. Keys come from the environment (a local `.env`, or EAS environment
@@ -36,6 +37,20 @@ function googleServicesFile(projectRoot: string): string | undefined {
   if (env.EAS_BUILD !== 'true' && existsSync(downloaded)) return downloaded;
   return configured;
 }
+
+/**
+ * react-native-google-mobile-ads 17.2.0 reads `rootProject.ext.googleMobileAdsJson` in its build.gradle, but its
+ * app-json.gradle never sets it when app.json has no "react-native-google-mobile-ads" key (it sets a misspelt
+ * `googleAdsJson` instead), and Gradle 9 fails the build on the missing property. The RNGMA_ANDROID_BACKEND Gradle
+ * property is read first and short-circuits that lookup; "classic" is the library's default backend.
+ * Drop this once the library fixes app-json.gradle.
+ */
+const withAdMobAndroidBackend: ConfigPlugin = (config) =>
+  withGradleProperties(config, (gradle) => {
+    gradle.modResults = gradle.modResults.filter((item) => !(item.type === 'property' && item.key === 'RNGMA_ANDROID_BACKEND'));
+    gradle.modResults.push({ type: 'property', key: 'RNGMA_ANDROID_BACKEND', value: 'classic' });
+    return gradle;
+  });
 
 /** Google's sample AdMob ids: preview/development builds run on them, production must not */
 const ADMOB_SAMPLE_APP_ID = { android: 'ca-app-pub-3940256099942544~3347511713', ios: 'ca-app-pub-3940256099942544~1458002511' };
@@ -139,7 +154,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   // The plugin installs native upload hooks. Omit them when upload credentials are absent.
   const sentryUploadConfigured = ['SENTRY_ORG', 'SENTRY_PROJECT', 'SENTRY_AUTH_TOKEN'].every((name) => clean(env[name]));
 
-  return {
+  return withAdMobAndroidBackend({
     ...(config as ExpoConfig),
     // The runtime version is a hash of everything native (modules, permissions, config plugins). An OTA update only
     // reaches binaries with the same hash, so it can never ship JS that needs native code an installed app lacks.
@@ -195,5 +210,5 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
         firestoreDatabaseId: clean(env.FIREBASE_FIRESTORE_DATABASE_ID),
       },
     },
-  };
+  });
 };

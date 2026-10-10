@@ -2,6 +2,7 @@ name: 📡 OTA update (EAS Update)
 
 # Ships JavaScript and asset changes to installed apps without a store review. The runtime version is the native
 # fingerprint (app.config.ts), so an update only reaches binaries whose native code it was built against.
+# Android only: iOS is not deployed, so updates are published with --platform android.
 #   preview     (from stage)  tested by internal builds; talks to the staging backend (GitHub Environment `staging`),
 #                             unless the caller skips that comparison (preview.yml, expo.dev only)
 #   production  (by hand)     real users: only from main or a release tag, after the full CI, and after approval
@@ -122,10 +123,10 @@ jobs:
 
       # The update carries its own `extra` (Firebase config, Google client ids, legal URLs), built from this EAS
       # environment: a missing or "Secret" variable would ship a demo-mode or half-configured app to everyone on the
-      # channel, while the run stays green. Same profile check as before a build, for both platforms; preview allows
+      # channel, while the run stays green. Same profile check as before an Android build; preview allows
       # missing legal links, support email, Sentry and real AdMob app ids.
       - name: 🔐 EAS environment is complete
-        run: eas env:exec "$CHANNEL" "node scripts/release-check.mjs --env --profile $CHANNEL" --non-interactive
+        run: eas env:exec "$CHANNEL" "node scripts/release-check.mjs --env --platform android --profile $CHANNEL" --non-interactive
 
       # The update's Firebase project and named database come from the EAS environment of the channel, while the rules
       # and functions are deployed (deploy-backend.yml) with the variables of this job's GitHub Environment: `staging`
@@ -146,13 +147,12 @@ jobs:
       # fingerprint. So, before publishing, resolve each platform's runtime version exactly the way
       # `eas update --environment` does (the same expo-updates command, with the EAS variables of this environment
       # and no .env), and look for a finished build on this channel with that runtime version.
-      #   production  no such build for a platform → fail: that platform's users would silently get nothing
-      #   preview     only a warning: the Android preview build of the same commit may still be running, and iOS
-      #               preview builds are made by hand
+      #   production  no such build → fail: the users would silently get nothing
+      #   preview     only a warning: the Android preview build of the same commit may still be running
       - name: 🧬 Does a build on this channel match the update?
         run: |
           failed=0
-          for platform in ios android; do
+          for platform in android; do
             eas env:exec "$CHANNEL" \
               "EXPO_NO_DOTENV=1 npx expo-updates runtimeversion:resolve --platform $platform --workflow managed > \"$RUNNER_TEMP/runtime-$platform.json\"" \
               --non-interactive
@@ -182,7 +182,7 @@ jobs:
       - name: 📡 Publish the update
         run: |
           MESSAGE="$(git log -1 --pretty=%s)"
-          eas update --channel "$CHANNEL" --environment "$CHANNEL" --message "$MESSAGE" --non-interactive --json \
+          eas update --platform android --channel "$CHANNEL" --environment "$CHANNEL" --message "$MESSAGE" --non-interactive --json \
             > "$RUNNER_TEMP/update.json"
           if ! jq -e 'type == "array" and length > 0' "$RUNNER_TEMP/update.json" > /dev/null; then
             echo "::error::eas update returned no updates, see the log above"
