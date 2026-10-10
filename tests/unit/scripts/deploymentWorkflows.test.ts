@@ -11,10 +11,12 @@ describe('Expo deployment entry points', () => {
     }
   });
 
-  it('lets the stage branch publish only to expo.dev, without touching a backend', () => {
+  it('runs the whole test line automatically on the stage branch, against staging only', () => {
     const preview = workflow('preview');
     expect(preview.on.push.branches).toEqual(['stage']);
-    expect(Object.keys(preview.jobs)).toEqual(['ci', 'android', 'ota']);
+    expect(Object.keys(preview.jobs)).toEqual(['ci', 'backend', 'android', 'ota']);
+    expect(preview.jobs.backend.with.environment).toBe('staging');
+    for (const job of Object.values(preview.jobs) as { if?: string }[]) expect(job.if).toBeUndefined();
     expect(preview.jobs.android.with).toMatchObject({ profile: 'preview', submit: false, skip_backend_check: true });
     expect(preview.jobs.ota.with).toMatchObject({ channel: 'preview', skip_backend_check: true });
     expect(preview.jobs.android.if).toBeUndefined();
@@ -23,6 +25,7 @@ describe('Expo deployment entry points', () => {
 
   it('waits for a usable Android binary before publishing its OTA update', () => {
     const preview = workflow('preview');
+    expect(preview.jobs.android.needs).toContain('backend');
     expect(preview.jobs.ota.needs).toContain('android');
     expect(preview.concurrency).toMatchObject({ 'cancel-in-progress': false });
   });
@@ -45,7 +48,7 @@ describe('Expo deployment entry points', () => {
     for (const parent of ['preview', 'release']) {
       const { jobs } = workflow(parent);
       expect(jobs.ci.uses).toBe('./.github/workflows/ci-check.yml');
-      for (const name of parent === 'preview' ? ['android', 'ota'] : ['backend', 'android', 'ios']) {
+      for (const name of parent === 'preview' ? ['backend', 'android', 'ota'] : ['backend', 'android', 'ios']) {
         expect(jobs[name].with.ci_checked).toBe(true);
       }
     }
