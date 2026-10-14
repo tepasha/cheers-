@@ -13,7 +13,7 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.budmo.app",
+      "bundleIdentifier": "cheers.app",
       "buildNumber": "1",
       "usesAppleSignIn": true,
       "infoPlist": {
