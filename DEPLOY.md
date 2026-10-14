@@ -31,12 +31,12 @@
 PR, push у main/develop → ci-check.yml: release-check, lint + tsc, unit-тести, Metro-бандл, expo prebuild,
                           збірка functions; окремий job: правила Firestore + контракт клієнта на емуляторі
 
-push у stage (preview.yml), усе автоматично, лише тестове оточення
+push у stage (preview.yml, самодостатній: з production-workflow спільний лише CI), усе автоматично,
+лише тестове оточення, кожен крок виконується на кожен push
   → CI
-  → backend у STAGING (deploy-backend.yml, на КОЖЕН push; якщо Environment `staging` не налаштовано,
-    деплой пропускається з ::notice::)
-  → Android preview APK (EAS, internal) → EAS Update у канал `preview`
-    (порівняння EAS `preview` з GitHub `staging` пропущене)
+  → backend у STAGING (на КОЖЕН push; без змінних Environment `staging` job падає з ::error::)
+  → Android preview APK (EAS, internal) → GitHub pre-release `stage-<номер>` (5 останніх)
+  → EAS Update у канал `preview` + копія з runtime `exposdk:<SDK>.0.0` для Expo Go
 
 кнопка Run workflow (release.yml, main або release-тег)
   → CI
@@ -48,9 +48,10 @@ push у stage (preview.yml), усе автоматично, лише тесто�
 вручну promote.yml (чекає схвалення Environment `store-release`; backend НЕ чіпає)
   Android: та сама збірка з internal → production, staged rollout 0.1 → 0.5 → 1 (нічого не завантажує вдруге)
 
-вручну ota.yml, канал production  → CI → схвалення `production` → EAS Update (лише JS і ресурси)
-вручну deploy-backend.yml         → CI → staging, або production (схвалення)
-вручну build-android/ios.yml      → CI → preview (лише проти staging-бекенду) або production
+вручну ota.yml                    → CI → схвалення `production` → EAS Update у канал production (лише JS і ресурси)
+вручну deploy-backend.yml         → CI → production (схвалення)
+вручну build-android.yml          → CI → production AAB (за бажанням і в Play internal)
+ota.yml, deploy-backend.yml і build-android.yml — лише production; staging живе тільки в preview.yml
 ```
 
 Головне:
@@ -58,7 +59,7 @@ push у stage (preview.yml), усе автоматично, лише тесто�
 - **Production-бекенд змінюється після ручного запуску release.yml, а не на promote.** Після схвалення `production` правила й functions замінюються, і лише потім стартують збірки; `promote.yml` бекенд не чіпає. Push і створення тегу не запускають цей конвеєр.
 - **Щоб ручний запуск не дав пів-релізу** (бекенд оновлено, а збірки впали на відсутньому ключі), verify-job `release.yml` зупиняє реліз до будь-якого деплою, якщо змінна репозиторію `STORE_RELEASES` не `true`, якщо бракує `EXPO_TOKEN` чи `GOOGLE_SERVICE_ACCOUNT_BASE64`, або якщо EAS-середовище `production` неповне для Android. Ставте `STORE_RELEASES=true` лише після Android-частини етапу 0 (зокрема першого AAB у Play, якого CI перевірити не може).
 - **Усе, що веде в production** (OTA-канал production, production-збірки, backend у production, promote), потребує події `workflow_dispatch` з `main` або тегу `vX.Y.Z`, коміт якого є в `main` (`release-check.mjs --release-ref`). Перевірку тригера проходять і reusable workflow. CI виконується один раз у батьківському конвеєрі; окремий ручний запуск також запускає весь CI.
-- **Preview-клієнти говорять лише зі staging-бекендом:** preview-збірки й preview-OTA порівнюють Firebase-проєкт і базу EAS-середовища `preview` зі змінними GitHub Environment `staging`; production-OTA порівнює EAS `production` з GitHub `production`.
+- **Preview-клієнти мають говорити лише зі staging-бекендом:** на гілці `stage` CI цього не перевіряє, тож `FIREBASE_PROJECT_ID` і `FIREBASE_FIRESTORE_DATABASE_ID` в EAS `preview` мають указувати на staging-проєкт. Production-OTA порівнює EAS `production` з GitHub `production`.
 - **Порядок для цього першого релізу: staging backend, нові binaries, перевірка, production.** Нові age claims і квоти несумісні зі старими dev збірками. Для наступних публічних версій підтримуйте сумісність або готуйте окрему міграцію до посилення rules.
 
 ## 3. Кроки
@@ -124,13 +125,13 @@ npx eas-cli build --platform android --profile preview
 ### OTA-оновлення
 
 - **Що це:** EAS Update доставляє JS і ресурси без рев'ю стору. `runtimeVersion` = нативний **fingerprint** (`runtimeVersion: { policy: 'fingerprint' }` у [app.config.ts](app.config.ts)): оновлення доходить лише до збірок з тим самим нативним кодом. **Не перемикайте на `appVersion`:** тоді оновлення діставалося б збірок тієї самої версії з іншим нативним кодом і падало б у них. `extra` (EAS-змінні) і версія у fingerprint не входять ([fingerprint.config.js](fingerprint.config.js)): кожне оновлення несе їх у маніфесті. Будь-яка нативна зміна (залежності, плагіни, ключ карт, iOS client id, `google-services.json`, `eas.json`) потребує store-збірки.
-- **preview:** автоматично на кожен push у `stage`, після staging-деплою та успішної Android preview-збірки.
-- **production:** `ota.yml` вручну з `main` або тегу, `channel: production`, після CI і схвалення `production`. Перед публікацією workflow перевіряє повноту EAS `production`, що вона вказує на бекенд GitHub `production`, і що для **кожної** платформи є завершена production-збірка з тим самим runtime (інакше падає: оновлення нікому б не дійшло; спершу store-збірка). Після публікації перевіряє фактичний runtime ще раз.
+- **preview:** автоматично на кожен push у `stage` ([preview.yml](.github/workflows/preview.yml)), після staging-деплою та успішної Android preview-збірки; разом з ним публікується копія для Expo Go.
+- **production:** `ota.yml` вручну з `main` або тегу, після CI і схвалення `production`. Перед публікацією workflow перевіряє повноту EAS `production`, що вона вказує на бекенд GitHub `production`, і що для **кожної** платформи є завершена production-збірка з тим самим runtime (інакше падає: оновлення нікому б не дійшло; спершу store-збірка). Після публікації перевіряє фактичний runtime ще раз.
 - **Відкат:** `npx eas-cli update:rollback` (публікує попередню групу оновлень каналу, а якщо її немає, повертає вбудований у збірку бандл) або новий OTA з виправленням.
 
 ### Бекенд вручну
 
-- **Через CI (рекомендовано):** `deploy-backend.yml` → `staging` або `production`. Ручний запуск ганяє весь CI (включно з правилами на емуляторі), production лише з `main` або тегу й після схвалення, і лише якщо `FIRESTORE_DATABASE_ID` середовища дорівнює базі з `firebase.json`.
+- **Через CI (рекомендовано):** staging — push у `stage` або **Run workflow** у Preview (stage); production — `deploy-backend.yml`. Ручний запуск ганяє весь CI (включно з правилами на емуляторі), production лише з `main` або тегу й після схвалення, і лише якщо `FIRESTORE_DATABASE_ID` середовища дорівнює базі з `firebase.json`.
 - **З власного комп'ютера:** `firebase.json` називає базу production-проєкту; для іншого проєкту тимчасово замініть у ньому `database` (CI робить це сам). Правила: `npx firebase-tools@15.32.1 deploy --only firestore:rules --project <project-id>`. Functions: спершу `functions/.env.<project-id>` з `FIRESTORE_DATABASE_ID` (див. README, розділ про push), потім `npx firebase-tools@15.32.1 deploy --only functions --project <project-id>`.
 - Перед деплоєм правил: `npm run test:rules`.
 
@@ -170,11 +171,11 @@ npx eas-cli build --platform android --profile preview
 | Що | Стан | Де |
 |----|------|----|
 | CI (lint, тести, правила в емуляторі, бандл, prebuild, functions) як reusable gate для всіх релізів; actions закріплені за SHA, `eas-cli` 24.8.0, `firebase-tools` 15.32.1 | зроблено | [ci-check.yml](.github/workflows/ci-check.yml) |
-| Обійти gate не можна: ручний запуск `ota.yml`, `build-*.yml`, `deploy-backend.yml`, `promote.yml` спершу ганяє `ci-check.yml`. Усе production лише з `main` або тегу на коміті з `main` (`--release-ref`); `promote.yml` (Android) приймає лише production-збірку з коміту в `main` (`--on-main`) | зроблено | усі workflow, [scripts/release-check.mjs](scripts/release-check.mjs) |
+| Обійти gate не можна: ручний запуск `ota.yml`, `build-android.yml`, `deploy-backend.yml`, `promote.yml` спершу ганяє `ci-check.yml`. Усе production лише з `main` або тегу на коміті з `main` (`--release-ref`); `promote.yml` (Android) приймає лише production-збірку з коміту в `main` (`--on-main`) | зроблено | усі workflow, [scripts/release-check.mjs](scripts/release-check.mjs) |
 | Run workflow → CI → verify (версія, `main`, `projectId`, `STORE_RELEASES`, секрети сторів, EAS `production`) → backend у production (схвалення) → Play internal (лише Android). Push і теги не запускають production | зроблено | [release.yml](.github/workflows/release.yml) |
-| Push у `stage` → CI → backend у staging → Android preview → preview-OTA, усе автоматично (без порівняння EAS `preview` з GitHub `staging`); push у `main` – лише CI | зроблено | [preview.yml](.github/workflows/preview.yml) |
+| Push у `stage` → CI → backend у staging → Android preview APK + GitHub pre-release → preview-OTA + копія для Expo Go, усе автоматично, без пропущених кроків; push у `main` – лише CI | зроблено | [preview.yml](.github/workflows/preview.yml) |
 | Деплой правил і functions (Workload Identity, база на середовище, production-база = `firebase.json`, автоматична cleanup policy на першому деплої, без `--force`) | зроблено | [deploy-backend.yml](.github/workflows/deploy-backend.yml) |
-| Збірки: перевірка EAS-змінних до старту (`--env`), ключі сторів перевіряються до хмарної збірки, `eas.json` до збірки не змінюється, відправка окремим кроком після збірки | зроблено | [build-android.yml](.github/workflows/build-android.yml), [build-ios.yml](.github/workflows/build-ios.yml), [app.config.ts](app.config.ts) |
+| Збірки: перевірка EAS-змінних до старту (`--env`), ключі сторів перевіряються до хмарної збірки, `eas.json` до збірки не змінюється, відправка окремим кроком після збірки | зроблено | [build-android.yml](.github/workflows/build-android.yml), [app.config.ts](app.config.ts) |
 | OTA через EAS Update; runtime = fingerprint (без `extra` і версії); перед і після публікації перевірка, що є збірка каналу з тим самим runtime (production: інакше падає) | зроблено | [ota.yml](.github/workflows/ota.yml), [fingerprint.config.js](fingerprint.config.js) |
 | Promote: Play internal → production зі staged rollout без повторного завантаження (iOS не деплоїться) | зроблено | [promote.yml](.github/workflows/promote.yml), [scripts/play-promote.mjs](scripts/play-promote.mjs) |
 | Відкат OTA (`eas update:rollback`) | вручну, за потреби | розділ «OTA-оновлення» |
@@ -194,7 +195,7 @@ npx eas-cli build --platform android --profile preview
 
 | Environment | Reviewers | Deployment branches and tags | Variables |
 |-------------|-----------|------------------------------|-----------|
-| `staging` | не потрібні | без обмежень (preview можна зібрати з будь-якої гілки, після CI) | `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` (порожні: деплой у staging пропускається, а preview-збірки й preview-OTA відмовляються збиратися). `FIREBASE_PROJECT_ID` / `FIRESTORE_DATABASE_ID` мають збігатися з EAS `preview` |
+| `staging` | не потрібні | без обмежень (preview можна зібрати з будь-якої гілки, після CI) | `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` (порожні: Preview (stage) падає на кроці бекенду). `FIREBASE_PROJECT_ID` / `FIRESTORE_DATABASE_ID` мають збігатися з EAS `preview` |
 | `production` | **так** (ручний backend-реліз, production-OTA) | **Selected branches and tags:** гілка `main` і тег `v*` | ті самі чотири змінні для бойового проєкту; `FIRESTORE_DATABASE_ID` = база з `firebase.json` (`ai-studio-df109a92-91f7-44f7-944f-c92e7aa387b8`), той самий `FIREBASE_FIRESTORE_DATABASE_ID`, що в EAS `production` |
 | `store-release` | **так** (promote) | **Selected branches and tags:** гілка `main` і тег `v*` | (немає: юридичні посилання promote бере з EAS-середовища `production`; старі `PRIVACY_POLICY_URL` / `TERMS_URL` тут можна видалити) |
 

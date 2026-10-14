@@ -1,95 +1,56 @@
-name: 📡 OTA update (EAS Update)
+name: 📡 OTA update (EAS Update, production)
 
-# Ships JavaScript and asset changes to installed apps without a store review. The runtime version is the native
-# fingerprint (app.config.ts), so an update only reaches binaries whose native code it was built against.
-# Android only: iOS is not deployed, so updates are published with --platform android.
-#   preview     (from stage)  tested by internal builds; talks to the staging backend (GitHub Environment `staging`),
-#                             unless the caller skips that comparison (preview.yml, expo.dev only)
-#   production  (by hand)     real users: only from main or a release tag, after the full CI, and after approval
-#                             of the GitHub Environment `production`
+# Ships JavaScript and asset changes to the installed production apps without a store review, by hand only: from main
+# or a release tag, after the full CI, and after approval of the GitHub Environment `production`. The runtime version
+# is the native fingerprint (app.config.ts), so an update only reaches binaries whose native code it was built against.
+# The stage branch publishes its preview updates in preview.yml, not here. Android only: iOS is not deployed.
 on:
-  # A caller sets ci_checked only after its CI gate succeeds; an independent manual run performs CI below.
-  workflow_call:
-    inputs:
-      ci_checked:
-        description: 'Caller has successfully completed ci-check.yml for this commit'
-        type: boolean
-        default: false
-      skip_backend_check:
-        description: 'Preview only: do not compare EAS preview with the GitHub Environment staging (expo.dev-only line)'
-        type: boolean
-        default: false
-      channel:
-        type: string
-        default: 'preview'
-    secrets:
-      EXPO_TOKEN:
-        required: true
   workflow_dispatch:
-    inputs:
-      channel:
-        description: 'Канал'
-        required: true
-        default: 'preview'
-        type: choice
-        options:
-          - preview
-          - production
 
 permissions:
   contents: read
 
 concurrency:
-  group: ota-${{ inputs.channel }}
+  group: ota-production
   cancel-in-progress: false
 
 jobs:
-  # An update reaches every installed binary of its channel within minutes and without a store review, so production
-  # is published only from main or from a release tag whose commit is on main (scripts/release-check.mjs
-  # --release-ref). The environment's deployment-branch rule (DEPLOY.md) says the same; this job also covers a tag that
-  # was pushed onto a commit outside main. Preview passes straight through.
+  # An update reaches every installed binary within minutes and without a store review, so it is published only from
+  # main or from a release tag whose commit is on main (scripts/release-check.mjs --release-ref). The environment's
+  # deployment-branch rule (DEPLOY.md) says the same; this job also covers a tag pushed onto a commit outside main.
   gate:
     name: 🚦 Production only from main or a release tag
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout
-        if: inputs.channel == 'production'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # the "is this commit on main" check needs main's history
 
       - name: 🟢 Setup Node.js 22
-        if: inputs.channel == 'production'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
       - name: 🚦 main or a release tag on main
-        if: inputs.channel == 'production'
         run: node scripts/release-check.mjs --release-ref
 
-  # Started by hand, nothing has tested this ref yet: run the same CI as every release (lint, type check, unit tests,
-  # rules emulator, bundle, prebuild). A caller (preview.yml) has already run ci-check.yml, so it is skipped then.
+  # Nothing has tested this ref yet: run the same CI as every release (lint, type check, unit tests, rules emulator,
+  # bundle, prebuild).
   ci:
     name: ✅ CI gate
     needs: gate
-    if: ${{ !inputs.ci_checked }}
     uses: ./.github/workflows/ci-check.yml
 
   update:
-    name: 📡 Publish to ${{ inputs.channel }}
+    name: 📡 Publish to production
     needs: [gate, ci]
-    # A skipped CI is accepted only when the caller explicitly completed ci-check.yml
-    if: >-
-      !cancelled() && needs.gate.result == 'success'
-      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && inputs.ci_checked))
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # No GitHub Environment at all when a preview caller skips the backend comparison (an empty name means none)
-    environment: ${{ inputs.channel == 'production' && 'production' || (!inputs.skip_backend_check && 'staging' || '') }}
+    environment: production
     env:
-      CHANNEL: ${{ inputs.channel }}
+      CHANNEL: production
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -123,18 +84,14 @@ jobs:
 
       # The update carries its own `extra` (Firebase config, Google client ids, legal URLs), built from this EAS
       # environment: a missing or "Secret" variable would ship a demo-mode or half-configured app to everyone on the
-      # channel, while the run stays green. Same profile check as before an Android build; preview allows
-      # missing legal links, support email, Sentry and real AdMob app ids.
+      # channel, while the run stays green. Same check as before a production Android build.
       - name: 🔐 EAS environment is complete
         run: eas env:exec "$CHANNEL" "node scripts/release-check.mjs --env --platform android --profile $CHANNEL" --non-interactive
 
-      # The update's Firebase project and named database come from the EAS environment of the channel, while the rules
-      # and functions are deployed (deploy-backend.yml) with the variables of this job's GitHub Environment: `staging`
-      # for preview, `production` for production. Nothing else ties the two together, so a preview update could
-      # otherwise write testers' data into the production database, or test against rules deployed elsewhere.
-      # A staging environment without these variables refuses preview clients instead of skipping silently.
-      - name: 🎯 The update talks to this channel's backend
-        if: ${{ inputs.channel == 'production' || !inputs.skip_backend_check }}
+      # The update's Firebase project and named database come from the EAS environment `production`, while the rules
+      # and functions are deployed (deploy-backend.yml) with the variables of the GitHub Environment `production`.
+      # Nothing else ties the two together, so they are compared here.
+      - name: 🎯 The update talks to the production backend
         env:
           EXPECTED_FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           EXPECTED_FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
@@ -146,9 +103,8 @@ jobs:
       # fingerprint.config.js), or when a store build was made from a modified eas.json, which is part of the
       # fingerprint. So, before publishing, resolve each platform's runtime version exactly the way
       # `eas update --environment` does (the same expo-updates command, with the EAS variables of this environment
-      # and no .env), and look for a finished build on this channel with that runtime version.
-      #   production  no such build → fail: the users would silently get nothing
-      #   preview     only a warning: the Android preview build of the same commit may still be running
+      # and no .env), and look for a finished production build with that runtime version; without one the users
+      # would silently get nothing, so the run fails.
       - name: 🧬 Does a build on this channel match the update?
         run: |
           failed=0
@@ -165,20 +121,17 @@ jobs:
               --status finished --limit 1 --json --non-interactive | jq 'length')"
             if [ "$builds" -gt 0 ]; then
               echo "✅ $platform: runtime $runtime has a finished build on $CHANNEL"
-            elif [ "$CHANNEL" = "production" ]; then
+            else
               echo "::error::$platform: no finished build on channel production has runtime version $runtime, so no installed $platform app would receive this update. The native fingerprint changed since the last store build: ship a store build instead (or find what changed with eas fingerprint:compare)."
               failed=1
-            else
-              echo "::warning::$platform: no finished build on channel $CHANNEL has runtime version $runtime yet; the update reaches only builds made from this native state"
             fi
           done
           exit "$failed"
 
-      # `--environment` makes EAS inject the variables of this channel's environment, the ones its store builds used
-      # (eas.json names each build profile's environment after its channel).
+      # `--environment` makes EAS inject the variables of the production environment, the ones the store builds used.
       # Afterwards the runtime version that was actually published is checked against the builds once more: the check
-      # above resolves it the same way, but only this proves that `eas update` itself agreed. On production a mismatch
-      # fails the run (the update is live but reaches nobody: ship a store build, or fix and publish again).
+      # above resolves it the same way, but only this proves that `eas update` itself agreed. A mismatch fails the run
+      # (the update is live but reaches nobody: ship a store build, or fix and publish again).
       - name: 📡 Publish the update
         run: |
           MESSAGE="$(git log -1 --pretty=%s)"
@@ -196,11 +149,9 @@ jobs:
               --status finished --limit 1 --json --non-interactive | jq 'length')"
             if [ "$builds" -gt 0 ]; then
               echo "- $platform: runtime \`$runtime\`, reaches the $CHANNEL builds" >> "$GITHUB_STEP_SUMMARY"
-            elif [ "$CHANNEL" = "production" ]; then
+            else
               echo "::error::$platform: the update was published with runtime version $runtime, which no finished production build has, so no installed app receives it. Ship a store build (eas fingerprint:compare shows what changed)."
               failed=1
-            else
-              echo "::warning::$platform: runtime version $runtime has no finished $CHANNEL build yet"
             fi
           done
           exit "$failed"
@@ -212,19 +163,3 @@ jobs:
           else
             echo "Sentry source-map upload skipped: upload credentials are not configured"
           fi' --non-interactive
-
-      # Expo Go opens only updates whose runtime version is `exposdk:<SDK>.0.0` (EXPO_GO_UPDATE in app.config.ts). The
-      # copy lands on the same branch; no build has that runtime version, so installed APKs never receive it, and the
-      # builds' fingerprinted update above never shows as compatible in Expo Go. Preview only: production stays build-only.
-      # Last, because it rewrites dist/, whose source maps belong to the builds' update.
-      - name: 📱 Copy of the update for Expo Go
-        if: inputs.channel == 'preview'
-        run: |
-          MESSAGE="$(git log -1 --pretty=%s)"
-          EXPO_GO_UPDATE=1 eas update --platform android --channel "$CHANNEL" --environment "$CHANNEL" \
-            --message "Expo Go · $MESSAGE" --non-interactive --json > "$RUNNER_TEMP/update-expo-go.json"
-          runtime="$(jq -r '.[0].runtimeVersion // empty' "$RUNNER_TEMP/update-expo-go.json")"
-          case "$runtime" in
-            exposdk:*) echo "- Expo Go: runtime \`$runtime\`, відкрийте гілку \`$CHANNEL\` у Expo Go" >> "$GITHUB_STEP_SUMMARY" ;;
-            *) echo "::error::The Expo Go copy was published with runtime version '$runtime' instead of exposdk:<SDK>.0.0"; exit 1 ;;
-          esac

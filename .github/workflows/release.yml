@@ -84,7 +84,6 @@ jobs:
     uses: ./.github/workflows/deploy-backend.yml
     with:
       ci_checked: true
-      environment: production
     permissions:
       contents: read
       id-token: write
@@ -96,6 +95,5 @@ jobs:
     uses: ./.github/workflows/build-android.yml
     with:
       ci_checked: true
-      profile: production
       submit: true
     secrets: inherit

@@ -1,13 +1,12 @@
 name: 🧪 Preview (stage)
 
-# Every push to the `stage` branch runs the whole test line automatically, with no approval: CI gate, staging backend,
-# internal Android build, then a preview OTA update. Everything here targets the test environment only (GitHub
-# Environment `staging`, EAS `preview`); a staging environment without its variables skips the backend deploy with a
-# notice. The comparison of EAS `preview` with the GitHub Environment `staging` is skipped. A push to main runs only
-# CI (ci-check.yml).
-# The APK is also attached to a GitHub pre-release (stage-<run>), and the OTA job publishes a second copy of the update
-# that Expo Go can open (ota.yml).
-# iOS is not deployed: there is no iOS build or update anywhere in CI.
+# Every push to the `stage` branch runs the whole test line automatically, with no approval:
+#   CI gate → staging backend → Android APK (EAS Build, also attached to a GitHub pre-release)
+#           → OTA update on the `preview` channel, plus a copy of it that Expo Go can open
+# Everything here targets the test environment only (GitHub Environment `staging`, EAS `preview`) and every step
+# runs on every push. Production has its own workflows (release.yml, ota.yml, promote.yml and the reusable
+# build-android.yml / deploy-backend.yml); this file shares only the CI gate with them. A push to main runs only CI.
+# iOS is not deployed.
 on:
   push:
     branches: [ stage ]
@@ -27,55 +26,107 @@ jobs:
     uses: ./.github/workflows/ci-check.yml
 
   # Deployed on EVERY push, not only when firestore.rules / functions changed: a diff against the previous push
-  # loses a change whenever that push's run was cancelled (a newer push queues behind it) or failed, and staging then
-  # kept the old rules until the next backend change, while the preview clients already expected the new ones.
-  # A full deploy is cheap: the rules are one file, and firebase-tools skips functions whose source is unchanged.
+  # loses a change whenever that push's run was cancelled or failed, and staging then kept the old rules while the
+  # preview clients already expected the new ones. firebase-tools skips functions whose source is unchanged.
+  # The preview clients of this commit may rely on these rules and functions, so the apps come only after it.
   backend:
     name: ☁️ Backend → staging
     needs: ci
-    uses: ./.github/workflows/deploy-backend.yml
-    with:
-      ci_checked: true
-      environment: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
     permissions:
       contents: read
-      id-token: write
-    secrets: inherit
-
-  # The backend first, as in a release: the preview clients of this commit may rely on its rules and functions, so
-  # they are built and published only after the staging deploy has succeeded.
-  android:
-    name: 🤖 Android preview build
-    needs: [ci, backend]
-    uses: ./.github/workflows/build-android.yml
-    with:
-      ci_checked: true
-      skip_backend_check: true
-      profile: preview
-      submit: false
-    secrets: inherit
-
-  ota:
-    name: 📡 OTA → preview channel
-    needs: [ci, backend, android]
-    uses: ./.github/workflows/ota.yml
-    with:
-      ci_checked: true
-      skip_backend_check: true
-      channel: preview
-    secrets: inherit
-
-  # The stage APK as a GitHub pre-release, so testers download it from the repository's Releases without an Expo
-  # account. It is never marked "latest"; only the newest KEEP stage pre-releases (and their tags) are kept.
-  github-release:
-    name: 📦 APK → GitHub Release
-    needs: android
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
+      id-token: write # Workload Identity Federation
     env:
-      BUILD_ID: ${{ needs.android.outputs.build_id }}
+      PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
+      WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      WIF_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      # The functions set no region, so they (and their gcf-artifacts image repository) live in the default one
+      FUNCTIONS_REGION: us-central1
+    steps:
+      - name: 🔎 Staging is configured
+        run: |
+          if [ -z "$PROJECT_ID" ] || [ -z "$DATABASE_ID" ] || [ -z "$WIF_PROVIDER" ] || [ -z "$WIF_SERVICE_ACCOUNT" ]; then
+            echo "::error::GitHub Environment 'staging' lacks FIREBASE_PROJECT_ID / FIRESTORE_DATABASE_ID / GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT (see DEPLOY.md)"
+            exit 1
+          fi
+          if [[ ! "$WIF_PROVIDER" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[^/[:space:]]+/providers/[^/[:space:]]+$ ]]; then
+            echo "::error::GitHub Environment 'staging': GCP_WORKLOAD_IDENTITY_PROVIDER must be projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID (see DEPLOY.md)."
+            exit 1
+          fi
+
+      - name: 📥 Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 🟢 Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🔐 Authenticate to Google Cloud
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: 📦 Install Cloud Functions dependencies
+        run: npm ci
+        working-directory: functions
+
+      # Staging names its own database. FIRESTORE_DATABASE_ID is a required function param, so the rules and the
+      # functions get the same id from the same variable; EXPO_ACCESS_TOKEN is read from process.env and may be unset.
+      - name: ⚙️ Point firebase.json and the function at the staging database
+        env:
+          EXPO_ACCESS_TOKEN: ${{ secrets.EXPO_ACCESS_TOKEN }}
+        run: |
+          jq --arg db "$DATABASE_ID" '.firestore[0].database = $db' firebase.json > "$RUNNER_TEMP/firebase.json"
+          mv "$RUNNER_TEMP/firebase.json" firebase.json
+          {
+            echo "FIRESTORE_DATABASE_ID=$DATABASE_ID"
+            if [ -n "$EXPO_ACCESS_TOKEN" ]; then echo "EXPO_ACCESS_TOKEN=$EXPO_ACCESS_TOKEN"; fi
+          } > "functions/.env.$PROJECT_ID"
+
+      # No --force, and the one-time gcf-artifacts cleanup policy retry: see deploy-backend.yml for both.
+      - name: 🚀 Deploy rules and functions
+        run: |
+          deploy() {
+            npx --yes firebase-tools@15.32.1 deploy --only firestore:rules,firestore:indexes,functions --project "$PROJECT_ID" --non-interactive 2>&1 \
+              | tee "$RUNNER_TEMP/deploy.log"
+          }
+          if deploy; then exit 0; fi
+          if ! grep -q "could not set up cleanup policy" "$RUNNER_TEMP/deploy.log"; then
+            echo "::error::Backend deploy to staging ($PROJECT_ID) failed, see the log above"
+            exit 1
+          fi
+          echo "::notice::First functions deploy to $PROJECT_ID: setting a 7-day cleanup policy on gcf-artifacts ($FUNCTIONS_REGION), then deploying again"
+          if ! npx --yes firebase-tools@15.32.1 functions:artifacts:setpolicy --project "$PROJECT_ID" \
+            --location "$FUNCTIONS_REGION" --days 7 --force --non-interactive; then
+            echo "::error::Could not set the cleanup policy (see DEPLOY.md)"
+            exit 1
+          fi
+          if ! deploy; then
+            echo "::error::Backend deploy to staging ($PROJECT_ID) failed after setting the cleanup policy, see the log above"
+            exit 1
+          fi
+
+      - name: 🧹 Remove generated env file
+        if: always()
+        run: rm -f functions/.env.*
+
+  # The internal APK, built on EAS and attached to a GitHub pre-release (stage-<run>), so testers download it from the
+  # repository's Releases without an Expo account. Pre-releases are never marked "latest"; only the newest KEEP stay.
+  # The EAS output contains artifact links, so it is summarised and never printed whole.
+  android:
+    name: 🤖 Android APK → GitHub Release
+    needs: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write # the GitHub release
+    env:
+      PROFILE: preview
       GH_TOKEN: ${{ github.token }}
       KEEP: 5
     steps:
@@ -93,43 +144,69 @@ jobs:
           eas-version: 24.8.0
           token: ${{ secrets.EXPO_TOKEN }}
 
-      # EAS CLI reads app.config.ts to find the project, which imports expo
       - name: 📦 Install Dependencies
         run: npm ci
 
-      # The artifact link is used here and never printed (see build-android.yml)
-      - name: ⬇️ Download the APK
+      # File variables arrive as filenames in EAS CLI. Download their contents so this machine hashes the same
+      # google-services.json as the build worker (.eas/ is ignored and never uploaded).
+      - name: Download EAS files for native fingerprinting
         run: |
-          if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
-            echo "::error::The Android job returned no build id"
+          eas env:pull "$PROFILE" --path "$RUNNER_TEMP/eas-build.env" --non-interactive
+          if [ ! -f .eas/.env/GOOGLE_SERVICES_JSON ]; then
+            echo "::error::GOOGLE_SERVICES_JSON must be a Sensitive file variable in EAS $PROFILE so local and worker fingerprints include the same contents."
             exit 1
           fi
-          eas build:view "$BUILD_ID" --json --non-interactive > "$RUNNER_TEMP/build.json"
-          url="$(jq -r '.artifacts.applicationArchiveUrl // .artifacts.buildUrl // empty' "$RUNNER_TEMP/build.json")"
-          if [ "$(jq -r '.status' "$RUNNER_TEMP/build.json")" != "FINISHED" ] || [ -z "$url" ]; then
-            echo "::error::EAS build $BUILD_ID has no finished APK"
+
+      - name: 🏷️ Project is linked to EAS
+        run: node scripts/release-check.mjs --project
+
+      # Firebase/Google are required; legal links, support email, Sentry and real AdMob app ids are optional here
+      - name: 🔐 EAS environment is complete
+        run: eas env:exec "$PROFILE" "node scripts/release-check.mjs --env --platform android --profile $PROFILE" --non-interactive
+
+      - name: 🔨 EAS Build for Android
+        run: |
+          if eas build --platform android --profile "$PROFILE" --non-interactive --json > "$RUNNER_TEMP/build.json"; then
+            BUILD_EXIT=0
+          else
+            BUILD_EXIT=$?
+          fi
+          {
+            echo "### 🤖 Android ($PROFILE)"
+            if jq -e 'type == "array" and length > 0' "$RUNNER_TEMP/build.json" > /dev/null 2>&1; then
+              jq -r '.[] | "- збірка `\(.id)`: **\(.status)** — [відкрити в EAS](\(.buildDetailsPageUrl))"' "$RUNNER_TEMP/build.json"
+            else
+              echo "- EAS не повернув результат збірки, див. лог кроку"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "::error::eas build failed (exit $BUILD_EXIT), see the log above"
+            exit "$BUILD_EXIT"
+          fi
+          url="$(jq -r '.[0].artifacts.applicationArchiveUrl // .[0].artifacts.buildUrl // empty' "$RUNNER_TEMP/build.json")"
+          if [ "$(jq -r '.[0].status' "$RUNNER_TEMP/build.json")" != "FINISHED" ] || [ -z "$url" ]; then
+            echo "::error::The EAS build has no finished APK"
             exit 1
           fi
-          curl -fsSL --retry 3 "$url" -o "$RUNNER_TEMP/budmo-stage.apk"
+          curl -fsSL --retry 3 "$url" -o "$RUNNER_TEMP/budmo-stage-$GITHUB_RUN_NUMBER.apk"
 
       - name: 📦 Publish the pre-release
         run: |
           tag="stage-$GITHUB_RUN_NUMBER"
-          apk="$RUNNER_TEMP/budmo-stage-$GITHUB_RUN_NUMBER.apk"
-          mv "$RUNNER_TEMP/budmo-stage.apk" "$apk"
+          build_id="$(jq -r '.[0].id' "$RUNNER_TEMP/build.json")"
           subject="$(git log -1 --pretty=%s)"
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
           Тестова Android-збірка гілки \`stage\` (staging-бекенд, не для користувачів).
 
           - Коміт: $GITHUB_SHA
-          - EAS build: \`$BUILD_ID\`
+          - EAS build: \`$build_id\`
 
           Встановіть APK на Android. Наступні JS-зміни зі \`stage\` прийдуть як OTA-оновлення каналу \`preview\`;
           після зміни нативних залежностей потрібен новий APK.
           NOTES
           # A re-run of the same workflow run replaces its release
           gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
-          gh release create "$tag" "$apk" --target "$GITHUB_SHA" --prerelease --latest=false \
+          gh release create "$tag" "$RUNNER_TEMP/budmo-stage-$GITHUB_RUN_NUMBER.apk" --target "$GITHUB_SHA" --prerelease --latest=false \
             --title "Stage #$GITHUB_RUN_NUMBER · $subject" --notes-file "$RUNNER_TEMP/notes.md"
           echo "- GitHub Release: [$tag]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag)" >> "$GITHUB_STEP_SUMMARY"
 
@@ -140,3 +217,89 @@ jobs:
             while read -r old; do
               gh release delete "$old" --cleanup-tag --yes
             done
+
+  # JS and assets for the installed preview APKs (runtime version = native fingerprint, app.config.ts), and a copy
+  # with runtime version exposdk:<SDK>.0.0 for Expo Go, which opens no other kind of update.
+  ota:
+    name: 📡 OTA → preview channel + Expo Go
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CHANNEL: preview
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 🟢 Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🚀 Setup EAS & Expo CLI
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8
+        with:
+          eas-version: 24.8.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      # Match the Android build's native fingerprint, including the file variable's contents even when
+      # `eas update --environment` disables dotenv loading
+      - name: Download EAS files for native fingerprinting
+        run: |
+          eas env:pull "$CHANNEL" --path "$RUNNER_TEMP/eas-update.env" --non-interactive
+          if [ ! -f .eas/.env/GOOGLE_SERVICES_JSON ]; then
+            echo "::error::GOOGLE_SERVICES_JSON must be a Sensitive file variable in EAS $CHANNEL so the update fingerprint matches Android builds."
+            exit 1
+          fi
+
+      - name: 🏷️ Project is linked to EAS
+        run: node scripts/release-check.mjs --project
+
+      # The update carries its own `extra` (Firebase config, Google client ids), built from this EAS environment
+      - name: 🔐 EAS environment is complete
+        run: eas env:exec "$CHANNEL" "node scripts/release-check.mjs --env --platform android --profile $CHANNEL" --non-interactive
+
+      # `eas update` reports success even when no installed binary has the update's runtime version, so the published
+      # runtime version is compared with the finished preview builds (a warning: older APKs simply keep their JS)
+      - name: 📡 Publish the update
+        run: |
+          MESSAGE="$(git log -1 --pretty=%s)"
+          eas update --platform android --channel "$CHANNEL" --environment "$CHANNEL" --message "$MESSAGE" --non-interactive --json \
+            > "$RUNNER_TEMP/update.json"
+          runtime="$(jq -r '.[0].runtimeVersion // empty' "$RUNNER_TEMP/update.json")"
+          if [ -z "$runtime" ]; then
+            echo "::error::eas update returned no updates, see the log above"
+            exit 1
+          fi
+          builds="$(eas build:list --platform android --channel "$CHANNEL" --runtime-version "$runtime" \
+            --status finished --limit 1 --json --non-interactive | jq 'length')"
+          if [ "$builds" -gt 0 ]; then
+            echo "- APK: runtime \`$runtime\`, reaches the $CHANNEL builds" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::android: runtime version $runtime has no finished $CHANNEL build"
+          fi
+
+      - name: Upload source maps for crash reports
+        run: |
+          eas env:exec "$CHANNEL" 'if [ -n "$SENTRY_ORG" ] && [ -n "$SENTRY_PROJECT" ] && [ -n "$SENTRY_AUTH_TOKEN" ]; then
+            npx sentry-expo-upload-sourcemaps dist
+          else
+            echo "Sentry source-map upload skipped: upload credentials are not configured"
+          fi' --non-interactive
+
+      # EXPO_GO_UPDATE (app.config.ts) sets the runtime version to exposdk:<SDK>.0.0. The copy lands on the same
+      # branch; no build has that runtime version, so installed APKs never receive it. Last, because it rewrites dist/,
+      # whose source maps belong to the APKs' update.
+      - name: 📱 Copy of the update for Expo Go
+        run: |
+          MESSAGE="$(git log -1 --pretty=%s)"
+          EXPO_GO_UPDATE=1 eas update --platform android --channel "$CHANNEL" --environment "$CHANNEL" \
+            --message "Expo Go · $MESSAGE" --non-interactive --json > "$RUNNER_TEMP/update-expo-go.json"
+          runtime="$(jq -r '.[0].runtimeVersion // empty' "$RUNNER_TEMP/update-expo-go.json")"
+          case "$runtime" in
+            exposdk:*) echo "- Expo Go: runtime \`$runtime\`, відкрийте гілку \`$CHANNEL\` у Expo Go" >> "$GITHUB_STEP_SUMMARY" ;;
+            *) echo "::error::The Expo Go copy was published with runtime version '$runtime' instead of exposdk:<SDK>.0.0"; exit 1 ;;
+          esac

@@ -5,8 +5,9 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-  # Reused as the gate of every release path: release.yml and preview.yml run it before calling the build, OTA and
-  # backend workflows, and a manual start of ota.yml, build-*.yml, deploy-backend.yml or promote.yml runs it itself.
+  # Reused as the gate of every release path: release.yml runs it before calling the build and backend workflows,
+  # preview.yml before its own stage jobs, and a manual start of ota.yml, build-android.yml, deploy-backend.yml or
+  # promote.yml runs it itself.
   # Nothing reaches a store, an OTA channel or a Firebase project without it.
   workflow_call:
 

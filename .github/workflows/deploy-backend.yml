@@ -1,15 +1,14 @@
-name: ☁️ Backend deploy (Firestore rules + Cloud Functions)
+name: ☁️ Backend deploy to production (Firestore rules + Cloud Functions)
 
-# Deploys firestore.rules and functions/ to one Firebase project. The target comes from the GitHub *Environment*:
-#   staging     variables FIREBASE_PROJECT_ID, FIRESTORE_DATABASE_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
-#   production  the same variables, plus required reviewers (Settings → Environments)
-# Authentication is Workload Identity Federation (no long-lived key in GitHub). A staging environment that is not
-# configured is skipped; an unconfigured production fails loudly.
+# Deploys firestore.rules and functions/ to the production Firebase project. The target comes from the GitHub
+# Environment `production` (variables FIREBASE_PROJECT_ID, FIRESTORE_DATABASE_ID, GCP_WORKLOAD_IDENTITY_PROVIDER,
+# GCP_SERVICE_ACCOUNT, plus required reviewers). Authentication is Workload Identity Federation (no long-lived key in
+# GitHub). The stage branch deploys staging in preview.yml, not here.
 #
 # Order matters: the backend is released BEFORE the apps and must keep working for the app versions already in the
 # stores, so rule changes must be additive (old builds stay in use for weeks).
 # Production is deployed only from main or a release tag on main, after the full CI including the rules emulator
-# tests: release.yml and preview.yml run ci-check.yml before calling this workflow; a manual start runs it here.
+# tests: release.yml runs ci-check.yml before calling this workflow; a manual start runs it here.
 on:
   workflow_call:
     inputs:
@@ -17,56 +16,41 @@ on:
         description: 'Caller has successfully completed ci-check.yml for this commit'
         type: boolean
         default: false
-      environment:
-        type: string
-        required: true
     secrets:
       EXPO_ACCESS_TOKEN:
         required: false
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Середовище'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          - production
 
 permissions:
   contents: read
 
 concurrency:
-  group: backend-${{ inputs.environment }}
+  group: backend-production
   cancel-in-progress: false
 
 jobs:
   # The production rules guard every user's data and the functions run with admin rights, so they come only from main
-  # or a release tag whose commit is on main (scripts/release-check.mjs --release-ref). Staging passes straight through.
+  # or a release tag whose commit is on main (scripts/release-check.mjs --release-ref).
   gate:
     name: 🚦 Production only from main or a release tag
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout
-        if: inputs.environment == 'production'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # the "is this commit on main" check needs main's history
 
       - name: 🟢 Setup Node.js 22
-        if: inputs.environment == 'production'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
       - name: 🚦 main or a release tag on main
-        if: inputs.environment == 'production'
         run: node scripts/release-check.mjs --release-ref
 
   # Started by hand, nothing has tested this ref yet: run the same CI as every release, whose `rules` job runs the
-  # emulator suites against these very rules. Callers (release.yml, preview.yml) have run it already.
+  # emulator suites against these very rules. release.yml has run it already.
   ci:
     name: ✅ CI gate
     needs: gate
@@ -74,7 +58,7 @@ jobs:
     uses: ./.github/workflows/ci-check.yml
 
   deploy:
-    name: ☁️ Deploy to ${{ inputs.environment }}
+    name: ☁️ Deploy to production
     needs: [gate, ci]
     # A skipped CI is accepted only when the caller explicitly completed ci-check.yml
     if: >-
@@ -82,12 +66,12 @@ jobs:
       && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && inputs.ci_checked))
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: ${{ inputs.environment }}
+    environment: production
     permissions:
       contents: read
       id-token: write # Workload Identity Federation
     env:
-      TARGET: ${{ inputs.environment }}
+      TARGET: production
       PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
       DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
       WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -96,42 +80,32 @@ jobs:
       # Change this together with any region you give the functions.
       FUNCTIONS_REGION: us-central1
     steps:
-      - name: 🔎 Is this environment configured?
-        id: cfg
+      - name: 🔎 Production is configured
         run: |
-          if [ -n "$PROJECT_ID" ] && [ -n "$DATABASE_ID" ] && [ -n "$WIF_PROVIDER" ] && [ -n "$WIF_SERVICE_ACCOUNT" ]; then
-            if [[ ! "$WIF_PROVIDER" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[^/[:space:]]+/providers/[^/[:space:]]+$ ]]; then
-              echo "::error::GitHub Environment '$TARGET': GCP_WORKLOAD_IDENTITY_PROVIDER must be projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID. Copy the provider resource name from Google Cloud Workload Identity Federation; principal:// and principalSet:// identify IAM members, not providers. Do not include //iam.googleapis.com/ or a /subject/... suffix (see DEPLOY.md)."
-              exit 1
-            fi
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          elif [ "$TARGET" = "production" ]; then
+          if [ -z "$PROJECT_ID" ] || [ -z "$DATABASE_ID" ] || [ -z "$WIF_PROVIDER" ] || [ -z "$WIF_SERVICE_ACCOUNT" ]; then
             echo "::error::Environment 'production' lacks FIREBASE_PROJECT_ID / FIRESTORE_DATABASE_ID / GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT"
             exit 1
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Environment '$TARGET' is not configured: backend deploy skipped"
+          fi
+          if [[ ! "$WIF_PROVIDER" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[^/[:space:]]+/providers/[^/[:space:]]+$ ]]; then
+            echo "::error::GitHub Environment '$TARGET': GCP_WORKLOAD_IDENTITY_PROVIDER must be projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID. Copy the provider resource name from Google Cloud Workload Identity Federation; principal:// and principalSet:// identify IAM members, not providers. Do not include //iam.googleapis.com/ or a /subject/... suffix (see DEPLOY.md)."
+            exit 1
           fi
 
       - name: 📥 Checkout
-        if: steps.cfg.outputs.configured == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: 🟢 Setup Node.js 22
-        if: steps.cfg.outputs.configured == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
       - name: 🔐 Authenticate to Google Cloud
-        if: steps.cfg.outputs.configured == 'true'
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - name: 📦 Install Cloud Functions dependencies
-        if: steps.cfg.outputs.configured == 'true'
         run: npm ci
         working-directory: functions
 
@@ -141,7 +115,6 @@ jobs:
       # at it, while the app keeps reading and writing this one. To move production to a new database, change
       # firebase.json, this variable and the EAS variable together.
       - name: 🗄️ Production database is the one firebase.json names
-        if: steps.cfg.outputs.configured == 'true' && env.TARGET == 'production'
         run: |
           repo_db="$(jq -r '.firestore[0].database // empty' firebase.json)"
           if [ "$DATABASE_ID" != "$repo_db" ]; then
@@ -149,12 +122,10 @@ jobs:
             exit 1
           fi
 
-      # Each environment names its own database.
       # FIRESTORE_DATABASE_ID is a required function param (no default), so the rules and the functions always get
       # the same id from the same variable. EXPO_ACCESS_TOKEN is not a param: the function reads it from process.env,
       # so leaving the secret unset is fine (an optional *declared* param would abort a --non-interactive deploy).
-      - name: ⚙️ Point firebase.json and the function at this environment's database
-        if: steps.cfg.outputs.configured == 'true'
+      - name: ⚙️ Point the function at the production database
         env:
           EXPO_ACCESS_TOKEN: ${{ secrets.EXPO_ACCESS_TOKEN }}
         run: |
@@ -175,7 +146,6 @@ jobs:
       # The grep matches the pinned version's message; re-check it when bumping firebase-tools (if it stops
       # matching, the job simply fails with the CLI's own instructions).
       - name: 🚀 Deploy rules and functions
-        if: steps.cfg.outputs.configured == 'true'
         run: |
           deploy() {
             npx --yes firebase-tools@15.32.1 deploy --only firestore:rules,firestore:indexes,functions --project "$PROJECT_ID" --non-interactive 2>&1 \

@@ -1,6 +1,6 @@
 # Тестові версії через Expo
 
-Кожен push у гілку `stage` автоматично, без схвалень, запускає [Preview (stage)](https://github.com/tepasha/cheers-/actions/workflows/preview.yml): перевірки коду, staging-бекенд, Android APK на EAS Build (він же з'являється в [GitHub Releases](https://github.com/tepasha/cheers-/releases) як pre-release), потім оновлення EAS Update у канал `preview` і його копія для Expo Go. Усе лише в тестовому оточенні. Якщо GitHub Environment `staging` не налаштований, деплой бекенду пропускається з notice, а збірка й OTA йдуть далі. Push у `main` запускає тільки CI. Прапорець `PREVIEW_BUILDS` більше не потрібний. Конвеєр виконується послідовно, щоб старий коміт не перекрив нове оновлення.
+Кожен push у гілку `stage` автоматично, без схвалень, запускає [Preview (stage)](https://github.com/tepasha/cheers-/actions/workflows/preview.yml): перевірки коду, staging-бекенд, Android APK на EAS Build (він же з'являється в [GitHub Releases](https://github.com/tepasha/cheers-/releases) як pre-release), потім оновлення EAS Update у канал `preview` і його копія для Expo Go. Усе лише в тестовому оточенні, і кожен крок виконується на кожен push. Якщо GitHub Environment `staging` не налаштований, конвеєр падає на кроці бекенду. Push у `main` запускає тільки CI. Прапорець `PREVIEW_BUILDS` більше не потрібний. Конвеєр виконується послідовно, щоб старий коміт не перекрив нове оновлення.
 
 ## Одноразове підключення
 
@@ -28,7 +28,7 @@
 Push у будь-яку гілку, тег або розклад не запускає production. Усі production workflow перевіряють, що вихідна подія — `workflow_dispatch`.
 
 - Повний реліз: [Production release (manual)](https://github.com/tepasha/cheers-/actions/workflows/release.yml) → **Run workflow**, гілка `main` або release-тег, що вказує на коміт у `main`. Збережені перевірки `STORE_RELEASES`, ключів сторів та схвалення GitHub Environment `production`.
-- JS-оновлення: [OTA update](https://github.com/tepasha/cheers-/actions/workflows/ota.yml) → **Run workflow** → `channel=production`.
+- JS-оновлення: [OTA update](https://github.com/tepasha/cheers-/actions/workflows/ota.yml) → **Run workflow** (лише production).
 - Публікація протестованої збірки користувачам: [Promote to production](https://github.com/tepasha/cheers-/actions/workflows/promote.yml) → **Run workflow**. App Store review запускається в App Store Connect.
 
 Документація Expo: [оновлення через GitHub Actions](https://docs.expo.dev/eas-update/github-actions/), [змінні середовища](https://docs.expo.dev/eas/environment-variables/), [сумісність runtime](https://docs.expo.dev/eas-update/runtime-versions/).
