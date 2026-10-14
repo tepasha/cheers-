@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { adsService } from '../services/ads';
+import { googleMobileAds } from '../services/googleMobileAds';
 import { colors, radius, spacing, typography } from '../theme';
 import { useTr } from '../hooks/useT';
 
@@ -14,7 +14,7 @@ export const useCanRequestAds = () => useSyncExternalStore(adsService.subscribe,
  * The 320x50 strip between the screen and the tab bar. It takes no room until an ad has loaded (no empty slot when
  * there is no fill), and is unmounted, not hidden, where it is not wanted: AdMob counts a hidden banner's refreshes
  * as impressions nobody saw, which is against its policy. Mounting it starts consent and the SDK. The web build
- * replaces this file with no-ops.
+ * replaces this file with no-ops; in Expo Go (no AdMob SDK) consent never settles, so nothing is rendered.
  */
 export const AdBanner = ({ visible }: { visible: boolean }) => {
   const canRequestAds = useCanRequestAds();
@@ -29,6 +29,8 @@ export const AdBanner = ({ visible }: { visible: boolean }) => {
 /** Remounted on every return to a tab with a banner, so a stale border never frames an empty slot */
 const BannerStrip = () => {
   const [loaded, setLoaded] = useState(false);
+  if (!googleMobileAds) return null;
+  const { BannerAd, BannerAdSize } = googleMobileAds;
   return (
     <View style={[styles.strip, loaded && styles.stripLoaded]}>
       <BannerAd unitId={adsService.bannerUnitId} size={BannerAdSize.BANNER} requestOptions={REQUEST} onAdLoaded={() => setLoaded(true)} onAdFailedToLoad={() => setLoaded(false)} />
@@ -40,6 +42,8 @@ const BannerStrip = () => {
 export const InlineAd = () => {
   const tr = useTr();
   const [loaded, setLoaded] = useState(false);
+  if (!googleMobileAds) return null;
+  const { BannerAd, BannerAdSize } = googleMobileAds;
   return (
     <View style={loaded ? styles.card : undefined}>
       {loaded && <Text style={[typography.tiny, styles.label]}>{tr('Реклама')}</Text>}

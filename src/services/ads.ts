@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import mobileAds, { AdsConsent, AdsConsentPrivacyOptionsRequirementStatus, TestIds } from 'react-native-google-mobile-ads';
+import type { AdsConsentPrivacyOptionsRequirementStatus } from 'react-native-google-mobile-ads';
+import { googleMobileAds as lib } from './googleMobileAds';
 import { captureException } from './telemetry';
 
 /**
@@ -9,7 +10,7 @@ import { captureException } from './telemetry';
  * store privacy declarations close to what the app does without ads. Google's consent form (UMP) appears only where
  * the law asks for it (EEA/UK); it is set up in AdMob > Privacy & messaging.
  * Development builds always use Google's test units, and so does any build without ADMOB_*_BANNER_ID / _INLINE_ID
- * (preview): AdMob suspends accounts whose own team clicks live ads.
+ * (preview): AdMob suspends accounts whose own team clicks live ads. Expo Go has no AdMob SDK: there ads never start.
  */
 export interface AdsState {
   /** Consent is settled and the SDK is initialised: banners may be requested */
@@ -32,12 +33,14 @@ const listeners = new Set<() => void>();
 const publish = (info: { canRequestAds: boolean; privacyOptionsRequirementStatus: AdsConsentPrivacyOptionsRequirementStatus }) => {
   state = {
     canRequestAds: info.canRequestAds,
-    privacyOptionsRequired: info.privacyOptionsRequirementStatus === AdsConsentPrivacyOptionsRequirementStatus.REQUIRED,
+    privacyOptionsRequired: info.privacyOptionsRequirementStatus === lib?.AdsConsentPrivacyOptionsRequirementStatus.REQUIRED,
   };
   listeners.forEach((listener) => listener());
 };
 
 async function start() {
+  if (!lib) return;
+  const { AdsConsent, default: mobileAds } = lib;
   // gatherConsent fails offline or while no consent message is published; a choice saved earlier still counts then
   const info = await AdsConsent.gatherConsent().catch(() => AdsConsent.getConsentInfo());
   if (info.canRequestAds) await mobileAds().initialize();
@@ -46,9 +49,9 @@ async function start() {
 
 export const adsService = {
   /** The 320x50 strip above the tab bar */
-  bannerUnitId: unit(units.banner, TestIds.BANNER),
+  bannerUnitId: unit(units.banner, lib?.TestIds.BANNER ?? ''),
   /** The 320x100 slots inside lists */
-  inlineUnitId: unit(units.inline, TestIds.BANNER),
+  inlineUnitId: unit(units.inline, lib?.TestIds.BANNER ?? ''),
 
   subscribe(listener: () => void) {
     listeners.add(listener);
@@ -68,6 +71,6 @@ export const adsService = {
   },
 
   async showPrivacyOptions(): Promise<void> {
-    publish(await AdsConsent.showPrivacyOptionsForm());
+    if (lib) publish(await lib.AdsConsent.showPrivacyOptionsForm());
   },
 };

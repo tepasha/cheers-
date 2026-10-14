@@ -5,6 +5,8 @@ name: 🧪 Preview (stage)
 # Environment `staging`, EAS `preview`); a staging environment without its variables skips the backend deploy with a
 # notice. The comparison of EAS `preview` with the GitHub Environment `staging` is skipped. A push to main runs only
 # CI (ci-check.yml).
+# The APK is also attached to a GitHub pre-release (stage-<run>), and the OTA job publishes a second copy of the update
+# that Expo Go can open (ota.yml).
 # iOS is not deployed: there is no iOS build or update anywhere in CI.
 on:
   push:
@@ -62,3 +64,79 @@ jobs:
       skip_backend_check: true
       channel: preview
     secrets: inherit
+
+  # The stage APK as a GitHub pre-release, so testers download it from the repository's Releases without an Expo
+  # account. It is never marked "latest"; only the newest KEEP stage pre-releases (and their tags) are kept.
+  github-release:
+    name: 📦 APK → GitHub Release
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      BUILD_ID: ${{ needs.android.outputs.build_id }}
+      GH_TOKEN: ${{ github.token }}
+      KEEP: 5
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 🟢 Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🚀 Setup EAS & Expo CLI
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8
+        with:
+          eas-version: 24.8.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      # EAS CLI reads app.config.ts to find the project, which imports expo
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      # The artifact link is used here and never printed (see build-android.yml)
+      - name: ⬇️ Download the APK
+        run: |
+          if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
+            echo "::error::The Android job returned no build id"
+            exit 1
+          fi
+          eas build:view "$BUILD_ID" --json --non-interactive > "$RUNNER_TEMP/build.json"
+          url="$(jq -r '.artifacts.applicationArchiveUrl // .artifacts.buildUrl // empty' "$RUNNER_TEMP/build.json")"
+          if [ "$(jq -r '.status' "$RUNNER_TEMP/build.json")" != "FINISHED" ] || [ -z "$url" ]; then
+            echo "::error::EAS build $BUILD_ID has no finished APK"
+            exit 1
+          fi
+          curl -fsSL --retry 3 "$url" -o "$RUNNER_TEMP/budmo-stage.apk"
+
+      - name: 📦 Publish the pre-release
+        run: |
+          tag="stage-$GITHUB_RUN_NUMBER"
+          apk="$RUNNER_TEMP/budmo-stage-$GITHUB_RUN_NUMBER.apk"
+          mv "$RUNNER_TEMP/budmo-stage.apk" "$apk"
+          subject="$(git log -1 --pretty=%s)"
+          cat > "$RUNNER_TEMP/notes.md" <<NOTES
+          Тестова Android-збірка гілки \`stage\` (staging-бекенд, не для користувачів).
+
+          - Коміт: $GITHUB_SHA
+          - EAS build: \`$BUILD_ID\`
+
+          Встановіть APK на Android. Наступні JS-зміни зі \`stage\` прийдуть як OTA-оновлення каналу \`preview\`;
+          після зміни нативних залежностей потрібен новий APK.
+          NOTES
+          # A re-run of the same workflow run replaces its release
+          gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$tag" "$apk" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Stage #$GITHUB_RUN_NUMBER · $subject" --notes-file "$RUNNER_TEMP/notes.md"
+          echo "- GitHub Release: [$tag]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 🧹 Keep only the newest stage pre-releases
+        run: |
+          gh release list --limit 200 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | test("^stage-[0-9]+$"))] | sort_by(.createdAt) | reverse | .[(env.KEEP | tonumber):] | .[].tagName' |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes
+            done

@@ -1,6 +1,6 @@
 # Тестові версії через Expo
 
-Кожен push у гілку `stage` автоматично, без схвалень, запускає [Preview (stage)](https://github.com/tepasha/cheers-/actions/workflows/preview.yml): перевірки коду, staging-бекенд, Android APK на EAS Build, потім оновлення EAS Update у канал `preview`. Усе лише в тестовому оточенні. Якщо GitHub Environment `staging` не налаштований, деплой бекенду пропускається з notice, а збірка й OTA йдуть далі. Push у `main` запускає тільки CI. Прапорець `PREVIEW_BUILDS` більше не потрібний. Конвеєр виконується послідовно, щоб старий коміт не перекрив нове оновлення.
+Кожен push у гілку `stage` автоматично, без схвалень, запускає [Preview (stage)](https://github.com/tepasha/cheers-/actions/workflows/preview.yml): перевірки коду, staging-бекенд, Android APK на EAS Build (він же з'являється в [GitHub Releases](https://github.com/tepasha/cheers-/releases) як pre-release), потім оновлення EAS Update у канал `preview` і його копія для Expo Go. Усе лише в тестовому оточенні. Якщо GitHub Environment `staging` не налаштований, деплой бекенду пропускається з notice, а збірка й OTA йдуть далі. Push у `main` запускає тільки CI. Прапорець `PREVIEW_BUILDS` більше не потрібний. Конвеєр виконується послідовно, щоб старий коміт не перекрив нове оновлення.
 
 ## Одноразове підключення
 
@@ -14,11 +14,14 @@
 
 ## Встановлення та оновлення
 
-- Відкрийте успішний Android job → Summary → посилання **відкрити в EAS**, або [список збірок Expo](https://expo.dev/accounts/tepasha/projects/budmo-app/builds). Встановіть APK на Android.
+- **APK з GitHub:** [Releases](https://github.com/tepasha/cheers-/releases) → найновіший pre-release `Stage #<номер> · <коміт>` → Assets → `budmo-stage-<номер>.apk`. Зберігаються 5 останніх; у Releases вони не позначаються як latest. Репозиторій публічний, тож APK (staging-бекенд) може завантажити будь-хто.
+- Або відкрийте успішний Android job → Summary → посилання **відкрити в EAS**, або [список збірок Expo](https://expo.dev/accounts/tepasha/projects/budmo-app/builds). Встановіть APK на Android.
 - Після наступного успішного push JS і ресурси завантажуються через канал `preview`. Закрийте й повторно відкрийте застосунок, щоб застосувати завантажене оновлення.
 - Якщо змінилися нативні залежності чи конфігурація, встановіть новий APK: runtime fingerprint не дозволяє старій збірці отримати несумісне оновлення.
 - iOS вимкнено з деплою: CI не збирає iOS і публікує OTA лише для Android.
-- Expo Go не підтримує всі нативні модулі цього проєкту; для перевірки Google sign-in, реклами й push використовуйте встановлену preview-збірку.
+- **Expo Go:** кожне preview-оновлення публікується ще й копією з runtime `exposdk:<SDK>.0.0` (повідомлення `Expo Go · <коміт>`), бо Expo Go відкриває лише такі. В Expo Go (тієї ж версії SDK, увійдіть в акаунт `tepasha`) → проєкт `budmo-app` → гілка `preview` → оновлення `Expo Go · …`. Оновлення без префікса призначені для APK і в Expo Go лишаються «Not compatible», так і має бути.
+- В Expo Go немає частини нативних модулів проєкту: реклама не показується, вхід через Google повертає помилку, push-сповіщення на Android не працюють. Їх перевіряйте у встановленому APK.
+- Локально (`npm start` → QR у Expo Go) працює так само.
 
 ## Продакшн лише по кнопці
 

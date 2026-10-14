@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 import { withGradleProperties, type ConfigPlugin } from 'expo/config-plugins';
@@ -15,6 +16,7 @@ import { withGradleProperties, type ConfigPlugin } from 'expo/config-plugins';
  *   ADMOB_ANDROID_APP_ID, ADMOB_IOS_APP_ID  AdMob app ids (ca-app-pub-…~…), compiled into the native apps
  *   ADMOB_{ANDROID,IOS}_{BANNER,INLINE}_ID  AdMob ad units (ca-app-pub-…/…) of the tab-bar strip and the list slots.
  *                         Optional: without them a build shows Google's test ads (set them for production only)
+ *   EXPO_GO_UPDATE=1      Only for `eas update` (ota.yml, preview): publish a copy that Expo Go can open (see below)
  * Locally all of them are optional (demo mode without FIREBASE_*). Preview requires Firebase/Google configuration;
  * legal links, support email, Sentry and real AdMob app ids are optional. Production requires all of them.
  * On EAS every one of them must have the visibility "Plain text"
@@ -126,6 +128,16 @@ export function releaseConfigProblems(projectRoot: string, platform?: string, pr
   return problems;
 }
 
+/**
+ * Expo Go opens an EAS update only when its runtime version is `exposdk:<SDK>.0.0`. No build has that runtime version,
+ * so such a copy of an update reaches Expo Go alone, never an installed APK. The app starts there without the native
+ * modules Expo Go lacks (AdMob, Google sign-in): services/googleMobileAds.ts, services/googleSignIn.ts.
+ */
+function expoGoRuntimeVersion(projectRoot: string): string {
+  const { version } = createRequire(resolve(projectRoot, 'package.json'))('expo/package.json') as { version: string };
+  return `exposdk:${version.split('.')[0]}.0.0`;
+}
+
 export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   // EAS build workers set EAS_BUILD_PROFILE and EAS_BUILD_PLATFORM; nothing else does (not `eas update`, not Expo CLI
   // on a laptop or in CI), so local work and demo mode are untouched. Release profiles fail closed here, where the
@@ -162,7 +174,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     // `extra` (below) and the version are left out of the hash (fingerprint.config.js): both are JS-only, every
     // update carries its own copy, and hashing them made each EAS variable change or version bump strand hotfixes.
     // The env values that do reach native code (Maps key, iOS URL scheme, google-services.json) are still hashed.
-    runtimeVersion: { policy: 'fingerprint' },
+    runtimeVersion: env.EXPO_GO_UPDATE === '1' ? expoGoRuntimeVersion(projectRoot) : { policy: 'fingerprint' },
     updates: projectId
       ? { url: `https://u.expo.dev/${projectId}`, checkAutomatically: 'ON_LOAD', fallbackToCacheTimeout: 0 }
       : { enabled: false },

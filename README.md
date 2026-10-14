@@ -98,7 +98,7 @@
 2. `GOOGLE_WEB_CLIENT_ID` у `.env` та EAS: Web OAuth client проєкту (береться з тієї ж консолі; підходить і `FIREBASE_OAUTH_CLIENT_ID`, якщо він уже є).
 3. **iOS:** створіть iOS OAuth client для `cheers.app` у Google Cloud (Credentials) і запишіть його в `GOOGLE_IOS_CLIENT_ID`: плагін додасть у застосунок потрібну URL-схему.
 4. **Android:** у Firebase Console додайте SHA-1 (і SHA-256) ключів підпису (debug, EAS, Google Play App Signing) до Android-застосунку `cheers.app`; це створює Android OAuth client. Окремої змінної не треба.
-5. Нативний модуль: вхід через Google **не працює в Expo Go**, лише в development / preview / production збірці. У веб-перегляді працює вікно Google від Firebase (потрібен дозвіл домену в Authentication → Settings → Authorized domains).
+5. Нативний модуль: вхід через Google **не працює в Expo Go**, лише в development / preview / production збірці (реклама AdMob в Expo Go теж не показується). У веб-перегляді працює вікно Google від Firebase (потрібен дозвіл домену в Authentication → Settings → Authorized domains).
 6. У Google Cloud-проєкті OAuth-клієнтів увімкніть **People API** та додайте `https://www.googleapis.com/auth/user.birthday.read` у **Google Auth Platform → Data Access**. Для зовнішнього застосунку перевірте вимоги OAuth verification; у режимі Testing додайте тестових користувачів. Запит People API обмежений п’ятьма секундами; помилка читання дати не скасовує вже виконаний вхід. OAuth access token не зберігається в Redux чи Firestore.
 7. Після додавання `@react-native-community/datetimepicker` потрібна нова нативна збірка. У вебверсії використовується HTML `input type="date"`, нативний модуль у веббандл не потрапляє.
 
@@ -166,7 +166,7 @@ iOS зараз вимкнено з деплою (`build-ios.yml` видален�
 
 Android: tag-реліз відправляє production AAB у Play **internal** track (окремим кроком `eas submit` після збірки), для цього потрібен секрет `GOOGLE_SERVICE_ACCOUNT_BASE64` (без нього job зупиняється до старту хмарної збірки; preview-збірки в Play не йдуть ніколи). Далі [promote.yml](.github/workflows/promote.yml) з `build_id` цієї збірки переводить той самий versionCode з internal у production через Play Developer API ([scripts/play-promote.mjs](scripts/play-promote.mjs)), нічого не завантажуючи вдруге: `rollout` 0.1 → 0.5 → 1.
 
-Workflow збірок нічого не публікує у GitHub Releases і не друкує повний результат `eas build`: він містить посилання на артефакти. У підсумку job лишаються лише id, статус і посилання на сторінку збірки в EAS.
+Workflow збірок не друкує повний результат `eas build`: він містить посилання на артефакти. У підсумку job лишаються лише id, статус і посилання на сторінку збірки в EAS. У GitHub Releases потрапляє лише тестовий APK гілки `stage` (pre-release `stage-<номер запуску>`, зберігаються 5 останніх; репозиторій публічний, тож APK може завантажити будь-хто). Production-збірки йдуть лише в EAS і Google Play.
 
 #### Push-сповіщення про повідомлення
 

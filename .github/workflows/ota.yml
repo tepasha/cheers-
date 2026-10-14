@@ -212,3 +212,19 @@ jobs:
           else
             echo "Sentry source-map upload skipped: upload credentials are not configured"
           fi' --non-interactive
+
+      # Expo Go opens only updates whose runtime version is `exposdk:<SDK>.0.0` (EXPO_GO_UPDATE in app.config.ts). The
+      # copy lands on the same branch; no build has that runtime version, so installed APKs never receive it, and the
+      # builds' fingerprinted update above never shows as compatible in Expo Go. Preview only: production stays build-only.
+      # Last, because it rewrites dist/, whose source maps belong to the builds' update.
+      - name: 📱 Copy of the update for Expo Go
+        if: inputs.channel == 'preview'
+        run: |
+          MESSAGE="$(git log -1 --pretty=%s)"
+          EXPO_GO_UPDATE=1 eas update --platform android --channel "$CHANNEL" --environment "$CHANNEL" \
+            --message "Expo Go · $MESSAGE" --non-interactive --json > "$RUNNER_TEMP/update-expo-go.json"
+          runtime="$(jq -r '.[0].runtimeVersion // empty' "$RUNNER_TEMP/update-expo-go.json")"
+          case "$runtime" in
+            exposdk:*) echo "- Expo Go: runtime \`$runtime\`, відкрийте гілку \`$CHANNEL\` у Expo Go" >> "$GITHUB_STEP_SUMMARY" ;;
+            *) echo "::error::The Expo Go copy was published with runtime version '$runtime' instead of exposdk:<SDK>.0.0"; exit 1 ;;
+          esac

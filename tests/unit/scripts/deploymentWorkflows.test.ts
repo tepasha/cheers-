@@ -14,7 +14,7 @@ describe('Expo deployment entry points', () => {
   it('runs the whole test line automatically on the stage branch, against staging only', () => {
     const preview = workflow('preview');
     expect(preview.on.push.branches).toEqual(['stage']);
-    expect(Object.keys(preview.jobs)).toEqual(['ci', 'backend', 'android', 'ota']);
+    expect(Object.keys(preview.jobs)).toEqual(['ci', 'backend', 'android', 'ota', 'github-release']);
     expect(preview.jobs.backend.with.environment).toBe('staging');
     for (const job of Object.values(preview.jobs) as { if?: string }[]) expect(job.if).toBeUndefined();
     expect(preview.jobs.android.with).toMatchObject({ profile: 'preview', submit: false, skip_backend_check: true });
@@ -28,6 +28,27 @@ describe('Expo deployment entry points', () => {
     expect(preview.jobs.android.needs).toContain('backend');
     expect(preview.jobs.ota.needs).toContain('android');
     expect(preview.concurrency).toMatchObject({ 'cancel-in-progress': false });
+  });
+
+  it('attaches the stage APK to a GitHub pre-release, never to the latest release', () => {
+    const preview = workflow('preview');
+    const release = preview.jobs['github-release'];
+    expect(release.needs).toBe('android');
+    expect(release.permissions).toEqual({ contents: 'write' });
+    expect(release.env.BUILD_ID).toBe('${{ needs.android.outputs.build_id }}');
+    expect(preview.permissions).toEqual({ contents: 'read' });
+    const publish = release.steps.find((step: { name: string }) => step.name.includes('Publish the pre-release'));
+    expect(publish.run).toContain('--prerelease --latest=false');
+    expect(workflow('build-android').on.workflow_call.outputs.build_id.value).toBe('${{ jobs.build-android.outputs.build_id }}');
+  });
+
+  it('publishes an Expo Go copy of preview updates only', () => {
+    const steps = workflow('ota').jobs.update.steps as { name: string; if?: string; run?: string }[];
+    const copy = steps.find((step) => step.name.includes('Expo Go'))!;
+    expect(copy.if).toBe("inputs.channel == 'preview'");
+    expect(copy.run).toContain('EXPO_GO_UPDATE=1 eas update --platform android');
+    // dist/ of the builds' update must be uploaded to Sentry before the copy rewrites it
+    expect(steps.indexOf(copy)).toBeGreaterThan(steps.findIndex((step) => step.name.includes('source maps')));
   });
 
   it('skips the staging backend comparison only when a caller asks, and never for production', () => {
