@@ -22,7 +22,7 @@ export function ModalLayer({ visible, onClose, children, transparent = true, ani
   return null;
 }
 
-export function ModalHost() {
+export function ModalHost({ override, onOverrideClose }: { override?: React.ReactNode; onOverrideClose?: () => void } = {}) {
   const layer = useSyncExternalStore(subscribe, snapshot, snapshot);
-  return <Modal visible={!!layer} transparent={layer?.transparent ?? true} animationType={layer?.animation ?? 'slide'} onRequestClose={() => layer?.onClose()}>{layer?.children}</Modal>;
+  return <Modal visible={!!override || !!layer} transparent={override ? false : layer?.transparent ?? true} animationType={override ? 'none' : layer?.animation ?? 'slide'} onRequestClose={() => override ? onOverrideClose?.() : layer?.onClose()}>{override ?? layer?.children}</Modal>;
 }

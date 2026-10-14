@@ -39,14 +39,14 @@ export const MeetupsSection = ({ onReport }: { onReport: (t: ReportTarget) => vo
   const rows = useMemo(() => (canRequestAds ? withAdSlots(active, MEETUPS_AD_EVERY) : active), [active, canRequestAds]);
 
   const join = (m: GroupMeetup) => {
-    if (!dispatch(joinMeetup(m.id))) Alert.alert(tr('Немає місць'), tr('У цій зустрічі вже всі місця зайняті.'));
+    if (!dispatch(joinMeetup(m.id))) Alert.error(tr('У цій зустрічі вже всі місця зайняті.'));
   };
 
   const calendar = async (m: GroupMeetup) => {
     try {
-      if (!(await addMeetupToCalendar(m, lang))) Alert.alert(tr('Недоступно'), tr('Поділитися файлом на цьому пристрої неможливо.'));
-    } catch {
-      Alert.alert(tr('Помилка'), tr('Не вдалося створити файл календаря.'));
+      if (!(await addMeetupToCalendar(m, lang))) Alert.error(tr('Поділитися файлом на цьому пристрої неможливо.'));
+    } catch (err) {
+      Alert.error(tr('Не вдалося створити файл календаря.'), err);
     }
   };
 

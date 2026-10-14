@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { BottomTabBar, createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Feather from '@expo/vector-icons/Feather';
@@ -26,10 +26,6 @@ import { checkAge } from '../logic/session';
 import { GamificationTour } from '../components/GamificationTour';
 import { AdBanner } from '../components/AdBanner';
 import { useTr } from '../hooks/useT';
-import { Button } from '../components/ui';
-import { useAppDispatch } from '../store/hooks';
-import { auth } from '../services/firebase';
-import { handleFirebaseUser, logout } from '../store/thunks/auth';
 
 const Tab = createBottomTabNavigator<TabParamList>();
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -104,7 +100,6 @@ const Splash = () => (
  */
 export const RootNavigator = () => {
   const tr = useTr();
-  const dispatch = useAppDispatch();
   const authError = useAppSelector((s) => s.ui.authError);
   const authOperation = useAppSelector((s) => s.ui.authOperation);
   const serverEligible = useAppSelector((s) => s.auth.user.serverEligible);
@@ -120,7 +115,7 @@ export const RootNavigator = () => {
   // Firebase is restoring the saved session; avoid flashing the sign-in form at a signed-in user
   if (!authReady) return <Splash />;
   if (!isLoggedIn || authOperation) return <AuthScreen />;
-  if (authError) return <View style={{ flex: 1, padding: 24, justifyContent: 'center', gap: 16, backgroundColor: colors.bg }}><Text style={{ color: colors.text }}>{tr('Не вдалося виконати дію. Спробуйте пізніше')}</Text><Button label={tr('Повторити')} onPress={() => dispatch(handleFirebaseUser(auth.currentUser))} /><Button label={tr('Вийти')} variant="secondary" onPress={() => dispatch(logout())} /></View>;
+  if (authError) return <Splash />;
   if (!emailVerified) return <VerifyEmailScreen />;
   if (!canUseApp) {
     if (serverEligible === false && birthDateChecked) return <BirthDateScreen />;

@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import { UserGeoLocation } from './geoService';
 import { ph } from './i18nService';
 import { formatClock } from '../utils/time';
+import { captureAppErrorReporter } from './appErrors';
 
 export type LocationPermissionResult = 'granted' | 'denied';
 
@@ -31,6 +32,7 @@ export async function ensureLocationPermission(): Promise<LocationPermissionResu
 
 /** One-shot fix of the real device position; null when permission is denied or the fix fails */
 export async function requestDeviceLocation(highAccuracy = true): Promise<UserGeoLocation | null> {
+  const report = captureAppErrorReporter();
   try {
     if ((await ensureLocationPermission()) !== 'granted') return null;
     const position = await Location.getCurrentPositionAsync({
@@ -39,6 +41,7 @@ export async function requestDeviceLocation(highAccuracy = true): Promise<UserGe
     return toUserGeoLocation(position.coords);
   } catch (err) {
     console.warn('Could not read device location:', err);
+    report(err);
     return null;
   }
 }

@@ -1,11 +1,11 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { tr } from '../services/i18nService';
+import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { useAppSelector } from '../store/hooks';
-import { colors, spacing } from '../theme';
 import type { AppLanguage } from '../types';
-import { Button } from './ui';
 import { captureException } from '../services/telemetry';
+import { ErrorScreen } from '../screens/ErrorScreen';
+import { clearAppError, getAppError, normalizeAppError, retryAppError, subscribeAppErrors } from '../services/appErrors';
+import { installGlobalErrorHandlers } from '../services/globalErrors';
+import { ModalHost } from './ModalLayer';
 
 interface Props {
   lang: AppLanguage;
@@ -26,11 +26,12 @@ interface State {
 class Boundary extends React.Component<Props, State> {
   state: State = { error: null, attempt: 0 };
 
-  static getDerivedStateFromError(error: Error): Partial<State> {
-    return { error };
+  static getDerivedStateFromError(error: unknown): Partial<State> {
+    return { error: normalizeAppError(error) };
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    clearAppError();
     captureException(error);
     console.error('[ErrorBoundary] render failed:', error, info.componentStack);
   }
@@ -40,26 +41,24 @@ class Boundary extends React.Component<Props, State> {
   render() {
     const { lang, children } = this.props;
     if (!this.state.error) return <React.Fragment key={this.state.attempt}>{children}</React.Fragment>;
-    return (
-      <View style={styles.root} accessibilityRole="alert">
-        <Text style={styles.emoji}>🍺</Text>
-        <Text style={styles.title}>{tr('Щось пішло не так', lang)}</Text>
-        <Text style={styles.body}>{tr('Застосунок натрапив на помилку. Ваші дані збережені, спробуйте ще раз.', lang)}</Text>
-        <Button label={tr('Спробувати ще раз', lang)} onPress={this.retry} icon="refresh-cw" />
-      </View>
-    );
+    return <ErrorScreen error={this.state.error} lang={lang} onRetry={this.retry} />;
   }
 }
 
 /** The boundary in the user's language. Mount it inside the store Provider. */
 export function ErrorBoundary({ children }: { children: React.ReactNode }) {
   const lang = useAppSelector((s) => s.settings.language);
-  return <Boundary lang={lang}>{children}</Boundary>;
+  const failure = useSyncExternalStore(subscribeAppErrors, getAppError, getAppError);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(installGlobalErrorHandlers, []);
+  useEffect(() => { if (failure) captureException(failure.error); }, [failure]);
+  const retry = () => {
+    if (!failure) return;
+    if (failure.restart) setAttempt((value) => value + 1);
+    void retryAppError(failure.id);
+  };
+  return <Boundary key={attempt} lang={lang}>
+    {children}
+    <ModalHost override={failure ? <ErrorScreen error={failure.error} message={failure.message} lang={lang} onRetry={retry} /> : undefined} onOverrideClose={retry} />
+  </Boundary>;
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.md },
-  emoji: { fontSize: 44 },
-  title: { color: colors.text, fontSize: 20, fontWeight: '700', textAlign: 'center' },
-  body: { color: colors.textMuted, fontSize: 15, textAlign: 'center', marginBottom: spacing.sm },
-});

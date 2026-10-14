@@ -1,4 +1,5 @@
 import { ph } from './i18nService';
+import { captureAppErrorReporter } from './appErrors';
 import { requireAllowedContent } from '../logic/contentPolicy';
 import {
   doc,
@@ -92,7 +93,8 @@ async function prepareWriteBudget(tx: Transaction, uid: string, operation: 'mess
  * build, so a snapshot that cannot be processed is logged and skipped; the next one is processed normally.
  */
 function guard<T>(what: string, onNext: (value: T) => void | Promise<void>): (value: T) => void {
-  const skip = (error: unknown) => console.warn(`[Firestore] ${what}: snapshot skipped`, error);
+  const report = captureAppErrorReporter({ restart: true });
+  const skip = (error: unknown) => { console.warn(`[Firestore] ${what}: snapshot skipped`, error); report(error); };
   return (value) => {
     try {
       const result = onNext(value);
@@ -179,6 +181,7 @@ export const firestoreSyncService = {
   },
 
   async getUserGamification(userId: string): Promise<UserGamificationState | null> {
+    const report = captureAppErrorReporter({ restart: true });
     try {
       const snap = await getDoc(doc(db, 'users', userId, 'private', 'gamification'));
       if (!snap.exists()) return null;
@@ -192,6 +195,7 @@ export const firestoreSyncService = {
       };
     } catch (error) {
       console.warn('Could not get gamification from Firestore:', error);
+      report(error);
       return null;
     }
   },
@@ -232,6 +236,7 @@ export const firestoreSyncService = {
 
   // Get all user favorites from Firestore
   async getUserFavorites(userId: string): Promise<FavoriteVenueItem[]> {
+    const report = captureAppErrorReporter({ restart: true });
     try {
       const favsCol = collection(db, 'users', userId, 'favorites');
       const snap = await getDocs(favsCol);
@@ -242,6 +247,7 @@ export const firestoreSyncService = {
       return venues;
     } catch (error) {
       console.warn('Failed to load favorites from Firestore:', error);
+      report(error);
       return [];
     }
   },
@@ -297,6 +303,7 @@ export const firestoreSyncService = {
     callback: (hangouts: HangoutAlert[]) => void,
     options: { throttleMs?: number } = {}
   ): () => void {
+    const report = captureAppErrorReporter({ restart: true });
     try {
       // Only tables that are still live: expired ones are never read (and never billed), whoever forgot to close them
       const hangoutsCol = query(collection(db, 'hangouts'), where('expiresAt', '>', Date.now()));
@@ -351,13 +358,14 @@ export const firestoreSyncService = {
         }),
         (error) => {
           console.warn('[Firestore] Live Hangouts subscription warning:', error);
-          callback([]);
+          report(error);
         }
       );
 
       return unsubscribe;
     } catch (err) {
       console.warn('[Firestore] Error creating Hangouts live listener:', err);
+      report(err);
       return () => {};
     }
   },
@@ -468,6 +476,7 @@ export const firestoreSyncService = {
    * Live stream of scheduled group meetups
    */
   subscribeToMeetups(callback: (meetups: GroupMeetup[]) => void): () => void {
+    const report = captureAppErrorReporter({ restart: true });
     try {
       // Meetups are listed until 24 h after their start; the archive (30 more days) is not loaded
       return onSnapshot(
@@ -475,10 +484,11 @@ export const firestoreSyncService = {
         guard('group_meetups', (snapshot) => {
           callback(readEach(snapshot.docs, (d) => readCloudMeetup(d.data())));
         }),
-        (error) => console.warn('[Firestore] group_meetups sync warning:', error)
+        (error) => { console.warn('[Firestore] group_meetups sync warning:', error); report(error); }
       );
     } catch (err) {
       console.warn('Could not setup Firestore sync for group_meetups:', err);
+      report(err);
       return () => {};
     }
   },
@@ -659,17 +669,20 @@ export const firestoreSyncService = {
 
   /** The cloud copy of my block list, or null when it could not be read (so callers never wipe local data on a failure) */
   async getBlocks(userId: string): Promise<BlockedUserRecord[] | null> {
+    const report = captureAppErrorReporter({ restart: true });
     try {
       const snap = await getDocs(collection(db, 'users', userId, 'blocks'));
       return snap.docs.map((d) => d.data() as BlockedUserRecord);
     } catch (error) {
       console.warn('Could not read the block list:', error);
+      report(error);
       return null;
     }
   },
 
   /** Live list of the chats this user belongs to (the inbox). Includes chats started by other people. */
   subscribeToMyChats(userId: string, callback: (chats: CloudChat[]) => void): () => void {
+    const report = captureAppErrorReporter({ restart: true });
     try {
       const q = query(collection(db, 'chats'), where('members', 'array-contains', userId));
       return onSnapshot(
@@ -677,10 +690,11 @@ export const firestoreSyncService = {
         guard('chat inbox', (snapshot) => {
           callback(readEach(snapshot.docs, (d) => readCloudChat(d.id, d.data(), userId)));
         }),
-        (err) => console.warn('[Firestore] chat inbox warning:', err)
+        (err) => { console.warn('[Firestore] chat inbox warning:', err); report(err); }
       );
     } catch (err) {
       console.warn('Could not subscribe to chat inbox:', err);
+      report(err);
       return () => {};
     }
   },
@@ -693,6 +707,7 @@ export const firestoreSyncService = {
     currentUserId: string,
     onMessages: (messages: Message[]) => void
   ): () => void {
+    const report = captureAppErrorReporter({ restart: true });
     try {
       const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(CHAT_PAGE_SIZE));
 
@@ -736,6 +751,7 @@ export const firestoreSyncService = {
               };
             } catch (error) {
               console.warn('[Firestore] unreadable message skipped:', docSnap.id, error);
+              report(error);
               return null;
             }
           })
@@ -747,11 +763,13 @@ export const firestoreSyncService = {
         onMessages(messages.map(({ _createdAt, ...m }) => m));
       }), (err) => {
         console.warn('Firestore snapshot listener notice (local state remains active):', err);
+        report(err);
       });
 
       return unsubscribe;
     } catch (err) {
       console.warn('Failed to establish Firestore chat subscription:', err);
+      report(err);
       return () => {};
     }
   },
@@ -814,12 +832,14 @@ export const firestoreSyncService = {
    * Get all friends from Firestore subcollection
    */
   async getFriendsFromFirestore(userId: string): Promise<any[]> {
+    const report = captureAppErrorReporter({ restart: true });
     try {
       const friendsCol = collection(db, 'users', userId, 'friends');
       const snap = await getDocs(friendsCol);
       return snap.docs.map((d) => d.data());
     } catch (e) {
       console.warn('Could not fetch friends from Firestore:', e);
+      report(e);
       return [];
     }
   },
@@ -830,6 +850,7 @@ export const firestoreSyncService = {
    * here. Users without a location carry no geohash and are never returned.
    */
   subscribeToPublicBuddies(currentUserId: string, center: GeoPoint, callback: (buddies: BuddyProfile[]) => void): () => void {
+    const report = captureAppErrorReporter({ restart: true });
     let cancelled = false;
     let inFlight = false;
     const poll = async () => {
@@ -853,7 +874,7 @@ export const firestoreSyncService = {
           };
         });
         callback(buddies);
-      } catch (error) { console.warn('[discovery] refresh failed:', error); }
+      } catch (error) { console.warn('[discovery] refresh failed:', error); if (!cancelled) report(error); }
       finally { inFlight = false; }
     };
     void poll();
@@ -876,10 +897,12 @@ export const firestoreSyncService = {
 
   /** Tells other users this person has the app open (the online dot, and the "inactive" mark after a week away) */
   async touchPresence(userId: string): Promise<void> {
+    const report = captureAppErrorReporter();
     try {
       await setDoc(doc(db, 'users', userId), { id: userId, lastSeenAt: new Date().toISOString() }, { merge: true });
     } catch (error) {
       console.warn('Could not update presence:', error);
+      report(error);
     }
   },
 };

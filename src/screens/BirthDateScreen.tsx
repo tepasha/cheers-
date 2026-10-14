@@ -14,6 +14,7 @@ import { SupportButton } from '../components/SupportButton';
 import { describeAuthError } from '../services/authService';
 import { useAppSelector } from '../store/hooks';
 import { isoToDateInput } from '../logic/dateInput';
+import { reportAppError } from '../services/appErrors';
 
 /**
  * Confirms a date supplied by Google, or asks for one when unavailable. Terms acceptance is always explicit.
@@ -26,24 +27,22 @@ export const BirthDateScreen = () => {
   const birthDate = useAppSelector((s) => s.auth.user.birthDate);
   const [input, setInput] = useState(birthDate ? isoToDateInput(birthDate) : '');
   const [accepted, setAccepted] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     if (!accepted || busy) return;
     const iso = parseBirthDateInput(input);
     if (!iso) {
-      setError(tr('Оберіть дату народження'));
+      reportAppError(tr('Оберіть дату народження'));
       return;
     }
-    setError(null);
     setBusy(true);
     try {
       const result = await dispatch(submitBirthDate(iso));
-      if (result === 'invalid') setError(tr('Некоректна дата народження'));
+      if (result === 'invalid') reportAppError(tr('Некоректна дата народження'));
       // 'too_young': the account is gone and the sign-in screen takes over; 'ok': the app opens
     } catch (err) {
-      setError(tr(describeAuthError(err)));
+      reportAppError(err, { message: tr(describeAuthError(err)) });
     } finally {
       setBusy(false);
     }
@@ -59,12 +58,7 @@ export const BirthDateScreen = () => {
             : tr('Застосунок доступний з {MIN_AGE} років. Вкажіть дату народження, щоб продовжити.', { MIN_AGE })}</Text>
         </View>
 
-        <BirthDatePicker value={input} onChange={(value) => { setInput(value); setError(null); }} disabled={busy} />
-        {!!error && (
-          <Text style={styles.error} accessibilityRole="alert">
-            {error}
-          </Text>
-        )}
+        <BirthDatePicker value={input} onChange={setInput} disabled={busy} />
 
         <LegalLinks />
         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: accepted }} onPress={() => setAccepted((v) => !v)} style={{ paddingVertical: spacing.md }}><Text style={typography.body}>{accepted ? '☑ ' : '☐ '}{tr('Я приймаю правила та політику конфіденційності')}</Text></Pressable>
@@ -78,5 +72,4 @@ export const BirthDateScreen = () => {
 
 const styles = StyleSheet.create({
   content: { paddingHorizontal: spacing.xl, gap: 2 },
-  error: { color: colors.red, fontSize: 12, marginBottom: spacing.md },
 });

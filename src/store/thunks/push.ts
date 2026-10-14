@@ -5,6 +5,7 @@ import { firestoreSyncService } from '../../services/firestoreSyncService';
 import { registerForPush, stopSystemPush, type PushRegistration } from '../../services/systemNotifications';
 import { selectCanUseApp } from '../selectors';
 import { captureSession } from '../sessionGuard';
+import { captureAppErrorReporter } from '../../services/appErrors';
 
 /** Signing out must not hang on a flaky network; a device that could not be removed is cleaned up server-side later */
 const RELEASE_TIMEOUT_MS = 3000;
@@ -20,6 +21,7 @@ export const registerPush =
   async (dispatch, getState) => {
     const { user } = getState().auth;
     const current = captureSession(getState);
+    const report = captureAppErrorReporter();
     if (!selectCanUseApp(getState())) return 'unavailable';
     // Reserve before the OS permission dialog; a late answer from an older session cannot take a newer binding.
     const binding = bindingSequence = Math.max(Date.now(), bindingSequence + 1);
@@ -39,6 +41,7 @@ export const registerPush =
       await firestoreSyncService.saveDevice(user.id, registration.token, registration.platform, getState().settings.language, binding);
     } catch (err) {
       console.warn('Saving the push device failed:', err);
+      if (current()) report(err);
       return 'unavailable';
     }
     if (!current()) return 'unavailable';
@@ -54,18 +57,20 @@ export const releaseDevice =
   (): AppThunk<Promise<void>> =>
   async (dispatch, getState) => {
     const token = getState().settings.push.deviceToken;
+    const report = captureAppErrorReporter();
     dispatch(pushSettingsUpdated({ deviceToken: undefined }));
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         Promise.all([
-          stopSystemPush().catch((err) => console.warn('Native push unregister failed:', err)),
+          stopSystemPush().catch((err) => { console.warn('Native push unregister failed:', err); report(err); }),
           token ? firestoreSyncService.removeDevice(token) : Promise.resolve(),
         ]),
         new Promise<void>((resolve) => { timer = setTimeout(resolve, RELEASE_TIMEOUT_MS); }),
       ]);
     } catch (err) {
       console.warn('Removing the push device failed:', err);
+      report(err);
     } finally { if (timer) clearTimeout(timer); }
   };
 

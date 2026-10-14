@@ -11,6 +11,9 @@ import { sounds } from '../../services/soundService';
 import { releaseDevice } from './push';
 import { captureSession } from '../sessionGuard';
 import { authErrorSet } from '../slices/uiSlice';
+import { reportAppError } from '../../services/appErrors';
+import { describeAuthError } from '../../services/authService';
+import { trFor } from './lang';
 import { asString, asStringList, DRINK_TYPES, MOOD_TYPES, PAYMENT_RULES, oneOf } from '../../logic/cloudData';
 import type { DrinkType } from '../../types';
 
@@ -109,7 +112,12 @@ export const handleFirebaseUser =
       }));
       dispatch(birthDateLookedUp());
       void dispatch(reviewAge());
-    }).catch(() => { if (current()) dispatch(authErrorSet(true)); });
+    }).catch((error) => {
+      if (!current()) return;
+      dispatch(authErrorSet(true));
+      const tr = trFor(getState);
+      reportAppError(error, { message: tr(describeAuthError(error)), retry: () => dispatch(handleFirebaseUser(fb)) });
+    });
   };
 
 /**
@@ -183,6 +191,7 @@ export const logout =
       await dispatch(endSession(userId));
     } catch (err) {
       console.warn('Sign out failed:', err);
+      reportAppError(err);
     }
   };
 

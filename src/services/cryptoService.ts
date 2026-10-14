@@ -20,6 +20,7 @@ import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { secureRandomBytes } from '../utils/secureRandom';
 import { ph } from './i18nService';
+import { captureAppErrorReporter } from './appErrors';
 
 const APP_SECRET_SALT = 'budmo_kyiv_e2ee_2026_salt_v1';
 const PBKDF2_ITERATIONS = 10000;
@@ -81,6 +82,7 @@ export const cryptoService = {
   },
 
   async decryptMessage(encryptedPayload: string, chatId: string): Promise<string> {
+    const report = captureAppErrorReporter();
     if (!encryptedPayload) return '';
     // Backward compatibility: plaintext messages written before encryption was added
     if (!this.isEncrypted(encryptedPayload)) return encryptedPayload;
@@ -98,6 +100,7 @@ export const cryptoService = {
       }
     } catch (err) {
       console.warn('Decryption failed for payload:', err);
+      report(err);
       return ph('🔒 [Не вдалося розшифрувати повідомлення]');
     }
 

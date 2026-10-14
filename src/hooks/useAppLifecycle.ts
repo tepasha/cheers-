@@ -22,6 +22,7 @@ import { chatOpenRequested } from '../store/slices/uiSlice';
 import { navigationRef } from '../navigation/ref';
 import { configureNotifications, onPushTokenChanged, subscribeToNotificationTaps } from '../services/systemNotifications';
 import { flushOutbox } from '../store/thunks/outbox';
+import { captureAppErrorReporter, reportAppError } from '../services/appErrors';
 
 export function useOutbox() {
   const dispatch = useAppDispatch();
@@ -44,7 +45,7 @@ const MIN_MOVE_DEGREES = 0.0003; // ~30 m
 export function useAuthSync() {
   const dispatch = useAppDispatch();
 
-  useEffect(() => onAuthStateChanged(auth, (fb) => dispatch(handleFirebaseUser(fb))), [dispatch]);
+  useEffect(() => onAuthStateChanged(auth, (fb) => dispatch(handleFirebaseUser(fb)), (error) => reportAppError(error, { restart: true })), [dispatch]);
 }
 
 /** 36-hour rolling session: extended on launch and every foreground, enforced once a minute */
@@ -71,9 +72,10 @@ export function useNetworkStatus() {
 
   useEffect(() => {
     let mounted = true;
+    const report = captureAppErrorReporter({ restart: true });
     Network.getNetworkStateAsync()
       .then((s) => mounted && dispatch(networkStatusChanged(s.isInternetReachable !== false)))
-      .catch(() => {});
+      .catch((error) => { if (mounted) report(error); });
 
     const sub = Network.addNetworkStateListener((s) => dispatch(networkStatusChanged(s.isInternetReachable !== false)));
     return () => {
@@ -116,6 +118,7 @@ export function useLocationTracking() {
     if (isSimulated || !allowed) return;
 
     let cancelled = false;
+    const report = captureAppErrorReporter({ restart: true });
     let subscription: Location.LocationSubscription | null = null;
     const config = getBatterySaverConfig(batterySaver);
 
@@ -157,6 +160,7 @@ export function useLocationTracking() {
       } catch (err) {
         if (!cancelled && store.getState().auth.user.id === userId) dispatch(locationUpdated({ ...store.getState().location.current, status: 'error' }));
         console.warn('Location tracking failed:', err);
+        if (!cancelled && store.getState().auth.user.id === userId) report(err);
       } finally { starting = false; }
     };
     const foreground = AppState.addEventListener('change', (state) => {

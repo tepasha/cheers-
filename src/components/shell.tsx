@@ -23,7 +23,7 @@ export const OfflineBanner = () => {
   return (
     <View style={styles.offline} accessibilityRole="alert">
       <Icon name="wifi-off" size={14} color={colors.amberSoft} />
-      <Text style={styles.offlineText}>{isOnline ? tr('Зміни ще не збережено. Перевірте з’єднання й повторіть спробу.') : tr('Зв’язок втрачено • дані збережено локально')}</Text>
+      <Text style={styles.offlineText}>{isOnline ? tr('Зміни очікують синхронізації') : tr('Зв’язок втрачено • дані збережено локально')}</Text>
       {failed && <Button label={tr('Повторити')} small variant="secondary" onPress={() => dispatch(retryOutbox())} />}
     </View>
   );

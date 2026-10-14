@@ -289,7 +289,7 @@ const MessageBubble = React.memo(
     const meta = (
       <Text style={[styles.time, mine && { textAlign: 'right' }]}>
         {tr(message.timestamp)}
-        {message.deliveryStatus === 'failed' ? ' • ' + tr('Не вдалося виконати дію. Спробуйте пізніше') : message.hasPendingWrites || (message.deliveryStatus && message.deliveryStatus !== 'sent') ? ` • ${tr('надсилається')}` : ''}
+        {message.deliveryStatus === 'failed' ? ' • !' : message.hasPendingWrites || (message.deliveryStatus && message.deliveryStatus !== 'sent') ? ` • ${tr('надсилається')}` : ''}
       </Text>
     );
 
@@ -365,9 +365,9 @@ const ProposalSheet = ({
   const now = useCurrentTime();
   const today = new Date(now);
   const iso = toIsoDateTime(date, time);
-  const future = iso !== null && Date.parse(iso) > now;
   const send = () => {
-    if (!bar.trim() || !iso || Date.parse(iso) <= Date.now()) return;
+    if (!bar.trim()) return;
+    if (!iso || Date.parse(iso) <= Date.now()) { Alert.error(tr('Оберіть майбутню дату та час зустрічі')); return; }
     onSend(bar.trim(), address.trim() || tr('Київ'), tr('{date} о {time}', { date, time }));
   };
 
@@ -376,7 +376,7 @@ const ProposalSheet = ({
       visible={visible}
       onClose={onClose}
       title={tr('Запропонувати місце')}
-      footer={<Button label={tr('Надіслати пропозицію')} icon="send" disabled={!bar.trim() || !future} onPress={send} />}
+      footer={<Button label={tr('Надіслати пропозицію')} icon="send" disabled={!bar.trim()} onPress={send} />}
     >
       <Text style={typography.label}>{tr('ПОПУЛЯРНІ ЗАКЛАДИ')}</Text>
       <Row style={{ flexWrap: 'wrap', marginVertical: spacing.sm }}>
@@ -404,7 +404,6 @@ const ProposalSheet = ({
       </Row>
       <DateTimeField label={tr('ДАТА')} value={date} onChange={setDate} minimumDate={today} />
       <DateTimeField label={tr('ЧАС')} value={time} onChange={setTime} mode="time" />
-      {!future && <Text accessibilityRole="alert" style={{ color: colors.red, fontSize: 12, marginBottom: spacing.sm }}>{tr('Оберіть майбутню дату та час зустрічі')}</Text>}
     </Sheet>
   );
 };

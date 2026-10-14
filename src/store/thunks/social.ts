@@ -19,6 +19,7 @@ import { MAX_GROUP_MEMBERS, dmChatId, dmMembers, groupChatId } from '../../logic
 import { trFor } from './lang';
 import { queueSync } from './outbox';
 import { contentAllowed } from '../../logic/contentPolicy';
+import { reportAppError } from '../../services/appErrors';
 
 // ─── Chats ──────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ export const sendMessage =
     const user = getState().auth.user;
     const { chatId, text, type = 'text', proposalData, audioData, proposalId, proposalStatus } = params;
     if (!contentAllowed(text)) {
-      dispatch(pushNotification({ type: 'system', title: tr('Цей текст порушує правила спільноти. Відредагуйте його.'), body: '' }));
+      reportAppError(tr('Цей текст порушує правила спільноти. Відредагуйте його.'));
       return;
     }
 

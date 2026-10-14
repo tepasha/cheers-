@@ -4,8 +4,8 @@ import { captureSession } from '../sessionGuard';
 import { OUTBOX_LIMIT, syncChanged, syncCompleted, syncQueued, syncRetried, type SyncJob, type SyncMethod } from '../slices/outboxSlice';
 import { messageDeliveryChanged, messagesReceived } from '../slices/chatsSlice';
 import type { Message } from '../../types';
-import { pushNotification } from './notifications';
 import { trFor } from './lang';
+import { reportAppError } from '../../services/appErrors';
 
 const running = new WeakSet<object>();
 let sequence = 0;
@@ -14,7 +14,7 @@ export const queueSync = (method: SyncMethod, key: string, args: unknown[], mess
   if (!state.auth.user.isLoggedIn) return false;
   if ((state.outbox?.jobs.length ?? 0) >= OUTBOX_LIMIT && !state.outbox.jobs.some((j) => j.key === key && j.owner === state.auth.user.id)) {
     const tr = trFor(getState);
-    dispatch(pushNotification({ type: 'system', title: tr('Не вдалося виконати дію. Спробуйте пізніше'), body: tr('Зміни ще не збережено. Перевірте з’єднання й повторіть спробу.') }));
+    reportAppError(new Error('Outbox is full'), { message: tr('Зміни ще не збережено. Перевірте з’єднання й повторіть спробу.'), retry: () => dispatch(retryOutbox()) });
     return false;
   }
   const job: SyncJob = { id: `sync-${Date.now()}-${++sequence}`, owner: state.auth.user.id, key, method, args, message, status: 'queued', attempts: 0, nextAt: 0 };
@@ -57,6 +57,11 @@ export const flushOutbox = (): AppThunk<Promise<void>> => async (dispatch, getSt
         const permanent = /permission-denied|invalid-argument|not-found|already-exists/.test(code) || attempts >= 5;
         dispatch(syncChanged({ id: job.id, status: permanent ? 'failed' : 'queued', nextAt: Date.now() + Math.min(60000, 2000 * 2 ** attempts) }));
         if (job.message) dispatch(messageDeliveryChanged({ ...job.message, status: permanent ? 'failed' : 'queued' }));
+        const tr = trFor(getState);
+        reportAppError(error, {
+          message: tr('Зміни ще не збережено. Перевірте з’єднання й повторіть спробу.'),
+          retry: () => { if (current()) dispatch(retryOutbox()); },
+        });
       } finally {
         if (timer) clearTimeout(timer);
         // A refreshed auth token or a logout can end this worker while its job is in flight.

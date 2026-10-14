@@ -46,7 +46,7 @@ export const HangoutsScreen = () => {
     (h: HangoutAlert) => {
       const host = buddies.find((b) => b.id === h.userId);
       if (!host) {
-        Alert.alert(tr('Недоступно'), tr('Профіль організатора зараз не в мережі.'));
+        Alert.error(tr('Профіль організатора зараз не в мережі.'));
         return;
       }
       navigation.navigate('ChatRoom', { chatId: dispatch(openDirectChat(host)) });

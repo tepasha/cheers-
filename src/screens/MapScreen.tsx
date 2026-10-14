@@ -66,7 +66,7 @@ export const MapScreen = () => {
     const real = await requestDeviceLocation();
     setLocating(false);
     if (!real) {
-      Alert.alert(tr('Немає доступу до геолокації'), tr('Дозвольте доступ до місцезнаходження в налаштуваннях пристрою або оберіть район зі списку.'));
+      Alert.error(tr('Дозвольте доступ до місцезнаходження в налаштуваннях пристрою або оберіть район зі списку.'));
       return;
     }
     dispatch(locationUpdated(real));

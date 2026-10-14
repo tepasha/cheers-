@@ -8,6 +8,7 @@ import { logout, refreshEmailVerification } from '../store/thunks/auth';
 import { authService, describeAuthError } from '../services/authService';
 import { useTr } from '../hooks/useT';
 import { SupportButton } from '../components/SupportButton';
+import { reportAppError } from '../services/appErrors';
 
 const RESEND_COOLDOWN_S = 60;
 
@@ -18,7 +19,7 @@ export const VerifyEmailScreen = () => {
   const insets = useSafeAreaInsets();
   const email = useAppSelector((s) => s.auth.user.email);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ text: string; kind: 'error' | 'info' } | null>(null);
+  const [message, setMessage] = useState<{ text: string; kind: 'info' } | null>(null);
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_S);
 
   useEffect(() => {
@@ -34,7 +35,7 @@ export const VerifyEmailScreen = () => {
       const verified = await dispatch(refreshEmailVerification());
       if (!verified) setMessage({ text: tr('Email ще не підтверджено. Перейдіть за посиланням у листі'), kind: 'info' });
     } catch (err) {
-      setMessage({ text: tr(describeAuthError(err)), kind: 'error' });
+      reportAppError(err, { message: tr(describeAuthError(err)) });
     } finally {
       setBusy(false);
     }
@@ -47,7 +48,7 @@ export const VerifyEmailScreen = () => {
       setCooldown(RESEND_COOLDOWN_S);
       setMessage({ text: tr('Лист надіслано повторно'), kind: 'info' });
     } catch (err) {
-      setMessage({ text: tr(describeAuthError(err)), kind: 'error' });
+      reportAppError(err, { message: tr(describeAuthError(err)) });
     }
   };
 
@@ -69,7 +70,7 @@ export const VerifyEmailScreen = () => {
           onPress={resend}
         />
         {!!message && (
-          <Text style={{ color: message.kind === 'error' ? colors.red : colors.textMuted, fontSize: 12, textAlign: 'center' }} accessibilityRole="alert">
+          <Text style={{ color: colors.textMuted, fontSize: 12, textAlign: 'center' }} accessibilityRole="alert">
             {message.text}
           </Text>
         )}

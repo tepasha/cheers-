@@ -13,7 +13,7 @@ export function DialogHost() {
   return <Sheet visible title={request.title} onClose={close}>
     {!!request.message && <Text style={typography.body}>{request.message}</Text>}
     <View style={{ gap: spacing.sm, marginTop: spacing.md }}>
-      {request.buttons.map((button, i) => <Button key={i} label={button.text ?? 'OK'} variant={button.style === 'destructive' ? 'danger' : button.style === 'cancel' ? 'secondary' : 'primary'} onPress={() => { close(); button.onPress?.(); }} />)}
+      {request.buttons.map((button, i) => <Button key={i} label={button.text ?? 'OK'} variant={button.style === 'destructive' ? 'danger' : button.style === 'cancel' ? 'secondary' : 'primary'} onPress={() => { close(); return button.onPress?.(); }} />)}
     </View>
   </Sheet>;
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { ActivityIndicator, AppState, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
@@ -16,9 +16,9 @@ import { useAppLifecycle, usePendingChatOpen } from './src/hooks/useAppLifecycle
 import { useAppSelector } from './src/store/hooks';
 import { analyticsService } from './src/services/analyticsService';
 import { colors } from './src/theme';
-import { ModalHost } from './src/components/ModalLayer';
 import { DialogHost } from './src/components/DialogHost';
 import { wrapWithMonitoring } from './src/services/telemetry';
+import { setAppErrorSession } from './src/services/appErrors';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -65,12 +65,19 @@ const AppShell = () => {
       <PushBanner />
       <EndedTableModal />
       <DialogHost key={generation} />
-      <ModalHost />
     </NavigationContainer>
   );
 };
 
 function App() {
+  useLayoutEffect(() => {
+    const syncSession = () => {
+      const state = store.getState();
+      setAppErrorSession(`${state.auth.user.id}:${state.ui.sessionGeneration}`);
+    };
+    syncSession();
+    return store.subscribe(syncSession);
+  }, []);
   useEffect(() => {
     // Safety net: never leave the splash screen up if navigation fails to report ready
     const timer = setTimeout(() => SplashScreen.hideAsync().catch(() => {}), 8000);

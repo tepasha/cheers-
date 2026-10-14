@@ -5,6 +5,7 @@ import { archivedMeetupsPruned } from '../slices/meetupsSlice';
 import { endedTableAcknowledged, endedTablesNoticed } from '../slices/uiSlice';
 import { isHangoutExpired } from '../../logic/lifecycle';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
+import { captureAppErrorReporter } from '../../services/appErrors';
 
 /** Tables that ended while this person was part of them (hosted or took a seat): they get the "ended" modal */
 const endedAmongMine = (items: HangoutAlert[], myId: string, now: number): HangoutAlert[] =>
@@ -39,6 +40,7 @@ export const renewHangout =
   (table: HangoutAlert): AppThunk<Promise<boolean>> =>
   async (dispatch, getState) => {
     if (getState().auth.user.id !== table.userId) return false;
+    const report = captureAppErrorReporter();
     dispatch(endedTableAcknowledged(table.id));
     try {
       const expiresAt = await firestoreSyncService.renewHangout(table);
@@ -46,6 +48,7 @@ export const renewHangout =
       return true;
     } catch (err) {
       console.warn('Renewing the table failed:', err);
+      report(err);
       return false;
     }
   };

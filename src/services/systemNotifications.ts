@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { chatIdFromPushData } from '../logic/push';
+import { captureAppErrorReporter } from './appErrors';
 
 export type SystemNotificationPermission = 'granted' | 'denied' | 'undetermined';
 
@@ -51,10 +52,12 @@ export const stopSystemPush = () => serializePush(unregisterPush);
 
 export async function getSystemNotificationPermission(): Promise<SystemNotificationPermission> {
   if (Platform.OS === 'web') return 'denied'; // the browser build has no push registration
+  const report = captureAppErrorReporter();
   try {
     const { status } = await Notifications.getPermissionsAsync();
     return status;
-  } catch {
+  } catch (error) {
+    report(error);
     return 'denied';
   }
 }
@@ -74,6 +77,7 @@ async function ensureAndroidChannel(): Promise<void> {
  */
 async function getPushRegistration(ask: boolean): Promise<PushRegistration> {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return { status: 'unavailable' };
+  const report = captureAppErrorReporter();
   try {
     configureNotifications();
     await ensureAndroidChannel();
@@ -90,6 +94,7 @@ async function getPushRegistration(ask: boolean): Promise<PushRegistration> {
   } catch (err) {
     // Simulators and builds without push credentials end up here
     console.warn('Push registration failed:', err);
+    report(err);
     return { status: 'unavailable' };
   }
 }
@@ -109,6 +114,8 @@ export function onPushTokenChanged(callback: () => void): () => void {
 export function subscribeToNotificationTaps(onChat: (chatId: string) => void): () => void {
   if (Platform.OS === 'web') return () => {};
   const handled = new Set<string>();
+  const report = captureAppErrorReporter();
+  let cancelled = false;
   const handle = (response: Notifications.NotificationResponse | null) => {
     if (!response) return;
     const id = response.notification.request.identifier;
@@ -122,6 +129,6 @@ export function subscribeToNotificationTaps(onChat: (chatId: string) => void): (
   const sub = Notifications.addNotificationResponseReceivedListener(handle);
   Notifications.getLastNotificationResponseAsync()
     .then(handle)
-    .catch(() => {});
-  return () => sub.remove();
+    .catch((error) => { if (!cancelled) report(error); });
+  return () => { cancelled = true; sub.remove(); };
 }

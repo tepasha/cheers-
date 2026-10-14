@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radius, spacing, typography } from '../theme';
 import { useTr } from '../hooks/useT';
 import { safeAvatarUri } from '../logic/avatar';
+import { handleAppAction } from '../services/appErrors';
 
 export type IconName = React.ComponentProps<typeof Feather>['name'];
 
@@ -77,7 +78,7 @@ export const Button = ({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      onPress={onPress}
+      onPress={() => handleAppAction(onPress)}
       disabled={disabled || loading}
       style={({ pressed }) => [
         styles.button,
@@ -116,7 +117,7 @@ export const IconButton = ({
   <Pressable
     accessibilityRole="button"
     accessibilityLabel={label}
-    onPress={onPress}
+    onPress={() => handleAppAction(onPress)}
     hitSlop={8}
     style={({ pressed }) => [styles.iconButton, active && { backgroundColor: colors.amberBg }, pressed && { opacity: 0.7 }]}
   >

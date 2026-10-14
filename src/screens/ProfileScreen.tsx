@@ -36,6 +36,7 @@ import { captureSession } from '../store/sessionGuard';
 import { store } from '../store';
 import imageLicenses from '../data/imageLicenses.json';
 import { supportLinks } from '../services/support';
+import { reportAppError } from '../services/appErrors';
 
 const SUPPORT_LINKS = [
   ...(supportLinks.url ? [{ label: ph('Технічна підтримка'), icon: 'send' as const, url: supportLinks.url }] : []),
@@ -76,14 +77,14 @@ export const ProfileScreen = () => {
       return;
     }
     const status = await dispatch(registerPush({ ask: true }));
-    if (status === 'denied') Alert.alert(tr('Сповіщення вимкнені'), tr('Дозвольте сповіщення для «Будьмо!» у налаштуваннях пристрою.'));
-    else if (status === 'unavailable') Alert.alert(tr('Сповіщення недоступні'), tr('На цьому пристрої або в цій збірці push-сповіщення поки не працюють.'));
+    if (status === 'denied') Alert.error(tr('Дозвольте сповіщення для «Будьмо!» у налаштуваннях пристрою.'));
+    else if (status === 'unavailable') Alert.error(tr('На цьому пристрої або в цій збірці push-сповіщення поки не працюють.'));
   };
 
   const useRealLocation = async () => {
     const real = await requestDeviceLocation(!settings.batterySaver);
     if (real) dispatch(locationUpdated(real));
-    else Alert.alert(tr('Немає доступу до геолокації'), tr('Дозвольте доступ до місцезнаходження в налаштуваннях пристрою.'));
+    else Alert.error(tr('Дозвольте доступ до місцезнаходження в налаштуваннях пристрою.'));
   };
 
   const confirmLogout = () =>
@@ -142,11 +143,11 @@ export const ProfileScreen = () => {
           <Button label={tr('Використовувати мій GPS')} icon="crosshair" small variant="secondary" onPress={useRealLocation} />
           <SettingRow title={tr('Показувати мене поруч')} subtitle={tr('Лише з GPS: інші бачать приблизний район, а не точну позицію.')} value={settings.shareLocation} onChange={async (enabled) => {
             const current = captureSession(store.getState);
-            if (enabled && (location.isSimulated || location.status !== 'active')) { Alert.alert(tr('Геолокація'), tr('Спочатку увімкніть GPS. Обраний район не публікується як ваша позиція.')); return; }
+            if (enabled && (location.isSimulated || location.status !== 'active')) { Alert.error(tr('Спочатку увімкніть GPS. Обраний район не публікується як ваша позиція.')); return; }
             try {
               await firestoreSyncService.saveUserProfile({ id: user.id, name: user.name, shareLocation: enabled, ...(enabled ? { lat: location.lat, lng: location.lng } : {}) });
               if (current()) dispatch(locationSharingSet(enabled));
-            } catch (err) { if (current()) Alert.alert(tr('Геолокація'), tr(describeAuthError(err))); }
+            } catch (err) { if (current()) Alert.error(tr(describeAuthError(err)), err); }
           }} />
         </Card>
 
@@ -189,7 +190,7 @@ export const ProfileScreen = () => {
 
         <View style={{ marginTop: spacing.sm }}>
           <LegalLinks />
-          {adsPrivacyOptions && <Button label={tr('Налаштування реклами')} icon="sliders" small variant="secondary" onPress={() => void adsService.showPrivacyOptions().catch(() => {})} />}
+          {adsPrivacyOptions && <Button label={tr('Налаштування реклами')} icon="sliders" small variant="secondary" onPress={() => adsService.showPrivacyOptions()} />}
           <Button label={tr('Ліцензії зображень')} icon="file-text" small variant="secondary" onPress={() => setLicensesVisible(true)} />
         </View>
 
@@ -251,7 +252,6 @@ const EditProfileSheet = ({ onClose }: { onClose: () => void }) => {
   const [mood, setMood] = useState<MoodType>(user.currentMood ?? 'not_specified');
   const [payment, setPayment] = useState<PaymentEtiquette>(user.paymentRule ?? 'not_specified');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
 
   const birthIso = birth.trim() ? parseBirthDateInput(birth) : user.birthDate ?? null;
   const age = birthIso ? calculateAge(birthIso) : null;
@@ -260,8 +260,9 @@ const EditProfileSheet = ({ onClose }: { onClose: () => void }) => {
     : age < MIN_AGE ? tr('Додаток доступний з {MIN_AGE} років', { MIN_AGE }) : null;
 
   const save = async () => {
-    if (birthError || busy) return;
-    setBusy(true); setError('');
+    if (busy) return;
+    if (birthError) { reportAppError(birthError); return; }
+    setBusy(true);
     const current = captureSession(store.getState);
     try {
       await authService.updatePersonalProfile(name.trim() || user.name, birthIso !== user.birthDate ? birthIso ?? undefined : undefined);
@@ -271,12 +272,12 @@ const EditProfileSheet = ({ onClose }: { onClose: () => void }) => {
       if (!current()) return;
       dispatch(profileUpdated({ name: name.trim() || user.name, ...details, ...(birthIso ? { birthDate: birthIso } : {}) }));
       onClose();
-    } catch (err) { setError(tr(describeAuthError(err))); }
+    } catch (err) { if (current()) reportAppError(err, { message: tr(describeAuthError(err)) }); }
     finally { setBusy(false); }
   };
 
   return (
-    <Sheet visible onClose={onClose} title={tr('Редагувати профіль')} footer={<Button label={tr('Зберегти')} icon="check" loading={busy} disabled={!!birthError || busy} onPress={save} />}>
+    <Sheet visible onClose={onClose} title={tr('Редагувати профіль')} footer={<Button label={tr('Зберегти')} icon="check" loading={busy} disabled={busy} onPress={save} />}>
       <Field label={tr('ІМ’Я')} value={name} onChangeText={setName} maxLength={60} autoCapitalize="words" />
       <BirthDatePicker value={birth} onChange={setBirth} disabled={busy} />
       <Field label={tr('Короткий опис')} value={tagline} onChangeText={setTagline} maxLength={140} />
@@ -287,8 +288,6 @@ const EditProfileSheet = ({ onClose }: { onClose: () => void }) => {
       <Row style={{ flexWrap: 'wrap' }}>{(Object.keys(MOOD_METADATA) as MoodType[]).map((value) => <Chip key={value} label={tr(MOOD_METADATA[value].label)} selected={mood === value} onPress={() => setMood(value)} />)}</Row>
       <SectionTitle>{tr('Оплата')}</SectionTitle>
       <Row style={{ flexWrap: 'wrap' }}>{(Object.keys(PAYMENT_METADATA) as PaymentEtiquette[]).map((value) => <Chip key={value} label={tr(PAYMENT_METADATA[value].label)} selected={payment === value} onPress={() => setPayment(value)} />)}</Row>
-      {!!birthError && <Text style={{ color: colors.red, fontSize: 12 }}>{birthError}</Text>}
-      {!!error && <Text accessibilityRole="alert" style={{ color: colors.red }}>{error}</Text>}
     </Sheet>
   );
 };
@@ -306,16 +305,14 @@ const DeleteAccountSheet = ({ onClose }: { onClose: () => void }) => {
   const noPassword = viaGoogle || viaApple;
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const confirm = async () => {
     setBusy(true);
-    setError(null);
     try {
       await dispatch(deleteAccount(noPassword ? undefined : password));
       // The auth listener returns the app to the sign-in screen
     } catch (err) {
-      if ((err as { code?: string }).code !== CANCELLED) setError(tr(describeAuthError(err)));
+      if ((err as { code?: string }).code !== CANCELLED) reportAppError(err, { message: tr(describeAuthError(err)) });
       setBusy(false);
     }
   };
@@ -346,7 +343,6 @@ const DeleteAccountSheet = ({ onClose }: { onClose: () => void }) => {
       ) : (
         <Field label={tr('ПІДТВЕРДІТЬ ПАРОЛЬ')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} />
       )}
-      {!!error && <Text style={{ color: colors.red, fontSize: 12 }}>{error}</Text>}
     </Sheet>
   );
 };

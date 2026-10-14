@@ -30,7 +30,7 @@ export const SosSheet = ({
 
   const call = (number: '112' | '102') => {
     analyticsService.trackSosTrigger(number === '112' ? 'call_112' : 'call_angela');
-    Linking.openURL(`tel:${number}`);
+    return Linking.openURL(`tel:${number}`);
   };
 
   const copy = async () => {

@@ -7,7 +7,7 @@ import { Button, Field, SegmentedControl } from '../components/ui';
 import { BirthDatePicker } from '../components/BirthDatePicker';
 import { colors, radius, spacing, typography } from '../theme';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { authNoticeSet, authErrorSet, authOperationSet } from '../store/slices/uiSlice';
+import { authNoticeSet, authOperationSet } from '../store/slices/uiSlice';
 import { profileUpdated } from '../store/slices/authSlice';
 import { prefillGoogleBirthDate } from '../store/thunks/auth';
 import { authService, describeAuthError } from '../services/authService';
@@ -22,6 +22,7 @@ import { AppleSignInButton } from '../components/AppleSignInButton';
 import { isAppleSignInAvailable } from '../services/appleSignIn';
 import { isGoogleSignInConfigured } from '../services/googleSignIn';
 import { SupportButton } from '../components/SupportButton';
+import { reportAppError } from '../services/appErrors';
 
 type Mode = 'login' | 'register';
 
@@ -34,9 +35,7 @@ export const AuthScreen = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [birthInput, setBirthInput] = useState('');
-  const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
   const birthIso = useMemo(() => parseBirthDateInput(birthInput), [birthInput]);
@@ -60,6 +59,11 @@ export const AuthScreen = () => {
   const hasErrors = Object.values(errors).some(Boolean);
 
   const underageNotice = useAppSelector((s) => s.ui.authNotice === 'underage');
+  useEffect(() => {
+    if (!underageNotice) return;
+    dispatch(authNoticeSet(null));
+    reportAppError(tr('Ще трохи треба почекати, вік користування застосунком {MIN_AGE}', { MIN_AGE }));
+  }, [underageNotice, dispatch, tr]);
 
   // Sign in with Apple exists on iOS 13+ only (App Store Guideline 4.8 asks for it next to Google)
   const [appleAvailable, setAppleAvailable] = useState(false);
@@ -73,11 +77,10 @@ export const AuthScreen = () => {
 
   /** Google or Apple: the auth listener signs the person in; a new account is asked for its birth date next */
   const providerSignIn = async (method: 'google' | 'apple') => {
-    setError(null);
     setInfo(null);
     dispatch(authNoticeSet(null));
     if (!firebaseConfigured) {
-      setError(tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).'));
+      reportAppError(tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).'));
       return;
     }
     setBusy(true);
@@ -97,7 +100,7 @@ export const AuthScreen = () => {
         }
       }
     } catch (err) {
-      setError(tr(describeAuthError(err)));
+      reportAppError(err, { message: tr(describeAuthError(err)) });
     } finally {
       setBusy(false);
       dispatch(authOperationSet(false));
@@ -105,13 +108,11 @@ export const AuthScreen = () => {
   };
 
   const submit = async () => {
-    setSubmitted(true);
-    setError(null);
     setInfo(null);
     dispatch(authNoticeSet(null));
-    if (hasErrors) return;
+    if (hasErrors) { reportAppError(Object.values(errors).find(Boolean)); return; }
     if (!firebaseConfigured) {
-      setError(tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).'));
+      reportAppError(tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).'));
       return;
     }
 
@@ -128,8 +129,7 @@ export const AuthScreen = () => {
         analyticsService.trackEvent('login', { method: 'email' });
       }
     } catch (err) {
-      setError(tr(describeAuthError(err)));
-      if (registering) dispatch(authErrorSet(true));
+      reportAppError(err, { message: tr(describeAuthError(err)) });
     } finally {
       setBusy(false);
       dispatch(authOperationSet(false));
@@ -137,21 +137,21 @@ export const AuthScreen = () => {
   };
 
   const forgotPassword = async () => {
-    setError(null);
     setInfo(null);
     if (!isValidEmail(email)) {
-      setSubmitted(true);
-      setError(tr('Введіть email, на який надіслати лист'));
+      reportAppError(tr('Введіть email, на який надіслати лист'));
       return;
     }
     setBusy(true);
     try {
       await authService.resetPassword(email);
-    } catch {
-      // Same message either way: do not reveal whether an account exists for this address
+      setInfo(tr('Якщо акаунт існує, ми надіслали лист для відновлення пароля'));
+    } catch (err) {
+      // Keep account existence private while still showing transport/configuration failures on the error screen.
+      if ((err as { code?: string })?.code === 'auth/user-not-found') setInfo(tr('Якщо акаунт існує, ми надіслали лист для відновлення пароля'));
+      else reportAppError(err, { message: tr(describeAuthError(err)) });
     } finally {
       setBusy(false);
-      setInfo(tr('Якщо акаунт існує, ми надіслали лист для відновлення пароля'));
     }
   };
 
@@ -173,8 +173,6 @@ export const AuthScreen = () => {
           value={mode}
           onChange={(m) => {
             setMode(m);
-            setSubmitted(false);
-            setError(null);
             setInfo(null);
           }}
           options={[
@@ -187,7 +185,6 @@ export const AuthScreen = () => {
         {registering && (
           <>
             <Field label={tr('ІМ’Я')} value={name} onChangeText={setName} placeholder={tr('Як до тебе звертатись')} autoCapitalize="words" maxLength={40} />
-            {submitted && errors.name && <Text style={styles.error}>{tr(errors.name)}</Text>}
           </>
         )}
         <Field
@@ -201,7 +198,6 @@ export const AuthScreen = () => {
           autoComplete="email"
           textContentType="emailAddress"
         />
-        {submitted && errors.email && <Text style={styles.error}>{tr(errors.email)}</Text>}
         <Field
           label={tr('ПАРОЛЬ')}
           value={password}
@@ -213,32 +209,13 @@ export const AuthScreen = () => {
           autoComplete={registering ? 'new-password' : 'current-password'}
           textContentType={registering ? 'newPassword' : 'password'}
         />
-        {submitted && errors.password && <Text style={styles.error}>{tr(errors.password)}</Text>}
         {registering && (
           <>
             <BirthDatePicker value={birthInput} onChange={setBirthInput} disabled={busy} />
             {age !== null && age >= MIN_AGE && <Text style={styles.hint}>{tr('Вік: {age}', { age })}</Text>}
-            {(submitted || (birthIso && age !== null && age < MIN_AGE)) && errors.birth && <Text style={styles.error}>{tr(errors.birth)}</Text>}
           </>
         )}
 
-        {underageNotice && (
-          <Text style={[styles.error, { marginTop: 0, marginBottom: spacing.md, fontSize: 14, fontWeight: '600' }]} accessibilityRole="alert">
-            {tr('Ще трохи треба почекати, вік користування застосунком {MIN_AGE}', { MIN_AGE })}
-          </Text>
-        )}
-
-        {!firebaseConfigured && (
-          <Text style={[styles.hint, { color: colors.amberSoft, marginTop: 0, marginBottom: spacing.md }]} accessibilityRole="alert">
-            {tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).')}
-          </Text>
-        )}
-
-        {!!error && (
-          <Text style={[styles.error, { marginBottom: spacing.md }]} accessibilityRole="alert">
-            {error}
-          </Text>
-        )}
         {!!info && <Text style={[styles.hint, { marginBottom: spacing.md }]}>{info}</Text>}
 
         <Button label={registering ? tr('Створити акаунт') : tr('Увійти')} icon="arrow-right" onPress={submit} loading={busy} />
@@ -269,6 +246,5 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: spacing.xl, gap: 2 },
   hero: { alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xl },
   logo: { width: 84, height: 84, borderRadius: radius.xl },
-  error: { color: colors.red, fontSize: 12, marginTop: -spacing.sm, marginBottom: spacing.md },
   hint: { color: colors.green, fontSize: 12, marginTop: -spacing.sm, marginBottom: spacing.md },
 });
