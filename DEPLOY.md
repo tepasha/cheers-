@@ -80,7 +80,7 @@ push у stage (preview.yml), усе автоматично, лише тесто�
      ```
    - **Видалення чи перейменування функції.** CI деплоїть без `--force`, тому функцію, якої вже немає в коді, він не видалить, а зупиниться («deletion cannot proceed in non-interactive mode»). Видаляйте її явно перед релізом: `npx firebase-tools@15.32.1 functions:delete <name> --region us-central1 --project <project-id>` (для обох проєктів). При перейменуванні спершу задеплойте нову функцію, потім видаліть стару, щоб не втратити події.
    - **Параметри functions** пише CI у `functions/.env.<project-id>`: `FIRESTORE_DATABASE_ID` зі змінної середовища (обовʼязковий, значення за замовчуванням немає) і `EXPO_ACCESS_TOKEN` із секрету, лише якщо він є. Для ручного деплою див. «Бекенд вручну» нижче.
-7. **Ключ Google Maps:** обмежити за `com.budmo.app` та SHA-1 (і ключ Play App Signing, і ключ завантаження).
+7. **Ключ Google Maps:** обмежити за `cheers.app` та SHA-1 (і ключ Play App Signing, і ключ завантаження).
 8. **GitHub:** середовища `staging`, `production`, `store-release` з reviewers, правилами гілок і змінними за [таблицею нижче](#налаштування-github-settings--environments--variables--secrets). Preview автоматично запускається після push у `stage`, коли готове EAS `preview`; `staging` без reviewers, щоб нічого не чекало схвалення. **Останнім**, коли зроблено кроки 1–7 і перший AAB уже в Play: `STORE_RELEASES=true`; до того ручний production-реліз зупиняється на verify, нічого не деплоївши.
 
 #### Файлова конфігурація перед build / update
@@ -138,7 +138,7 @@ npx eas-cli build --platform android --profile preview
 
 Де показується: смужка 320×50 над таб-баром на всіх вкладках, крім Карти; у «Кличах» слот 320×100 після кожних 10 карток («Зараз») і кожних 5 («Заплановані»). Список, коротший за інтервал, реклами не має. Чати, модальні вікна, SOS і онбординг без реклами. Код: [src/services/ads.ts](src/services/ads.ts), [src/components/AdBanner.tsx](src/components/AdBanner.tsx), [src/logic/ads.ts](src/logic/ads.ts).
 
-1. [AdMob](https://apps.admob.com): створіть два застосунки (Android `com.budmo.app`, iOS `com.budmo.app`) і в кожному два банерні блоки: `banner` (смужка) та `inline` (слоти в списку). Ідентифікатори застосунків → `ADMOB_ANDROID_APP_ID` / `ADMOB_IOS_APP_ID` (обов'язкові в production; у preview можна залишити порожніми для тестових ID Google), блоки → `ADMOB_*_BANNER_ID` / `ADMOB_*_INLINE_ID` **лише в production**: без них збірка показує тестову рекламу Google, і тестувальники не клікають живу (за це AdMob блокує акаунт).
+1. [AdMob](https://apps.admob.com): створіть два застосунки (Android `cheers.app`, iOS `com.budmo.app`) і в кожному два банерні блоки: `banner` (смужка) та `inline` (слоти в списку). Ідентифікатори застосунків → `ADMOB_ANDROID_APP_ID` / `ADMOB_IOS_APP_ID` (обов'язкові в production; у preview можна залишити порожніми для тестових ID Google), блоки → `ADMOB_*_BANNER_ID` / `ADMOB_*_INLINE_ID` **лише в production**: без них збірка показує тестову рекламу Google, і тестувальники не клікають живу (за це AdMob блокує акаунт).
 2. AdMob → Privacy & messaging: опублікуйте повідомлення GDPR (EEA/UK). Без нього `gatherConsent` не покаже форму, і в ЄС реклама буде обмеженою. Кнопка «Налаштування реклами» в Профілі з'являється автоматично, коли Google її вимагає.
 3. AdMob → Blocking controls: заблокуйте категорії «Алкоголь», «Азартні ігри», «Знайомства» та інші чутливі; рейтинг контенту — не вище T/MA за рішенням власника.
 4. Опублікуйте `app-ads.txt` на домені розробника, вказаному в сторінках магазинів.

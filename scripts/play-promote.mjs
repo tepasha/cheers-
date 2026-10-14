@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Google Play staged rollout without a second upload, used by promote.yml:
- *   node scripts/play-promote.mjs --package com.budmo.app --version-code 42 --rollout 0.1 --key service-account.json
+ *   node scripts/play-promote.mjs --package cheers.app --version-code 42 --rollout 0.1 --key service-account.json
  *
  * The tag release already uploaded this versionCode to the internal track, and Play refuses a second upload of a
  * version code it has seen, so `eas submit` (which always uploads) cannot take a build to production. This script

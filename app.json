@@ -21,7 +21,7 @@
       }
     },
     "android": {
-      "package": "com.budmo.app",
+      "package": "cheers.app",
       "allowBackup": false,
       "versionCode": 1,
       "adaptiveIcon": {
