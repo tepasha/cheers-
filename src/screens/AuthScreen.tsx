@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import appIcon from '../../assets/logo.png'; // 256 px copy: the 1024 px store icon would cost 1 MB of bundle
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,10 +21,7 @@ import { LegalLinks } from '../components/LegalLinks';
 import { AppleSignInButton } from '../components/AppleSignInButton';
 import { isAppleSignInAvailable } from '../services/appleSignIn';
 import { isGoogleSignInConfigured } from '../services/googleSignIn';
-import Constants from 'expo-constants';
-
-const supportEmail = Constants.expoConfig?.extra?.support?.email;
-const SUPPORT_URI = typeof supportEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail) ? `mailto:${supportEmail}` : undefined;
+import { SupportButton } from '../components/SupportButton';
 
 type Mode = 'login' | 'register';
 
@@ -262,7 +259,7 @@ export const AuthScreen = () => {
           </Text>
         )}
         <LegalLinks />
-        {SUPPORT_URI && <Button label={tr('Підтримка')} variant="ghost" icon="mail" small onPress={() => Linking.openURL(SUPPORT_URI)} style={{ marginTop: spacing.sm }} />}
+        <SupportButton />
       </ScrollView>
     </KeyboardAvoidingView>
   );

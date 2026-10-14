@@ -1,5 +1,4 @@
 import { dialogs as Alert } from '../services/dialogs';
-import Constants from 'expo-constants';
 import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { MIN_AGE } from '../logic/session';
 import { Linking, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
@@ -36,12 +35,12 @@ import type { DrinkType, MoodType, PaymentEtiquette } from '../types';
 import { captureSession } from '../store/sessionGuard';
 import { store } from '../store';
 import imageLicenses from '../data/imageLicenses.json';
+import { supportLinks } from '../services/support';
 
-const support = Constants.expoConfig?.extra?.support;
 const SUPPORT_LINKS = [
-  ...(typeof support?.url === 'string' && support.url.startsWith('https://') ? [{ label: ph('Технічна підтримка'), icon: 'send' as const, url: support.url }] : []),
-  ...(typeof support?.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(support.email) ? [{ label: support.email, icon: 'mail' as const, url: `mailto:${support.email}` }] : []),
-  ...(typeof support?.donationUrl === 'string' && support.donationUrl.startsWith('https://') ? [{ label: ph('Підтримати розробника 🍺'), icon: 'heart' as const, url: support.donationUrl }] : []),
+  ...(supportLinks.url ? [{ label: ph('Технічна підтримка'), icon: 'send' as const, url: supportLinks.url }] : []),
+  ...(supportLinks.email ? [{ label: supportLinks.email, icon: 'mail' as const, url: `mailto:${supportLinks.email}` }] : []),
+  ...(supportLinks.donationUrl ? [{ label: ph('Підтримати розробника 🍺'), icon: 'heart' as const, url: supportLinks.donationUrl }] : []),
 ];
 
 export const ProfileScreen = () => {

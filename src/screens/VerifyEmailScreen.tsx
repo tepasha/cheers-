@@ -7,6 +7,7 @@ import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { logout, refreshEmailVerification } from '../store/thunks/auth';
 import { authService, describeAuthError } from '../services/authService';
 import { useTr } from '../hooks/useT';
+import { SupportButton } from '../components/SupportButton';
 
 const RESEND_COOLDOWN_S = 60;
 
@@ -75,6 +76,7 @@ export const VerifyEmailScreen = () => {
       </Card>
 
       <Button label={tr('Вийти')} variant="ghost" icon="log-out" onPress={() => dispatch(logout())} style={{ marginTop: spacing.lg }} />
+      <SupportButton style={{ marginTop: 0 }} />
     </View>
   );
 };

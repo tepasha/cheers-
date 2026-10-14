@@ -10,6 +10,7 @@ import { parseBirthDateInput } from '../logic/dateInput';
 import { MIN_AGE } from '../logic/session';
 import { useTr } from '../hooks/useT';
 import { LegalLinks } from '../components/LegalLinks';
+import { SupportButton } from '../components/SupportButton';
 import { describeAuthError } from '../services/authService';
 import { useAppSelector } from '../store/hooks';
 import { isoToDateInput } from '../logic/dateInput';
@@ -69,6 +70,7 @@ export const BirthDateScreen = () => {
         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: accepted }} onPress={() => setAccepted((v) => !v)} style={{ paddingVertical: spacing.md }}><Text style={typography.body}>{accepted ? '☑ ' : '☐ '}{tr('Я приймаю правила та політику конфіденційності')}</Text></Pressable>
         <Button label={tr('Продовжити')} icon="arrow-right" onPress={submit} loading={busy} disabled={!accepted || busy} />
         <Button label={tr('Вийти')} variant="ghost" small onPress={() => dispatch(logout())} disabled={busy} style={{ marginTop: spacing.sm }} />
+        <SupportButton />
       </ScrollView>
     </KeyboardAvoidingView>
   );
