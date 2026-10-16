@@ -75,7 +75,8 @@ export const sendMessage =
     if (!thread) return;
 
     dispatch(queueSync('sendEncryptedMessage', `message:${message.id}`, [
-      { id: thread.id, isGroup: thread.isGroup, memberIds: thread.memberIds, createdBy: thread.createdBy, groupName: thread.groupName, groupTopic: thread.groupTopic, groupAvatar: thread.groupAvatar, participants: thread.participants },
+      // `updatedAt` is set only by the inbox, from the cloud: such a chat exists, so sending skips two reads
+      { id: thread.id, isGroup: thread.isGroup, memberIds: thread.memberIds, createdBy: thread.createdBy, groupName: thread.groupName, groupTopic: thread.groupTopic, groupAvatar: thread.groupAvatar, participants: thread.participants, existsInCloud: !!thread.updatedAt },
       message, { id: user.id, name: user.name, avatar: user.avatar },
     ], { chatId, id: message.id }));
   };

@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  INACTIVE_AFTER_MS,
   NEARBY_MAX_PROFILES,
   NEARBY_RADIUS_KM,
-  ONLINE_WITHIN_MS,
   distanceKmBetween,
-  isInactive,
-  isOnline,
   nearbyQueryBounds,
   pickNearby,
   publicGeohash,
@@ -78,24 +74,6 @@ describe('pickNearby', () => {
     const input = [profile('a', north(1))];
     pickNearby(input, KYIV);
     expect(input[0].distanceKm).toBe(0);
-  });
-});
-
-describe('presence', () => {
-  const now = Date.UTC(2026, 9, 10, 12);
-  const ago = (ms: number) => new Date(now - ms).toISOString();
-
-  it('online within 15 minutes of the last visit', () => {
-    expect(isOnline(ago(ONLINE_WITHIN_MS - 1000), now)).toBe(true);
-    expect(isOnline(ago(ONLINE_WITHIN_MS + 1000), now)).toBe(false);
-    expect(isOnline(undefined, now)).toBe(false);
-  });
-
-  it('inactive after a week away, and when nothing is known', () => {
-    expect(isInactive(ago(INACTIVE_AFTER_MS - 1000), now)).toBe(false);
-    expect(isInactive(ago(INACTIVE_AFTER_MS + 1000), now)).toBe(true);
-    expect(isInactive(undefined, now)).toBe(true);
-    expect(isInactive('garbage', now)).toBe(true);
   });
 });
 

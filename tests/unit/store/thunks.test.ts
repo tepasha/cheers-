@@ -18,6 +18,7 @@ vi.mock('@/services/authService', () => ({
     deleteAccount: vi.fn().mockResolvedValue(undefined),
     removeAccountAfterAgeRejection: vi.fn().mockResolvedValue(undefined),
   },
+  describeAuthError: () => 'Не вдалося увійти.',
 }));
 vi.mock('firebase/firestore', () => ({ doc: vi.fn(() => ({})), setDoc: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/services/firestoreSyncService', () => ({
@@ -42,7 +43,7 @@ vi.mock('@/services/firestoreSyncService', () => ({
   },
 }));
 
-import auth, { loggedIn } from '@/store/slices/authSlice';
+import auth, { claimsChecked, loggedIn } from '@/store/slices/authSlice';
 import settings, { pushSettingsUpdated } from '@/store/slices/settingsSlice';
 import location from '@/store/slices/locationSlice';
 import buddies from '@/store/slices/buddiesSlice';
@@ -73,6 +74,7 @@ import { BuddyProfile, ChatThread, HangoutAlert, Message } from '@/types';
 import { userBlocked } from '@/store/slices/safetySlice';
 import { messagesReceived } from '@/store/slices/chatsSlice';
 import type { RootState } from '@/store/index';
+import { clearAppError } from '@/services/appErrors';
 
 const rootReducer = combineReducers({ outbox, auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
 
@@ -818,5 +820,100 @@ describe('publishing a table', () => {
     const s = makeStore();
     await run<Promise<void>>(s, publishHangout({ id: 'h2', userId: 'me', userName: 'Me', userAvatar: '', barName: 'Squat', locationArea: '', drinkPreference: '', description: '', createdAt: 'x', slotsAvailable: 2, participantsCount: 1, joinedUsers: ['me'], expiresAt: 12345 }));
     expect(st(s).hangouts.items[0].expiresAt).toBe(12345);
+  });
+});
+
+describe('startup on the server claims', () => {
+  type Fb = Parameters<typeof handleFirebaseUser>[0];
+  type Token = { claims: Record<string, unknown> };
+  const fresh = () => configureStore({ reducer: rootReducer });
+  /** The same account signed in on this device before: its birth date is stored */
+  const returning = (s: TestStore, uid = 'u1') => s.dispatch(loggedIn(createUser({ id: uid, email: `${uid}@b.co`, emailVerified: true, birthDate: '1990-01-01' })));
+  const account = (uid: string, token: (force?: boolean) => Promise<Token>) => {
+    const getIdTokenResult = vi.fn(token);
+    return { fb: { uid, email: `${uid}@b.co`, displayName: 'U', photoURL: null, emailVerified: true, getIdTokenResult } as unknown as Fb, getIdTokenResult };
+  };
+  const claims = (c: Record<string, unknown>) => Promise.resolve({ claims: c });
+  const offline = () => Promise.reject(Object.assign(new Error('offline'), { code: 'auth/network-request-failed' }));
+  afterEach(() => clearAppError());
+
+  it('opens on the claims of the cached token, without a forced refresh and without waiting for the profiles', async () => {
+    const s = fresh();
+    returning(s);
+    sync.getPrivateProfile.mockReturnValueOnce(new Promise(() => {})); // never answers
+    const { fb, getIdTokenResult } = account('u1', () => claims({ age_21: true, email_verified: true }));
+    run(s, handleFirebaseUser(fb));
+    expect(st(s).ui.claimsPending).toBe(true); // the splash, not the birth-date form, while they arrive
+    await vi.waitFor(() => expect(st(s).auth.user.serverEligible).toBe(true));
+    expect(getIdTokenResult).toHaveBeenCalledTimes(1);
+    expect(getIdTokenResult).toHaveBeenCalledWith();
+    expect(st(s).ui.claimsPending).toBe(false);
+    expect(st(s).auth.eligibleUid).toBe('u1');
+  });
+
+  it('refreshes the token once when the cached one does not carry the age claim yet (right after onboarding)', async () => {
+    const s = fresh();
+    returning(s);
+    const { fb, getIdTokenResult } = account('u1', (force) => claims(force ? { age_21: true, email_verified: true } : { email_verified: true }));
+    run(s, handleFirebaseUser(fb));
+    await vi.waitFor(() => expect(st(s).auth.user.serverEligible).toBe(true));
+    expect(getIdTokenResult).toHaveBeenLastCalledWith(true);
+  });
+
+  it('still applies the profiles that arrive after the claims started a new session generation', async () => {
+    const s = fresh();
+    s.dispatch(loggedIn(createUser({ id: 'u1', email: 'u1@b.co', emailVerified: true }))); // a new device: no birth date here yet
+    let answer!: (p: { birthDate: string }) => void;
+    sync.getPrivateProfile.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    const { fb } = account('u1', () => claims({ age_21: true, email_verified: true }));
+    run(s, handleFirebaseUser(fb));
+    await vi.waitFor(() => expect(st(s).auth.user.serverEligible).toBe(true));
+    answer({ birthDate: '1990-02-03' });
+    await vi.waitFor(() => expect(st(s).auth.user.birthDate).toBe('1990-02-03'));
+    expect(st(s).auth.birthDateChecked).toBe(true);
+  });
+
+  it('offline, an account this device saw confirmed opens on what it stores and is checked again later', async () => {
+    vi.useFakeTimers();
+    try {
+      const s = fresh();
+      returning(s);
+      s.dispatch(claimsChecked({ uid: 'u1', eligible: true })); // an earlier, online launch
+      sync.getPrivateProfile.mockRejectedValueOnce(Object.assign(new Error('offline'), { code: 'unavailable' }));
+      let online = false;
+      const { fb, getIdTokenResult } = account('u1', () => (online ? claims({ age_21: true, email_verified: true }) : offline()));
+      run(s, handleFirebaseUser(fb));
+      await vi.waitFor(() => expect(st(s).auth.user.serverEligible).toBe(true));
+      expect(st(s).ui.claimsPending).toBe(false);
+      expect(st(s).ui.authError).toBe(false);
+      online = true;
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => expect(getIdTokenResult).toHaveBeenCalledTimes(2));
+      expect(st(s).auth.user.serverEligible).toBe(true);
+      expect(st(s).ui.authError).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('offline, an account never confirmed on this device gets the error, as before', async () => {
+    const s = fresh();
+    returning(s);
+    const { fb } = account('u1', () => offline());
+    run(s, handleFirebaseUser(fb));
+    await vi.waitFor(() => expect(st(s).ui.authError).toBe(true));
+    expect(st(s).ui.claimsPending).toBe(false);
+    expect(st(s).auth.user.serverEligible).toBe(false);
+  });
+
+  it('a profile refresh that fails does not stop a returning user', async () => {
+    const s = fresh();
+    returning(s);
+    sync.getPrivateProfile.mockRejectedValueOnce(Object.assign(new Error('offline'), { code: 'unavailable' }));
+    const { fb } = account('u1', () => claims({ age_21: true, email_verified: true }));
+    run(s, handleFirebaseUser(fb));
+    await vi.waitFor(() => expect(st(s).auth.user.serverEligible).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(st(s).ui.authError).toBe(false);
   });
 });

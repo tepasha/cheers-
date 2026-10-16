@@ -98,6 +98,7 @@ export function readCloudMeetup(v: unknown): GroupMeetup | null {
     distanceFormatted: asOptString(v.distanceFormatted),
     createdAt: asString(v.createdAt),
     topicTag: asOptString(v.topicTag),
+    geo: asOptString(v.geo),
   };
 }
 

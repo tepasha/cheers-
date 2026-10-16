@@ -6,7 +6,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { colors } from '../theme';
 import { useT } from '../hooks/useT';
 import { useAppSelector } from '../store/hooks';
-import { selectCanUseApp, selectFriendsCount, selectGeoBlock, selectUnreadChatsCount, selectHangouts } from '../store/selectors';
+import { selectCanUseApp, selectFriendsCount, selectGeoBlock, selectUnreadChatsCount, selectHangoutsCount } from '../store/selectors';
 import type { RootStackParamList, TabParamList } from './types';
 import { DiscoverScreen } from '../screens/DiscoverScreen';
 import { MapScreen } from '../screens/MapScreen';
@@ -46,7 +46,7 @@ const Tabs = () => {
   const t = useT();
   const unreadChats = useAppSelector(selectUnreadChatsCount);
   const friends = useAppSelector(selectFriendsCount);
-  const hangouts = useAppSelector(selectHangouts).length;
+  const hangouts = useAppSelector(selectHangoutsCount);
 
   const badge = (n: number) => (n > 0 ? (n > 99 ? '99+' : n) : undefined);
 
@@ -61,6 +61,8 @@ const Tabs = () => {
         )}
         screenOptions={({ route }) => ({
           headerShown: false,
+          // A tab stays mounted after its first visit; frozen while hidden, it skips the re-render on every GPS or feed update
+          freezeOnBlur: true,
           tabBarActiveTintColor: colors.amber,
           tabBarInactiveTintColor: colors.textDim,
           tabBarStyle: { backgroundColor: colors.bg, borderTopColor: colors.border },
@@ -82,6 +84,8 @@ const Tabs = () => {
 };
 
 const headerOptions = {
+  // Screens under the one on top (the tabs under an open chat) do not re-render until they are shown again
+  freezeOnBlur: true,
   headerStyle: { backgroundColor: colors.bg },
   headerTintColor: colors.text,
   headerTitleStyle: { fontWeight: '700' as const },
@@ -109,6 +113,7 @@ export const RootNavigator = () => {
   const canUseApp = useAppSelector(selectCanUseApp);
   const birthDate = useAppSelector((s) => s.auth.user.birthDate);
   const birthDateChecked = useAppSelector((s) => s.auth.birthDateChecked);
+  const claimsPending = useAppSelector((s) => s.ui.claimsPending);
   const geoBlocked = useAppSelector(selectGeoBlock).isBlocked;
 
   if (geoBlocked) return <RussiaBlockScreen />;
@@ -118,6 +123,8 @@ export const RootNavigator = () => {
   if (authError) return <Splash />;
   if (!emailVerified) return <VerifyEmailScreen />;
   if (!canUseApp) {
+    // The server's claims are on their way (usually from the cached token, at once): no birth-date form flashing meanwhile
+    if (claimsPending) return <Splash />;
     if (serverEligible === false && birthDateChecked) return <BirthDateScreen />;
     // Verified, but the age is not confirmed. Nothing of the app is shown (and nothing is published: see
     // selectCanUseApp) until it is. Not asked yet -> look it up, then ask; under 21 -> the account is being removed.

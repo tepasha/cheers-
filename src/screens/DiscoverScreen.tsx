@@ -15,11 +15,13 @@ import { countActiveFilters, DEFAULT_FILTERS, filterBuddies } from '../logic/bud
 import { useBuddyActions } from '../hooks/useBuddyActions';
 import { analyticsService } from '../services/analyticsService';
 import { useTr } from '../hooks/useT';
+import { useFocusDemand } from '../hooks/useFocusDemand';
 
 type ViewMode = 'feed' | 'grid' | 'deck';
 
 export const DiscoverScreen = () => {
   const tr = useTr();
+  useFocusDemand('people');
   const navigation = useNavigation();
   const buddies = useAppSelector(selectBuddies);
   const locationName = useAppSelector((s) => s.location.current.locationName);

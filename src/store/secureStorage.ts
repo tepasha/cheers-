@@ -4,6 +4,8 @@
  * them. A random AES-256-GCM key lives in the OS keystore (iOS Keychain / Android Keystore) and never in
  * AsyncStorage; losing the key (new phone, restored backup) means the local cache is simply discarded and
  * rebuilt from Firestore.
+ * The cipher itself is pluggable (Aead): the app uses the platform's AES-GCM (store/nativeAead.ts) and falls back to
+ * @noble's (nobleAead); both read and write the same entries.
  */
 import { gcm } from '@noble/ciphers/aes.js';
 import { secureRandomBytes } from '../utils/secureRandom';
@@ -26,7 +28,7 @@ const decoder = new TextDecoder();
 // Converted in 8 KB chunks (small enough for any engine's argument limit): one character at a time costs ~8x more
 // on a multi-megabyte state (measured on V8)
 const CHUNK = 0x2000;
-const toBase64 = (bytes: Uint8Array) => {
+export const toBase64 = (bytes: Uint8Array) => {
   const parts: string[] = [];
   for (let i = 0; i < bytes.length; i += CHUNK) parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
   return btoa(parts.join(''));
@@ -38,7 +40,45 @@ const fromBase64 = (b64: string) => {
   return bytes;
 };
 
-export function createEncryptedStorage(inner: StringStorage, vault: KeyVault, random: (n: number) => Uint8Array = secureRandomBytes): StringStorage {
+/**
+ * AES-256-GCM with a 12-byte IV and the 16-byte tag appended to the ciphertext, which travels as base64. `open` throws
+ * when the tag does not verify (wrong key, tampered entry).
+ */
+export interface Aead {
+  seal(key: Uint8Array, iv: Uint8Array, plain: string): Promise<string>;
+  open(key: Uint8Array, ivB64: string, sealedB64: string): Promise<string>;
+}
+
+/** Pure JS (@noble): works everywhere, but on Hermes without a JIT it costs about a second of JS time per MB */
+export const nobleAead: Aead = {
+  seal: async (key, iv, plain) => toBase64(gcm(key, iv).encrypt(encoder.encode(plain))),
+  open: async (key, ivB64, sealedB64) => decoder.decode(gcm(key, fromBase64(ivB64)).decrypt(fromBase64(sealedB64))),
+};
+
+/** `primary`, and `fallback` whenever it fails: a broken native call never costs the cache, only speed */
+export function preferring(primary: Aead, fallback: Aead): Aead {
+  let warned = false;
+  return {
+    seal: (key, iv, plain) =>
+      primary.seal(key, iv, plain).catch((error) => {
+        if (!warned) {
+          warned = true;
+          console.warn('[secureStorage] platform AES-GCM failed, using the JS one:', error);
+        }
+        return fallback.seal(key, iv, plain);
+      }),
+    // A wrong key or a tampered entry fails both ways and the entry is dropped; a failure of the native call alone
+    // is read by the JS one
+    open: (key, ivB64, sealedB64) => primary.open(key, ivB64, sealedB64).catch(() => fallback.open(key, ivB64, sealedB64)),
+  };
+}
+
+export function createEncryptedStorage(
+  inner: StringStorage,
+  vault: KeyVault,
+  random: (n: number) => Uint8Array = secureRandomBytes,
+  aead: Aead = nobleAead
+): StringStorage {
   let keyPromise: Promise<Uint8Array> | null = null;
 
   // One key per install, created on first use. Cached so concurrent writes share a single creation.
@@ -61,8 +101,7 @@ export function createEncryptedStorage(inner: StringStorage, vault: KeyVault, ra
       // An unavailable OS vault is not evidence of corrupt ciphertext. Preserve the cache and allow a retry.
       const key = await getKey();
       try {
-        const plain = gcm(key, fromBase64(ivB64)).decrypt(fromBase64(dataB64));
-        return decoder.decode(plain);
+        return await aead.open(key, ivB64, dataB64);
       } catch {
         // Wrong key (restored backup / new device) or tampering: drop the cache rather than crash
         await inner.removeItem(name);
@@ -72,8 +111,8 @@ export function createEncryptedStorage(inner: StringStorage, vault: KeyVault, ra
 
     async setItem(name, value) {
       const iv = random(12);
-      const cipher = gcm(await getKey(), iv).encrypt(encoder.encode(value));
-      await inner.setItem(name, `${VERSION}:${toBase64(iv)}:${toBase64(cipher)}`);
+      const sealed = await aead.seal(await getKey(), iv, value);
+      await inner.setItem(name, `${VERSION}:${toBase64(iv)}:${sealed}`);
     },
 
     removeItem: (name) => inner.removeItem(name),

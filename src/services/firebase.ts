@@ -1,6 +1,6 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { initializeAuth, getAuth, getReactNativePersistence, type Auth } from 'firebase/auth';
-import { initializeFirestore, getFirestore, doc, getDocFromServer, type Firestore } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, memoryLocalCache, memoryLruGarbageCollector, doc, getDocFromServer, type Firestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
 import { encryptedAsyncStorage } from '../store/keystore';
 import Constants from 'expo-constants';
@@ -57,10 +57,22 @@ export const firebaseApp = getApps().length > 0 ? getApp() : initializeApp(fireb
 
 // Firestore's persistent (IndexedDB) cache is web-only; on React Native the SDK keeps an
 // in-memory cache and the Redux persisted store is the offline source of truth.
+// That memory cache is LRU instead of the default eager one: documents and the resume token of a query outlive its
+// listener, so a re-subscription (a chat opened again, the feeds after the app comes back) shows what was loaded at
+// once and downloads only what changed since, not the whole result again.
 // Long polling auto-detection avoids WebChannel stalls on some mobile networks/proxies.
+const MEMORY_CACHE_BYTES = 10 * 1024 * 1024;
 let firestoreInstance: Firestore;
 try {
-  firestoreInstance = initializeFirestore(firebaseApp, { experimentalAutoDetectLongPolling: true, ignoreUndefinedProperties: true }, firestoreDatabaseId);
+  firestoreInstance = initializeFirestore(
+    firebaseApp,
+    {
+      localCache: memoryLocalCache({ garbageCollector: memoryLruGarbageCollector({ cacheSizeBytes: MEMORY_CACHE_BYTES }) }),
+      experimentalAutoDetectLongPolling: true,
+      ignoreUndefinedProperties: true,
+    },
+    firestoreDatabaseId
+  );
 } catch {
   // Already initialised (e.g. Fast Refresh)
   firestoreInstance = getFirestore(firebaseApp, firestoreDatabaseId);

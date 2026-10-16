@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Image, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import errorCat from '../../assets/illustrations/error-cat.png';
+import errorCat from '../../assets/illustrations/error-cat.webp';
 import { Button } from '../components/ui';
 import { tr as translate } from '../services/i18nService';
 import { supportContactUri } from '../services/support';

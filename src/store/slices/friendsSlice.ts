@@ -25,7 +25,11 @@ const friendsSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, () => ({ ids: [], profiles: {} } as FriendsState));
-    builder.addCase(identityRedacted, (state, { payload: uid }) => { state.ids = state.ids.filter((id) => id !== uid); delete state.profiles[uid]; });
+    // Repeated by every inbox snapshot: changes the state only the first time
+    builder.addCase(identityRedacted, (state, { payload: uid }) => {
+      if (state.ids.includes(uid)) state.ids = state.ids.filter((id) => id !== uid);
+      if (uid in state.profiles) delete state.profiles[uid];
+    });
   },
 });
 

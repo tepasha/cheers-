@@ -9,6 +9,11 @@ interface AuthState {
   dataOwnerId: string | null;
   /** True once the private profile was looked up (or the birth date is known): only then a missing birth date means "ask" */
   birthDateChecked: boolean;
+  /**
+   * The account whose server claims last confirmed it as eligible on this device. Lets that account open offline on
+   * what is stored here; the claims are checked again once the network is back (thunks/auth.ts).
+   */
+  eligibleUid?: string | null;
 }
 
 const initialState: AuthState = { user: createGuestUser(), dataOwnerId: null, birthDateChecked: false };
@@ -30,6 +35,12 @@ const authSlice = createSlice({
     birthDateLookedUp(state) {
       state.birthDateChecked = true;
     },
+    /** The server's claims for `uid` arrived (thunks/auth.ts): remember whether they confirmed the account */
+    claimsChecked(state, action: PayloadAction<{ uid: string; eligible: boolean }>) {
+      const { uid, eligible } = action.payload;
+      if (eligible) state.eligibleUid = uid;
+      else if (state.eligibleUid === uid) state.eligibleUid = null;
+    },
     /** Extends the 36h rolling session. Expiry itself is enforced by thunks, which also sign out of Firebase. */
     sessionTouched(state, action: PayloadAction<number | undefined>) {
       const now = action.payload ?? Date.now();
@@ -47,5 +58,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { loggedIn, loggedOut, sessionTouched, profileUpdated, birthDateLookedUp } = authSlice.actions;
+export const { loggedIn, loggedOut, sessionTouched, profileUpdated, birthDateLookedUp, claimsChecked } = authSlice.actions;
 export default authSlice.reducer;

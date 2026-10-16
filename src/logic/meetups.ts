@@ -1,6 +1,8 @@
 import { ph, tr } from '../services/i18nService';
 import type { AppLanguage } from '../types';
 import { meetupEndsAt } from './lifecycle';
+import { feedCellOf } from './feedArea';
+import type { GeoPoint } from './nearby';
 import { GroupMeetup, MeetupParticipant, BuddyProfile } from '../types';
 
 export interface CreateMeetupInput {
@@ -18,6 +20,8 @@ export interface CreateMeetupInput {
   creatorAvatar: string;
   lat?: number;
   lng?: number;
+  /** Where the creator is: places a meetup whose venue has no coordinates in their area (only the cell is kept) */
+  area?: GeoPoint;
   topicTag?: string;
   invitedBuddies?: BuddyProfile[];
 }
@@ -71,6 +75,7 @@ export function buildMeetup(params: CreateMeetupInput, now = Date.now()): GroupM
     lng: params.lng,
     createdAt: ph('Щойно'),
     topicTag: params.topicTag || ph('Зустріч'),
+    geo: feedCellOf(params.lat, params.lng) ?? feedCellOf(params.area?.lat, params.area?.lng),
   };
 }
 

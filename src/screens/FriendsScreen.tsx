@@ -15,9 +15,12 @@ import { BuddyProfile } from '../types';
 import { formatDistance } from '../services/geoService';
 import { useBuddyActions } from '../hooks/useBuddyActions';
 import { useTr } from '../hooks/useT';
+import { useFocusDemand } from '../hooks/useFocusDemand';
 
 export const FriendsScreen = () => {
   const tr = useTr();
+  // Friends who are around show their live profile, so the people nearby are refreshed while this list is open
+  useFocusDemand('people');
   const dispatch = useAppDispatch();
   const navigation = useNavigation();
   const friends = useAppSelector(selectFriends);

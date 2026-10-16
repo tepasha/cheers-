@@ -19,6 +19,7 @@ import { formatClock } from '../utils/time';
 import { analyticsService } from '../services/analyticsService';
 import { BuddyProfile, HangoutAlert } from '../types';
 import { useTr } from '../hooks/useT';
+import { useFocusDemand } from '../hooks/useFocusDemand';
 
 type Selection =
   | { kind: 'venue'; venue: VenuePlace }
@@ -29,6 +30,10 @@ const regionFor = (lat: number, lng: number): Region => ({ latitude: lat, longit
 
 export const MapScreen = () => {
   const tr = useTr();
+  // The map shows people, tables and the position itself, which is the one place precise GPS is worth its battery
+  useFocusDemand('people');
+  useFocusDemand('feeds');
+  useFocusDemand('preciseLocation');
   const dispatch = useAppDispatch();
   const navigation = useNavigation();
   const mapRef = useRef<MapView>(null);

@@ -1,7 +1,7 @@
 import type { User } from 'firebase/auth';
 import type { AppThunk } from '../hooks';
-import { birthDateLookedUp, loggedIn, loggedOut, profileUpdated, sessionTouched } from '../slices/authSlice';
-import { authNoticeSet, authReady } from '../slices/uiSlice';
+import { birthDateLookedUp, claimsChecked, loggedIn, loggedOut, profileUpdated, sessionTouched } from '../slices/authSlice';
+import { authNoticeSet, authReady, claimsPending } from '../slices/uiSlice';
 import { personalDataReset } from '../actions';
 import { checkAge, createUser, isSessionValid } from '../../logic/session';
 import { authService } from '../../services/authService';
@@ -90,16 +90,63 @@ export const handleFirebaseUser =
     );
     dispatch(authReady());
     dispatch(authErrorSet(false));
-    const current = captureSession(getState);
+    // Guards both lookups below. Reassigned only by this sign-in's own eligibility update, which starts a new session
+    // generation: that must not orphan the profile lookup, while another sign-in or a finished onboarding still does.
+    let current = captureSession(getState);
+    const failed = (error: unknown) => {
+      dispatch(authErrorSet(true));
+      const tr = trFor(getState);
+      reportAppError(error, { message: tr(describeAuthError(error)), retry: () => dispatch(handleFirebaseUser(fb)) });
+    };
 
     analyticsService.setUser(fb.uid, { provider: providerOf(fb) });
     const withClaims = typeof fb.getIdTokenResult === 'function';
-    if (withClaims) dispatch(profileUpdated({ serverEligible: false }));
+    if (withClaims) {
+      dispatch(profileUpdated({ serverEligible: false }));
+      dispatch(claimsPending(true));
+    }
+
+    /**
+     * Server-issued claims (age_21, email_verified) gate the app. The cached ID token is signed by the server, so while
+     * it is valid its claims open the app without a round trip; only a token that lacks them (right after onboarding)
+     * is refreshed. Offline, an account this device has seen confirmed opens on what it stores (Firestore rules demand
+     * the claim for anything shared anyway) and is confirmed again once the network is back.
+     */
+    const checkClaims = (attempt: number) => {
+      void fb.getIdTokenResult()
+        .then((cached) => (cached.claims.age_21 === true && cached.claims.email_verified === true ? cached : fb.getIdTokenResult(true)))
+        .then((token) => {
+          if (!current()) return;
+          const eligible = token.claims.age_21 === true;
+          dispatch(claimsChecked({ uid: fb.uid, eligible }));
+          dispatch(profileUpdated({
+            emailVerified: token.claims.email_verified === true,
+            termsVersion: typeof token.claims.terms_version === 'string' ? token.claims.terms_version : undefined,
+            ...(getState().auth.user.serverEligible !== eligible ? { serverEligible: eligible } : {}),
+          }));
+          current = captureSession(getState);
+        })
+        .catch((error) => {
+          if (!current()) return;
+          if (isOfflineError(error) && getState().auth.eligibleUid === fb.uid) {
+            dispatch(claimsPending(false));
+            if (getState().auth.user.serverEligible !== true) dispatch(profileUpdated({ serverEligible: true }));
+            current = captureSession(getState);
+            const retry = current;
+            setTimeout(() => { if (retry()) checkClaims(attempt + 1); }, Math.min(60_000, 5_000 * 2 ** attempt));
+            return;
+          }
+          dispatch(claimsPending(false));
+          failed(error);
+        });
+    };
+    if (withClaims) checkClaims(0);
+
+    // The profiles refresh what this device stores; only a birth date it does not have yet (a new device) is waited for
     void Promise.all([
       firestoreSyncService.getPrivateProfile(fb.uid),
       firestoreSyncService.getUserProfile(fb.uid),
-      withClaims ? fb.getIdTokenResult(true) : Promise.resolve(null),
-    ]).then(([privateProfile, publicProfile, token]) => {
+    ]).then(([privateProfile, publicProfile]) => {
       if (!current()) return;
       dispatch(profileUpdated({
         ...(privateProfile?.birthDate ? { birthDate: privateProfile.birthDate } : {}),
@@ -108,17 +155,21 @@ export const handleFirebaseUser =
           preferredDrinks: asStringList(publicProfile.preferredDrinks, 8).filter((value): value is DrinkType => (DRINK_TYPES as readonly string[]).includes(value)),
           currentMood: oneOf(publicProfile.currentMood, MOOD_TYPES, 'not_specified'), paymentRule: oneOf(publicProfile.paymentRule, PAYMENT_RULES, 'not_specified'),
         } : {}),
-        ...(token ? { emailVerified: token.claims.email_verified === true, serverEligible: token.claims.age_21 === true, termsVersion: typeof token.claims.terms_version === 'string' ? token.claims.terms_version : undefined } : {}),
       }));
       dispatch(birthDateLookedUp());
       void dispatch(reviewAge());
     }).catch((error) => {
       if (!current()) return;
-      dispatch(authErrorSet(true));
-      const tr = trFor(getState);
-      reportAppError(error, { message: tr(describeAuthError(error)), retry: () => dispatch(handleFirebaseUser(fb)) });
+      if (getState().auth.user.birthDate) {
+        console.warn('Profile refresh failed; the stored profile stays in use:', error);
+        return;
+      }
+      failed(error);
     });
   };
+
+/** No connection (Firebase Auth or Firestore): the request never reached the server */
+const isOfflineError = (error: unknown): boolean => ['auth/network-request-failed', 'unavailable'].includes(String((error as { code?: unknown })?.code ?? ''));
 
 /**
  * Holds the signed-in person's birth date against the minimum age. Too young: the account is removed and the sign-in

@@ -10,7 +10,7 @@ import { auth } from '../services/firebase';
 import { enforceSessionExpiry, handleFirebaseUser, touchSession } from '../store/thunks/auth';
 import { pruneExpiredContent } from '../store/thunks/lifecycle';
 import { selectCanUseApp } from '../store/selectors';
-import { useFirestoreStreams, usePresence, useProfileSync } from './useCloudSync';
+import { useFirestoreStreams, useProfileSync } from './useCloudSync';
 import { languageAutoDetected } from '../store/slices/settingsSlice';
 import { locationUpdated } from '../store/slices/locationSlice';
 import { networkStatusChanged } from '../store/slices/uiSlice';
@@ -20,9 +20,10 @@ import { toUserGeoLocation } from '../services/locationService';
 import { openChatFromPush, registerPush } from '../store/thunks/push';
 import { chatOpenRequested } from '../store/slices/uiSlice';
 import { navigationRef } from '../navigation/ref';
-import { configureNotifications, onPushTokenChanged, subscribeToNotificationTaps } from '../services/systemNotifications';
+import { configureNotifications, getSystemNotificationPermission, onPushTokenChanged, subscribeToNotificationTaps } from '../services/systemNotifications';
 import { flushOutbox } from '../store/thunks/outbox';
 import { captureAppErrorReporter, reportAppError } from '../services/appErrors';
+import { useDemanded } from '../services/demand';
 
 export function useOutbox() {
   const dispatch = useAppDispatch();
@@ -39,7 +40,10 @@ export function useOutbox() {
 
 const SESSION_CHECK_MS = 60_000;
 const EXPIRY_PRUNE_MS = 60_000;
-const MIN_MOVE_DEGREES = 0.0003; // ~30 m
+/** While a map shows the position it follows the user in ~30 m steps */
+const PRECISE_MOVE_DEGREES = 0.0003;
+/** Everywhere else ~110 m (north-south) is plenty: public positions are rounded to ~2 km, discovery to a ~550 m grid */
+const MOVE_DEGREES = 0.001;
 
 /** Mirrors Firebase Auth (the source of truth) into Redux, including the session restored on launch */
 export function useAuthSync() {
@@ -105,7 +109,10 @@ export function useExpiryPruning() {
   }, [dispatch]);
 }
 
-/** Follows the device position while the user has opted in to real GPS (not a simulated preset) */
+/**
+ * Follows the device position while the user has opted in to real GPS (not a simulated preset). High accuracy and
+ * 30 m steps only while a map shows the position (services/demand.ts); the GPS is released in the background.
+ */
 export function useLocationTracking() {
   const dispatch = useAppDispatch();
   const store = useStore<RootState>();
@@ -113,6 +120,7 @@ export function useLocationTracking() {
   const batterySaver = useAppSelector((s) => s.settings.batterySaver);
   const allowed = useAppSelector(selectCanUseApp);
   const userId = useAppSelector((s) => s.auth.user.id);
+  const precise = useDemanded('preciseLocation');
 
   useEffect(() => {
     if (isSimulated || !allowed) return;
@@ -121,6 +129,8 @@ export function useLocationTracking() {
     const report = captureAppErrorReporter({ restart: true });
     let subscription: Location.LocationSubscription | null = null;
     const config = getBatterySaverConfig(batterySaver);
+    const highAccuracy = precise && config.enableHighAccuracy;
+    const minMove = precise ? PRECISE_MOVE_DEGREES : MOVE_DEGREES;
 
     const checkPermission = async () => {
       const permission = await Location.getForegroundPermissionsAsync();
@@ -140,22 +150,23 @@ export function useLocationTracking() {
 
       const sub = await Location.watchPositionAsync(
         {
-          accuracy: config.enableHighAccuracy ? Location.Accuracy.High : Location.Accuracy.Balanced,
+          accuracy: highAccuracy ? Location.Accuracy.High : Location.Accuracy.Balanced,
           timeInterval: config.locationIntervalMs,
-          distanceInterval: 30,
+          distanceInterval: precise ? 30 : 100,
         },
         (position) => {
           if (cancelled || !selectCanUseApp(store.getState()) || store.getState().auth.user.id !== userId) return;
           const next = toUserGeoLocation(position.coords);
           const prev = store.getState().location.current;
           // Ignore jitter so idle GPS noise does not re-render every screen
-          if (prev.status !== 'active' || Math.abs(next.lat - prev.lat) > MIN_MOVE_DEGREES || Math.abs(next.lng - prev.lng) > MIN_MOVE_DEGREES) {
+          if (prev.status !== 'active' || Math.abs(next.lat - prev.lat) > minMove || Math.abs(next.lng - prev.lng) > minMove) {
             dispatch(locationUpdated(next));
           }
         }
       );
 
-      if (cancelled) sub.remove();
+      // The app may have gone to the background while the watch was starting: nothing would use it there
+      if (cancelled || AppState.currentState === 'background') sub.remove();
       else subscription = sub;
       } catch (err) {
         if (!cancelled && store.getState().auth.user.id === userId) dispatch(locationUpdated({ ...store.getState().location.current, status: 'error' }));
@@ -163,17 +174,21 @@ export function useLocationTracking() {
         if (!cancelled && store.getState().auth.user.id === userId) report(err);
       } finally { starting = false; }
     };
-    const foreground = AppState.addEventListener('change', (state) => {
+    const appState = AppState.addEventListener('change', (state) => {
       if (state === 'active') void startTracking();
+      else if (state === 'background') {
+        subscription?.remove();
+        subscription = null;
+      }
     });
     void startTracking();
 
     return () => {
       cancelled = true;
-      foreground.remove();
+      appState.remove();
       subscription?.remove();
     };
-  }, [dispatch, store, isSimulated, batterySaver, allowed, userId]);
+  }, [dispatch, store, isSimulated, batterySaver, allowed, userId, precise]);
 }
 
 /** Re-detects the UI language from the position until the user picks one manually */
@@ -187,6 +202,12 @@ export function useLanguageAutoDetect() {
     dispatch(languageAutoDetected({ lang: detected.lang, hint: detected.locationHint }));
   }, [dispatch, lat, lng]);
 }
+
+/**
+ * A registration leases the device for 24 h (the server skips expired devices); renewing it once an hour keeps the
+ * lease within an hour of the last use without a request to Expo and a Firestore write on every return to the app.
+ */
+const PUSH_RENEW_MS = 60 * 60 * 1000;
 
 /**
  * Keeps this phone registered for chat pushes while the user is signed in with notifications on. Runs again when
@@ -206,10 +227,27 @@ export function usePushRegistration() {
 
   useEffect(() => {
     if (!allowed || !enabled) return;
-    void dispatch(registerPush({ ask: false }));
-    const stop = onPushTokenChanged(() => void dispatch(registerPush({ ask: false })));
-    const timer = setInterval(() => AppState.currentState === 'active' && void dispatch(registerPush({ ask: false })), 10 * 60 * 1000);
-    const sub = AppState.addEventListener('change', (state) => state === 'active' && void dispatch(registerPush({ ask: false })));
+    let registeredAt = 0;
+    let registering = false;
+    const register = () => {
+      if (registering) return;
+      registering = true;
+      void dispatch(registerPush({ ask: false }))
+        .then((status) => { if (status === 'registered') registeredAt = Date.now(); })
+        .finally(() => { registering = false; });
+    };
+    const renew = () => {
+      if (Date.now() - registeredAt >= PUSH_RENEW_MS) {
+        register();
+        return;
+      }
+      // Notifications switched off in the system settings meanwhile: registerPush notices it locally, without a request
+      void getSystemNotificationPermission().then((status) => status !== 'granted' && register());
+    };
+    register();
+    const stop = onPushTokenChanged(register);
+    const timer = setInterval(() => AppState.currentState === 'active' && renew(), PUSH_RENEW_MS);
+    const sub = AppState.addEventListener('change', (state) => state === 'active' && renew());
     return () => { stop(); clearInterval(timer); sub.remove(); };
   }, [dispatch, allowed, enabled, language, userId]);
 }
@@ -252,7 +290,6 @@ export function useAppLifecycle() {
   useNetworkStatus();
   useFirestoreStreams();
   useExpiryPruning();
-  usePresence();
   useProfileSync();
   useLocationTracking();
   useLanguageAutoDetect();

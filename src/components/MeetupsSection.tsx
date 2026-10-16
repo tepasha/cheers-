@@ -1,5 +1,5 @@
 import { dialogs as Alert } from '../services/dialogs';
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, Text, View } from 'react-native';
 import { Avatar, Badge, Button, Card, Chip, EmptyState, Field, Icon, IconButton, Row, SectionTitle, Sheet } from './ui';
 import type { ReportTarget } from './ReportSheet';
@@ -13,10 +13,11 @@ import { addDays, formatDateInput, toIsoDateTime } from '../logic/dateInput';
 import { addMeetupToCalendar } from '../services/calendarService';
 import { useTr } from '../hooks/useT';
 import { InlineAd, useCanRequestAds } from './AdBanner';
-import { MEETUPS_AD_EVERY, isAdSlot, withAdSlots } from '../logic/ads';
+import { MEETUPS_AD_EVERY, isAdSlot, withAdSlots, type AdSlot } from '../logic/ads';
 import { ph } from '../services/i18nService';
 import { DateTimeField } from './DateTimeField';
 import { useCurrentTime } from '../hooks/useCurrentTime';
+import { useMountDemand } from '../services/demand';
 
 const STATUS_LABEL: Record<GroupMeetup['status'], string> = {
   upcoming: ph('Заплановано'),
@@ -24,6 +25,8 @@ const STATUS_LABEL: Record<GroupMeetup['status'], string> = {
   past: ph('Завершено'),
   cancelled: ph('Скасовано'),
 };
+
+const rowKey = (m: GroupMeetup | AdSlot) => (isAdSlot(m) ? `ad-${m.adSlot}` : m.id);
 
 export const MeetupsSection = ({ onReport }: { onReport: (t: ReportTarget) => void }) => {
   const tr = useTr();
@@ -38,72 +41,37 @@ export const MeetupsSection = ({ onReport }: { onReport: (t: ReportTarget) => vo
   const canRequestAds = useCanRequestAds();
   const rows = useMemo(() => (canRequestAds ? withAdSlots(active, MEETUPS_AD_EVERY) : active), [active, canRequestAds]);
 
-  const join = (m: GroupMeetup) => {
+  // Stable callbacks, so the memoized cards re-render only when their own meetup changes
+  const join = useCallback((m: GroupMeetup) => {
     if (!dispatch(joinMeetup(m.id))) Alert.error(tr('У цій зустрічі вже всі місця зайняті.'));
-  };
+  }, [dispatch, tr]);
 
-  const calendar = async (m: GroupMeetup) => {
+  const calendar = useCallback(async (m: GroupMeetup) => {
     try {
       if (!(await addMeetupToCalendar(m, lang))) Alert.error(tr('Поділитися файлом на цьому пристрої неможливо.'));
     } catch (err) {
       Alert.error(tr('Не вдалося створити файл календаря.'), err);
     }
-  };
+  }, [lang, tr]);
+
+  const invite = useCallback((m: GroupMeetup) => setInviting(m.id), []);
+  const cancel = useCallback((m: GroupMeetup) => dispatch(cancelMeetup(m.id)), [dispatch]);
+  const leave = useCallback((m: GroupMeetup) => dispatch(leaveMeetup(m.id)), [dispatch]);
+  const renderRow = useCallback(
+    ({ item }: { item: GroupMeetup | AdSlot }) =>
+      isAdSlot(item) ? <InlineAd /> : <MeetupCard meetup={item} myId={myId} onReport={onReport} onCalendar={calendar} onInvite={invite} onCancel={cancel} onLeave={leave} onJoin={join} />,
+    [myId, onReport, calendar, invite, cancel, leave, join]
+  );
 
   return (
     <>
       <FlatList
         data={rows}
-        keyExtractor={(m) => (isAdSlot(m) ? `ad-${m.adSlot}` : m.id)}
+        keyExtractor={rowKey}
         contentContainerStyle={{ padding: spacing.lg, paddingTop: 0, gap: spacing.md, flexGrow: 1 }}
         ListHeaderComponent={<Button label={tr('Запланувати зустріч')} icon="calendar" onPress={() => setCreating(true)} />}
         ListEmptyComponent={<EmptyState emoji="🗓️" title={tr('Запланованих зустрічей немає')} subtitle={tr('Створи зустріч, вибери заклад і час та запроси друзів.')} />}
-        renderItem={({ item: m }) => {
-          if (isAdSlot(m)) return <InlineAd />;
-          const me = m.participants.find((p) => p.userId === myId);
-          const going = m.participants.filter((p) => p.status === 'going');
-          const host = m.creatorId === myId;
-          return (
-            <Card style={{ gap: spacing.sm }}>
-              <Row style={{ justifyContent: 'space-between' }}>
-                <Text style={[typography.heading, { flex: 1 }]} numberOfLines={2}>
-                  {m.title}
-                </Text>
-                <Badge label={tr(STATUS_LABEL[m.status])} />
-              </Row>
-              <Text style={typography.small}>
-                📍 {m.venueName}
-                {m.venueAddress ? ` • ${m.venueAddress}` : ''}
-              </Text>
-              <Text style={typography.small}>
-                🕒 {tr('{date} о {time}', { date: m.scheduledDate, time: m.scheduledTime })} • 🍺 {tr(m.drinkPreference ?? '')}
-              </Text>
-              {!!m.description && <Text style={typography.body}>{m.description}</Text>}
-              <Row style={{ flexWrap: 'wrap' }}>
-                {m.participants.slice(0, 8).map((p) => (
-                  <Avatar key={p.userId} uri={p.userAvatar} name={p.userName} size={28} online={p.status === 'going'} />
-                ))}
-                <Text style={typography.tiny}>
-                  {tr('Підтвердили: {going}/{max}', { going: going.length, max: m.maxParticipants })}
-                </Text>
-              </Row>
-              <Row style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                {!host && (
-                  <IconButton icon="flag" label={tr('Поскаржитись')} color={colors.textDim} onPress={() => onReport({ id: m.creatorId, name: m.creatorName, avatar: m.creatorAvatar, type: 'group_meetup', contextId: m.id })} />
-                )}
-                <IconButton icon="calendar" label={tr('Додати в календар')} onPress={() => calendar(m)} />
-                {host && <IconButton icon="user-plus" label={tr('Запросити')} onPress={() => setInviting(m.id)} />}
-                {host ? (
-                  <Button label={tr('Скасувати')} small variant="danger" onPress={() => dispatch(cancelMeetup(m.id))} />
-                ) : me?.status === 'going' ? (
-                  <Button label={tr('Не піду')} small variant="secondary" onPress={() => dispatch(leaveMeetup(m.id))} />
-                ) : (
-                  <Button label={tr('Я піду')} small icon="check" onPress={() => join(m)} />
-                )}
-              </Row>
-            </Card>
-          );
-        }}
+        renderItem={renderRow}
       />
       {creating && <CreateMeetupSheet onClose={() => setCreating(false)} />}
       {inviting && <InviteSheet meetupId={inviting} onClose={() => setInviting(null)} />}
@@ -111,10 +79,69 @@ export const MeetupsSection = ({ onReport }: { onReport: (t: ReportTarget) => vo
   );
 };
 
+/** One meetup of the list; memoized, so a snapshot that changes one meetup re-renders one card */
+const MeetupCard = React.memo(({ meetup: m, myId, onReport, onCalendar, onInvite, onCancel, onLeave, onJoin }: {
+  meetup: GroupMeetup;
+  myId: string;
+  onReport: (t: ReportTarget) => void;
+  onCalendar: (m: GroupMeetup) => void;
+  onInvite: (m: GroupMeetup) => void;
+  onCancel: (m: GroupMeetup) => void;
+  onLeave: (m: GroupMeetup) => void;
+  onJoin: (m: GroupMeetup) => void;
+}) => {
+  const tr = useTr();
+  const me = m.participants.find((p) => p.userId === myId);
+  const going = m.participants.filter((p) => p.status === 'going');
+  const host = m.creatorId === myId;
+  return (
+    <Card style={{ gap: spacing.sm }}>
+      <Row style={{ justifyContent: 'space-between' }}>
+        <Text style={[typography.heading, { flex: 1 }]} numberOfLines={2}>
+          {m.title}
+        </Text>
+        <Badge label={tr(STATUS_LABEL[m.status])} />
+      </Row>
+      <Text style={typography.small}>
+        📍 {m.venueName}
+        {m.venueAddress ? ` • ${m.venueAddress}` : ''}
+      </Text>
+      <Text style={typography.small}>
+        🕒 {tr('{date} о {time}', { date: m.scheduledDate, time: m.scheduledTime })} • 🍺 {tr(m.drinkPreference ?? '')}
+      </Text>
+      {!!m.description && <Text style={typography.body}>{m.description}</Text>}
+      <Row style={{ flexWrap: 'wrap' }}>
+        {m.participants.slice(0, 8).map((p) => (
+          <Avatar key={p.userId} uri={p.userAvatar} name={p.userName} size={28} online={p.status === 'going'} />
+        ))}
+        <Text style={typography.tiny}>
+          {tr('Підтвердили: {going}/{max}', { going: going.length, max: m.maxParticipants })}
+        </Text>
+      </Row>
+      <Row style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {!host && (
+          <IconButton icon="flag" label={tr('Поскаржитись')} color={colors.textDim} onPress={() => onReport({ id: m.creatorId, name: m.creatorName, avatar: m.creatorAvatar, type: 'group_meetup', contextId: m.id })} />
+        )}
+        <IconButton icon="calendar" label={tr('Додати в календар')} onPress={() => onCalendar(m)} />
+        {host && <IconButton icon="user-plus" label={tr('Запросити')} onPress={() => onInvite(m)} />}
+        {host ? (
+          <Button label={tr('Скасувати')} small variant="danger" onPress={() => onCancel(m)} />
+        ) : me?.status === 'going' ? (
+          <Button label={tr('Не піду')} small variant="secondary" onPress={() => onLeave(m)} />
+        ) : (
+          <Button label={tr('Я піду')} small icon="check" onPress={() => onJoin(m)} />
+        )}
+      </Row>
+    </Card>
+  );
+});
+
 /** Mounted only while open, so the form and "today" are fresh every time */
 const CreateMeetupSheet = ({ onClose }: { onClose: () => void }) => {
   const tr = useTr();
   const dispatch = useAppDispatch();
+  // People to invite come from those nearby: kept fresh while the sheet is open
+  useMountDemand('people');
   const buddies = useAppSelector(selectBuddies);
   const location = useAppSelector(selectLocation);
   const now = useCurrentTime();
@@ -216,6 +243,7 @@ const CreateMeetupSheet = ({ onClose }: { onClose: () => void }) => {
 const InviteSheet = ({ meetupId, onClose }: { meetupId: string; onClose: () => void }) => {
   const tr = useTr();
   const dispatch = useAppDispatch();
+  useMountDemand('people');
   const buddies = useAppSelector(selectBuddies);
   const meetup = useAppSelector((s) => s.meetups.items.find((m) => m.id === meetupId));
   const [selected, setSelected] = useState<string[]>([]);

@@ -53,7 +53,7 @@ describe('users', () => {
     await assertFails(getDoc(doc(verifiedUser('alice'), 'users/bob')));
     await assertSucceeds(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice')));
     await assertFails(setDoc(doc(verifiedUser('alice'), 'users/bob'), profile('bob', { name: 'Hacked' })));
-    // the fields behind "people nearby" and presence
+    // the fields behind "people nearby"; lastSeenAt is still accepted from builds before 2026-10-16
     await assertSucceeds(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice', { geohash: 'u8vxn80js', lastSeenAt: '2026-10-10T12:00:00.000Z' })));
     await assertFails(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice', { geohash: 'x'.repeat(40) })));
     await assertFails(setDoc(doc(verifiedUser('alice'), 'users/alice'), profile('alice', { lastSeenAt: 12345 })));
@@ -122,6 +122,13 @@ describe('hangouts', () => {
       await assertFails(createWithBudget(db, 'hangouts/str', 'alice', 'hangout', hangout('alice', { id: 'str', expiresAt: 'tomorrow' })));
     });
 
+    it('takes the area cell (geo) only as 4 characters', async () => {
+      const db = verifiedUser('alice');
+      await assertSucceeds(createWithBudget(db, 'hangouts/cell', 'alice', 'hangout', hangout('alice', { id: 'cell', geo: 'u8vx' })));
+      await assertFails(createWithBudget(db, 'hangouts/long', 'alice', 'hangout', hangout('alice', { id: 'long', geo: 'u8vxn80' })));
+      await assertFails(createWithBudget(db, 'hangouts/num', 'alice', 'hangout', hangout('alice', { id: 'num', geo: 42 })));
+    });
+
     it('lets the host renew the table, but only for at most 4 hours from now', async () => {
       await seed((db) => setDoc(doc(db, 'hangouts/h1'), hangout('alice', { expiresAt: Date.now() - HOUR })));
       const alice = verifiedUser('alice');
@@ -185,6 +192,12 @@ describe('group meetups', () => {
     id: 'm1', title: 'Настілки', description: '', venueName: 'Squat', venueAddress: '', scheduledDate: '01.10.2026', scheduledTime: '19:00',
     maxParticipants: 6, participants: { [creator]: entry(creator, 'host') }, creatorId: creator, creatorName: creator, creatorAvatar: '',
     status: 'upcoming', createdAt: 'x', endsAt: Date.now() + 2 * 24 * 3600_000, ...over,
+  });
+
+  it('takes the area cell (geo) only as 4 characters', async () => {
+    const db = verifiedUser('alice');
+    await assertSucceeds(createWithBudget(db, 'group_meetups/cell', 'alice', 'meetup', meetup('alice', { id: 'cell', geo: 'u8vx' })));
+    await assertFails(createWithBudget(db, 'group_meetups/short', 'alice', 'meetup', meetup('alice', { id: 'short', geo: 'u8' })));
   });
 
   describe('meetup archive time', () => {

@@ -1,5 +1,30 @@
-import { BuddyProfile, ChatParticipant, ChatThread } from '../types';
+import { BuddyProfile, ChatParticipant, ChatThread, Message } from '../types';
 import { ph } from '../services/i18nService';
+
+/**
+ * Server time of the newest message this device received from Firestore as written (not one still pending, not a
+ * local copy whose time is the phone's): every message up to it is already here, so the chat stream can start after it.
+ * Undefined when there is none: then the newest page is loaded instead.
+ */
+/** Messages a chat loads when this device holds none of it, and per "Show earlier" page */
+export const CHAT_FIRST_PAGE = 30;
+
+/** Server time of the oldest server-confirmed message held: where "Show earlier" continues from */
+export function oldestConfirmedAt(messages: readonly Message[] | undefined): number | undefined {
+  let oldest: number | undefined;
+  for (const m of messages ?? []) {
+    if (m.hasPendingWrites === false && typeof m.createdAt === 'number' && m.createdAt > 0 && (oldest === undefined || m.createdAt < oldest)) oldest = m.createdAt;
+  }
+  return oldest;
+}
+
+export function newestConfirmedAt(messages: readonly Message[] | undefined): number | undefined {
+  let newest: number | undefined;
+  for (const m of messages ?? []) {
+    if (m.hasPendingWrites === false && typeof m.createdAt === 'number' && m.createdAt > 0 && (newest === undefined || m.createdAt > newest)) newest = m.createdAt;
+  }
+  return newest;
+}
 
 /** Direct chats have one id for both people, so a message sent by A lands in the room B reads */
 export const dmChatId = (a: string, b: string) => `dm_${[a, b].sort().join('_')}`;

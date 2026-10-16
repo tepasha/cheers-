@@ -17,7 +17,8 @@ const buddiesSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, () => ({ items: [] }));
-    builder.addCase(identityRedacted, (state, { payload: uid }) => { state.items = state.items.filter((b) => b.id !== uid); });
+    // Repeated by every inbox snapshot: a no-op once the person is gone, so the state (and every list) keeps its identity
+    builder.addCase(identityRedacted, (state, { payload: uid }) => { if (state.items.some((b) => b.id === uid)) state.items = state.items.filter((b) => b.id !== uid); });
   },
 });
 

@@ -1,7 +1,7 @@
 import outbox from '@/store/slices/outboxSlice';
 /**
  * Nothing may be read from, or published to, other people's data until the age is confirmed.
- * These tests mount the REAL hooks (useFirestoreStreams, usePresence, useProfileSync) on a real store and watch what
+ * These tests mount the REAL hooks (useFirestoreStreams, useProfileSync) on a real store and watch what
  * reaches Firestore. The bug they pin: a first Google sign-in sits on the birth-date screen verified but without a
  * birth date, and the profile (name, Google photo, position) used to be published during that time.
  */
@@ -36,7 +36,6 @@ vi.mock('@/services/firestoreSyncService', () => ({
     subscribeToMeetups: vi.fn(() => mocks.unsubscribe),
     subscribeToMyChats: vi.fn(() => mocks.unsubscribe),
     saveUserProfile: vi.fn().mockResolvedValue(undefined),
-    touchPresence: vi.fn().mockResolvedValue(undefined),
     getBlocks: vi.fn().mockResolvedValue([]),
     getUserFavorites: vi.fn().mockResolvedValue([]),
     getUserProfile: vi.fn().mockResolvedValue(null),
@@ -61,7 +60,9 @@ import ui from '@/store/slices/uiSlice';
 import { createUser } from '@/logic/session';
 import { firestoreSyncService as cloud } from '@/services/firestoreSyncService';
 import { submitBirthDate } from '@/store/thunks/auth';
-import { useFirestoreStreams, usePresence, useProfileSync } from '@/hooks/useCloudSync';
+import { useFirestoreStreams, useProfileSync } from '@/hooks/useCloudSync';
+import { holdDemand, useMountDemand } from '@/services/demand';
+import { batterySaverSet } from '@/store/slices/settingsSlice';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,17 +70,21 @@ const rootReducer = combineReducers({ outbox, auth, settings, location, buddies,
 const makeStore = () => configureStore({ reducer: rootReducer });
 type TestStore = ReturnType<typeof makeStore>;
 
-/** The three hooks that talk to other people's data, mounted the way the app mounts them */
-const Harness = () => {
+/** The hooks that talk to other people's data, mounted the way the app mounts them */
+const Streams = () => {
   useFirestoreStreams();
-  usePresence();
   useProfileSync();
   return null;
 };
+/** ...with the first tab (Discover) on screen, which shows the people nearby */
+const Harness = () => {
+  useMountDemand('people');
+  return createElement(Streams);
+};
 let mounted: ReactTestRenderer | null = null;
-const mount = (store: TestStore) => {
+const mount = (store: TestStore, root: () => unknown = Harness) => {
   act(() => {
-    mounted = create(createElement(Provider, { store, children: createElement(Harness) }));
+    mounted = create(createElement(Provider, { store, children: createElement(root as () => null) }));
   });
 };
 const flush = async (ms = 5 * 60 * 1000) => {
@@ -102,7 +107,7 @@ const signInWithGoogle = (store: TestStore, over: Record<string, unknown> = {}) 
   );
 
 const reads = () => [cloud.subscribeToLiveHangouts, cloud.subscribeToPublicBuddies, cloud.subscribeToMeetups, cloud.subscribeToMyChats, cloud.getBlocks, cloud.getUserFavorites];
-const writes = () => [cloud.saveUserProfile, cloud.touchPresence];
+const writes = () => [cloud.saveUserProfile];
 const touched = (fns: Array<ReturnType<typeof vi.fn> | unknown>) => (fns as Array<ReturnType<typeof vi.fn>>).filter((f) => f.mock.calls.length > 0).length;
 
 beforeEach(() => {
@@ -116,14 +121,13 @@ afterEach(() => {
 });
 
 describe('before the age is confirmed, nothing is read and nothing is published', () => {
-  it('a first Google sign-in (verified, no birth date) publishes no profile and no presence, and subscribes to nothing', async () => {
+  it('a first Google sign-in (verified, no birth date) publishes no profile and subscribes to nothing', async () => {
     const store = makeStore();
     signInWithGoogle(store);
     mount(store);
     await flush();
 
     expect(cloud.saveUserProfile).not.toHaveBeenCalled(); // the bug: name + Google photo + position went out here
-    expect(cloud.touchPresence).not.toHaveBeenCalled();
     expect(touched(reads())).toBe(0);
   });
 
@@ -171,7 +175,6 @@ describe('once the age is confirmed', () => {
     mount(store);
     await flush(2_000);
 
-    expect(cloud.touchPresence).toHaveBeenCalledWith('g1');
     expect(cloud.saveUserProfile).toHaveBeenCalledTimes(1);
     expect(cloud.saveUserProfile).toHaveBeenCalledWith(expect.objectContaining({ id: 'g1', name: 'Ірина', avatar: 'https://lh3.googleusercontent.com/a/photo', age: 30 }));
     expect(cloud.subscribeToLiveHangouts).toHaveBeenCalledTimes(1);
@@ -198,6 +201,77 @@ describe('once the age is confirmed', () => {
   });
 });
 
+describe('work that only screens on view need', () => {
+  it('asks for the people nearby only while something shows them, and not again before the refresh time runs out', async () => {
+    const people = cloud.subscribeToPublicBuddies as ReturnType<typeof vi.fn>;
+    people.mockImplementation((_uid: string, _centre: unknown, deliver: (items: unknown[]) => void) => { deliver([]); return mocks.unsubscribe; });
+    try {
+      const store = makeStore();
+      signInWithGoogle(store, { birthDate: bornYearsAgo(30) });
+      mount(store, Streams); // say, the chats tab
+      await flush(2_000);
+      expect(people).not.toHaveBeenCalled();
+
+      let release = () => {};
+      act(() => { release = holdDemand('people'); }); // Discover focused
+      await flush(1_000);
+      expect(people).toHaveBeenCalledTimes(1);
+
+      act(() => release()); // Discover left...
+      await flush(1_000);
+      act(() => { release = holdDemand('people'); }); // ...and focused again within the refresh time: the store still has them
+      await flush(1_000);
+      expect(people).toHaveBeenCalledTimes(1);
+
+      await flush(2 * 60 * 1000); // the refresh time ran out while on screen
+      expect(people).toHaveBeenCalledTimes(2);
+      act(() => release());
+    } finally {
+      people.mockImplementation(() => mocks.unsubscribe);
+    }
+  });
+
+  it('battery saver keeps the table and meetup feeds to the screens that show them; the inbox stays', async () => {
+    const store = makeStore();
+    signInWithGoogle(store, { birthDate: bornYearsAgo(30) });
+    store.dispatch(batterySaverSet(true));
+    mount(store, Streams);
+    await flush(2_000);
+    expect(cloud.subscribeToLiveHangouts).not.toHaveBeenCalled();
+    expect(cloud.subscribeToMeetups).not.toHaveBeenCalled();
+    expect(cloud.subscribeToMyChats).toHaveBeenCalledTimes(1);
+
+    let release = () => {};
+    act(() => { release = holdDemand('feeds'); }); // Hangouts focused
+    await flush(1_000);
+    expect(cloud.subscribeToLiveHangouts).toHaveBeenCalledTimes(1);
+    expect(cloud.subscribeToMeetups).toHaveBeenCalledTimes(1);
+
+    act(() => release());
+    expect(mocks.unsubscribe).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the public profile on the next launch', () => {
+  it('is not written again when nothing in it changed, and is when something did', async () => {
+    const store = makeStore();
+    signInWithGoogle(store, { birthDate: bornYearsAgo(30) });
+    mount(store);
+    await flush(2_000);
+    expect(cloud.saveUserProfile).toHaveBeenCalledTimes(1);
+
+    act(() => mounted?.unmount()); // the app is closed...
+    mount(store); // ...and opened again on the same stored state
+    await flush(2_000);
+    expect(cloud.saveUserProfile).toHaveBeenCalledTimes(1);
+
+    act(() => { store.dispatch(profileUpdated({ tagline: 'Нове' })); });
+    await flush(2_000);
+    expect(cloud.saveUserProfile).toHaveBeenCalledTimes(2);
+    expect(cloud.saveUserProfile).toHaveBeenLastCalledWith(expect.objectContaining({ tagline: 'Нове' }));
+  });
+});
+
 describe('the Google sign-in flow end to end', () => {
   it('publishes nothing while the birth-date screen is up, and starts only after an adult date is submitted', async () => {
     const store = makeStore();
@@ -214,11 +288,10 @@ describe('the Google sign-in flow end to end', () => {
 
     expect(cloud.savePrivateProfile).toHaveBeenCalledTimes(1);
     expect(cloud.saveUserProfile).toHaveBeenCalledWith(expect.objectContaining({ id: 'g1', age: 30 }));
-    expect(cloud.touchPresence).toHaveBeenCalled();
     expect(cloud.subscribeToMyChats).toHaveBeenCalledTimes(1);
   });
 
-  it('a person who turns out to be too young was never visible: no profile, no presence, nothing subscribed', async () => {
+  it('a person who turns out to be too young was never visible: no profile, nothing subscribed', async () => {
     const store = makeStore();
     signInWithGoogle(store);
     mount(store);
@@ -230,7 +303,6 @@ describe('the Google sign-in flow end to end', () => {
     await flush();
 
     expect(cloud.saveUserProfile).not.toHaveBeenCalled();
-    expect(cloud.touchPresence).not.toHaveBeenCalled();
     expect(touched(reads())).toBe(0);
     expect(cloud.savePrivateProfile).not.toHaveBeenCalled(); // nothing about them is kept
     expect(store.getState().auth.user.isLoggedIn).toBe(false);
@@ -255,7 +327,6 @@ describe('leaving', () => {
     mount(store);
     await flush(2_000);
     const saves = (cloud.saveUserProfile as ReturnType<typeof vi.fn>).mock.calls.length;
-    const presences = (cloud.touchPresence as ReturnType<typeof vi.fn>).mock.calls.length;
 
     act(() => {
       store.dispatch(loggedOut());
@@ -264,6 +335,5 @@ describe('leaving', () => {
 
     expect(mocks.unsubscribe).toHaveBeenCalledTimes(4); // hangouts, nearby people, meetups, chat inbox
     expect((cloud.saveUserProfile as ReturnType<typeof vi.fn>).mock.calls.length).toBe(saves);
-    expect((cloud.touchPresence as ReturnType<typeof vi.fn>).mock.calls.length).toBe(presences);
   });
 });

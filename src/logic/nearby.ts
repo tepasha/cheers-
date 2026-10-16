@@ -3,15 +3,11 @@ import type { BuddyProfile } from '../types';
 
 /**
  * "People nearby": what the discovery list asks Firestore for. Decisions:
- *   radius 3 km, at most 50 profiles, people without a location are not shown,
- *   people who have not opened the app for a week are shown but marked "inactive".
+ *   radius 3 km, at most 50 profiles, people without a location are not shown.
+ *   No presence is recorded (2026-10-16): nobody is shown as online or inactive.
  */
 export const NEARBY_RADIUS_KM = 3;
 export const NEARBY_MAX_PROFILES = 50;
-export const INACTIVE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
-export const ONLINE_WITHIN_MS = 15 * 60 * 1000;
-/** How often an open app tells Firestore it is still here (one small write per 10 minutes) */
-export const PRESENCE_INTERVAL_MS = 10 * 60 * 1000;
 
 /** Geohash precision stored on the public profile: 9 characters is a cell of a few metres, finer than the 20 m grid */
 const GEOHASH_LENGTH = 9;
@@ -50,19 +46,3 @@ export function pickNearby(profiles: BuddyProfile[], center: GeoPoint): BuddyPro
     .slice(0, NEARBY_MAX_PROFILES)
     .map(({ p, km }) => ({ ...p, distanceKm: km }));
 }
-
-const seenAt = (lastSeenAt: string | undefined): number | null => {
-  const t = lastSeenAt ? Date.parse(lastSeenAt) : NaN;
-  return Number.isFinite(t) ? t : null;
-};
-
-/** A profile with no recorded visit (older builds) is treated as inactive rather than as present */
-export const isInactive = (lastSeenAt: string | undefined, now: number): boolean => {
-  const t = seenAt(lastSeenAt);
-  return t === null || now - t > INACTIVE_AFTER_MS;
-};
-
-export const isOnline = (lastSeenAt: string | undefined, now: number): boolean => {
-  const t = seenAt(lastSeenAt);
-  return t !== null && now - t <= ONLINE_WITHIN_MS;
-};

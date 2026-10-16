@@ -1,7 +1,10 @@
 # Error screen illustration
 
-`error-cat.png` was generated for Budmo with the built-in imagegen tool on 2026-10-14.
-The PNG preserves its transparent background and is bundled locally for offline error screens.
+`error-cat.webp` was generated for Budmo with the built-in imagegen tool on 2026-10-14.
+The image keeps its transparent background and is bundled locally for offline error screens.
+On 2026-10-16 it was downscaled from 1254×1254 to 720×720 px (premultiplied-alpha area averaging, same framing):
+the error screen shows it at most 240×240 pt, which is 720 px on a 3x screen. 1.64 MB → 0.54 MB in the app and in OTA updates.
+The same day the PNG became a WebP (quality 82, alpha lossless, `npx sharp-cli@5.1.0 -i error-cat.png -o error-cat.webp -f webp -q 82 --effort 6 --smartSubsample`): 0.54 MB → 0.09 MB. Android decodes WebP natively; iOS from iOS 14.
 
 Final prompt:
 

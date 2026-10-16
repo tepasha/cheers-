@@ -7,7 +7,7 @@ import settings, { languageAutoDetected, languageChosen } from '@/store/slices/s
 import location, { locationUpdated } from '@/store/slices/locationSlice';
 import buddies, { buddiesSynced } from '@/store/slices/buddiesSlice';
 import hangouts, { expiredHangoutsPruned, hangoutClosed, hangoutJoined, hangoutPublished, hangoutsSynced } from '@/store/slices/hangoutsSlice';
-import chats, { MAX_MESSAGES_PER_THREAD, inboxSynced, chatDeleted, chatRead, directChatEnsured, groupChatCreated, messageAppended, messagesReceived, participantsAdded } from '@/store/slices/chatsSlice';
+import chats, { MAX_MESSAGES_PER_THREAD, inboxSynced, chatDeleted, chatRead, directChatEnsured, groupChatCreated, messageAppended, messagesReceived, olderMessagesLoaded, participantsAdded } from '@/store/slices/chatsSlice';
 import friends, { friendAdded, friendRemoved } from '@/store/slices/friendsSlice';
 import notifications, { allNotificationsRead, notificationReceived, notificationRead } from '@/store/slices/notificationsSlice';
 import gamification from '@/store/slices/gamificationSlice';
@@ -28,6 +28,9 @@ import {
 import { createUser, SESSION_DURATION_MS } from '@/logic/session';
 import { BuddyProfile, ChatThread, HangoutAlert, Message, PushNotificationItem } from '@/types';
 import type { RootState } from '@/store/index';
+import { identityRedacted } from '@/store/actions';
+import { selectHangoutsCount } from '@/store/selectors';
+import { meetupsReconciled } from '@/store/slices/meetupsSlice';
 
 const rootReducer = combineReducers({ outbox, auth, settings, location, buddies, hangouts, chats, friends, notifications, gamification, meetups, safety, favorites, ui });
 const makeStore = () => configureStore({ reducer: rootReducer });
@@ -184,6 +187,40 @@ describe('chats slice', () => {
     expect(t.messages).toHaveLength(MAX_MESSAGES_PER_THREAD);
     expect(t.messages[0].id).toBe('m25');
     expect(t.lastMessage).toBe(`text m${MAX_MESSAGES_PER_THREAD + 24}`);
+  });
+
+  it('"Show earlier" puts an older page in front, once, and remembers when the first message is reached', () => {
+    const store = withThread();
+    const at = (id: string, createdAt: number) => msg(id, { createdAt, hasPendingWrites: false });
+    store.dispatch(messagesReceived({ chatId: 'chat-a', messages: [at('n1', 100), at('n2', 200)] }));
+    store.dispatch(olderMessagesLoaded({ chatId: 'chat-a', messages: [at('o1', 10), at('o2', 20), at('n1', 100)], complete: false }));
+    let t = state(store).chats.threads[0];
+    expect(t.messages.map((m) => m.id)).toEqual(['o1', 'o2', 'n1', 'n2']);
+    expect(t.lastMessage).toBe('text n2'); // the preview stays the newest message
+    expect(t.historyComplete).toBeUndefined();
+
+    store.dispatch(olderMessagesLoaded({ chatId: 'chat-a', messages: [at('o0', 5)], complete: true }));
+    t = state(store).chats.threads[0];
+    expect(t.messages[0].id).toBe('o0');
+    expect(t.historyComplete).toBe(true);
+  });
+
+  it('an older proposal gets the answer that is already in the thread', () => {
+    const store = withThread();
+    store.dispatch(messagesReceived({ chatId: 'chat-a', messages: [msg('r', { createdAt: 50, senderId: 'me', type: 'proposal_response', proposalId: 'p', proposalStatus: 'accepted' })] }));
+    store.dispatch(olderMessagesLoaded({ chatId: 'chat-a', complete: false, messages: [msg('p', { createdAt: 10, type: 'location_proposal', proposalData: { barName: 'B', address: 'A', time: 'T', status: 'pending' } })] }));
+    expect(state(store).chats.threads[0].messages[0].proposalData?.status).toBe('accepted');
+  });
+
+  it('a full page after a long absence replaces the older messages instead of leaving a hole', () => {
+    const store = withThread();
+    const at = (id: string, createdAt: number, over: Partial<Message> = {}) => msg(id, { createdAt, hasPendingWrites: false, ...over });
+    store.dispatch(messagesReceived({ chatId: 'chat-a', messages: [at('old1', 10), at('old2', 20), at('unsent', 25, { hasPendingWrites: true })] }));
+    store.dispatch(olderMessagesLoaded({ chatId: 'chat-a', messages: [], complete: true }));
+    store.dispatch(messagesReceived({ chatId: 'chat-a', messages: [at('new1', 500), at('new2', 600)], replacesOlder: true }));
+    const t = state(store).chats.threads[0];
+    expect(t.messages.map((m) => m.id)).toEqual(['unsent', 'new1', 'new2']); // nothing confirmed from before the gap
+    expect(t.historyComplete).toBeUndefined(); // "Show earlier" can bring the rest back
   });
 
   it('clears unread, updates proposals, adds participants and deletes', () => {
@@ -607,5 +644,70 @@ describe('expiry pruning', () => {
     );
     store.dispatch(archivedMeetupsPruned(NOW));
     expect(state(store).meetups.items.map((m) => m.id).sort()).toEqual(['tonight', 'unknown']);
+  });
+});
+
+describe('a deleted account, repeated by every inbox snapshot', () => {
+  it('is redacted once; repeating it leaves every slice untouched (no re-render, no re-persist)', () => {
+    const store = makeStore();
+    store.dispatch(buddiesSynced([buddy('gone'), buddy('b')]));
+    store.dispatch(friendAdded(buddy('gone')));
+    store.dispatch(notificationReceived({ id: 'n1', type: 'system', title: 't', body: 'b', timestamp: '', createdAt: 1, isRead: false, buddyId: 'gone' } as PushNotificationItem));
+    store.dispatch(groupChatCreated({
+      id: 'dm', buddy: buddy('gone', { name: 'Gone' }), lastMessage: '', lastMessageTime: '', unreadCount: 0,
+      messages: [msg('m1', { chatId: 'dm', senderId: 'gone', senderName: 'Gone', senderAvatar: 'https://lh3.googleusercontent.com/a/x' })],
+    }));
+    store.dispatch(groupChatCreated({
+      id: 'grp', isGroup: true, groupName: 'G', buddy: buddy('grp'), lastMessage: '', lastMessageTime: '', unreadCount: 0, messages: [],
+      participants: [{ id: 'gone', name: 'Gone', avatar: '' }, { id: 'b', name: 'B', avatar: '' }],
+    }));
+
+    store.dispatch(identityRedacted('gone'));
+    const once = state(store);
+    expect(once.buddies.items.map((b) => b.id)).toEqual(['b']);
+    expect(once.friends.ids).toEqual([]);
+    expect(once.notifications.items).toEqual([]);
+    expect(once.chats.threads.find((t) => t.id === 'dm')?.buddy.name).toBe('');
+    expect(once.chats.threads.find((t) => t.id === 'dm')?.messages[0]).toMatchObject({ senderName: '', senderAvatar: undefined });
+    expect(once.chats.threads.find((t) => t.id === 'grp')?.participants?.map((p) => p.id)).toEqual(['b']);
+
+    store.dispatch(identityRedacted('gone'));
+    const twice = state(store);
+    for (const slice of ['buddies', 'friends', 'notifications', 'chats', 'ui'] as const) expect(twice[slice], slice).toBe(once[slice]);
+  });
+});
+
+describe('tab badge of live tables', () => {
+  it('counts the tables without blocked hosts and does not change with the position', () => {
+    const store = makeStore();
+    store.dispatch(hangoutsSynced([
+      { id: 'h1', userId: 'u1', lat: 50.45, lng: 30.52 } as HangoutAlert,
+      { id: 'h2', userId: 'blocked', lat: 50.46, lng: 30.5 } as HangoutAlert,
+    ]));
+    store.dispatch(userBlocked({ userId: 'blocked', userName: 'B', blockedAt: '' }));
+    const count = selectHangoutsCount(state(store));
+    expect(count).toBe(1);
+    store.dispatch(locationUpdated({ ...state(store).location.current, lat: 49.84, lng: 24.03 }));
+    expect(selectHangoutsCount(state(store))).toBe(count);
+  });
+});
+
+describe('meetups snapshot', () => {
+  it('keeps the objects of unchanged meetups, and the list itself when nothing changed', () => {
+    const store = makeStore();
+    const a = { id: 'a', creatorId: 'c', title: 'A', participants: [{ userId: 'c', status: 'going' }] } as never;
+    const b = { id: 'b', creatorId: 'c', title: 'B', participants: [] } as never;
+    store.dispatch(meetupsReconciled({ items: [a, b], pendingIds: [] }));
+    const first = state(store).meetups.items;
+
+    // Firestore rebuilds every document as a new object on each snapshot
+    store.dispatch(meetupsReconciled({ items: [structuredClone(a), structuredClone(b)], pendingIds: [] }));
+    expect(state(store).meetups.items).toBe(first);
+
+    store.dispatch(meetupsReconciled({ items: [structuredClone(a), { ...(structuredClone(b) as object), title: 'B2' } as never], pendingIds: [] }));
+    const next = state(store).meetups.items;
+    expect(next[0]).toBe(first[0]);
+    expect(next[1]).not.toBe(first[1]);
+    expect(next[1].title).toBe('B2');
   });
 });

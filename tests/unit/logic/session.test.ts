@@ -84,9 +84,9 @@ describe('date input', () => {
 });
 
 describe('battery saver config', () => {
-  it('polls slower and avoids high accuracy in saver mode', () => {
-    expect(getBatterySaverConfig(false)).toMatchObject({ locationIntervalMs: 15000, realtimeSyncIntervalMs: 10000, enableHighAccuracy: true });
-    expect(getBatterySaverConfig(true)).toMatchObject({ locationIntervalMs: 90000, realtimeSyncIntervalMs: 60000, enableHighAccuracy: false });
+  it('polls slower, refreshes people less often, keeps feeds to their screens and avoids high accuracy in saver mode', () => {
+    expect(getBatterySaverConfig(false)).toMatchObject({ locationIntervalMs: 15000, peopleRefreshMs: 120000, feedsOnlyInView: false, enableHighAccuracy: true });
+    expect(getBatterySaverConfig(true)).toMatchObject({ locationIntervalMs: 90000, peopleRefreshMs: 300000, feedsOnlyInView: true, enableHighAccuracy: false });
   });
 });
 

@@ -35,6 +35,7 @@ import { firestoreSyncService as svc } from '@/services/firestoreSyncService';
 import { submitReport } from '@/store/thunks/safety';
 import { dmChatId, groupChatId } from '@/logic/chats';
 import { buildMeetup } from '@/logic/meetups';
+import { feedCell, feedCells } from '@/logic/feedArea';
 import auth, { loggedIn } from '@/store/slices/authSlice';
 import safety from '@/store/slices/safetySlice';
 import notifications from '@/store/slices/notificationsSlice';
@@ -137,6 +138,7 @@ describe('hangouts', () => {
     as('carol');
     await svc.joinLiveHangout('h1', 'carol');
     const data = (await admin((db) => getDoc(doc(db, 'hangouts/h1')))).data()!;
+    expect(data.geo).toBe(feedCell(50.4, 30.5)); // the area the listeners ask for
     expect(data.participantsCount).toBe(3);
     expect(data.joinedUsers).toEqual(['alice', 'bob', 'carol']);
 
@@ -200,7 +202,8 @@ describe('meetups', () => {
     const m = base();
     await svc.saveMeetup(m);
     const received = await new Promise<any[]>((resolve) => {
-      const off = svc.subscribeToMeetups((list) => {
+      // No coordinates and no area: only the "mine" query can bring it back to its host
+      const off = svc.subscribeToMeetups('alice', feedCells(feedCell(50.45, 30.52)), (list) => {
         off();
         resolve(list);
       });

@@ -44,10 +44,6 @@ export interface BuddyProfile {
   favoriteBars: string[];
   talkTopics: string[];
   online: boolean;
-  /** ISO time the person last had the app open; drives the online dot and the "inactive" mark */
-  lastSeenAt?: string;
-  /** No visit for a week (computed when the profile arrives): shown as "inactive" instead of being hidden */
-  inactive?: boolean;
   activeCheckIn?: {
     barName: string;
     note: string;
@@ -118,6 +114,8 @@ export interface ChatThread {
   updatedAt?: string;
   lastMessageId?: string;
   lastReadMessageId?: string;
+  /** In memory only: "Show earlier" reached the first message of the chat */
+  historyComplete?: boolean;
 }
 
 export interface HangoutAlert {
@@ -176,6 +174,8 @@ export interface GroupMeetup {
   /** Epoch ms when the meetup leaves the lists: 24 h after it starts (see logic/lifecycle) */
   endsAt?: number;
   topicTag?: string;
+  /** The area clients listen to (logic/feedArea.ts): the venue's cell, else the creator's when it was planned */
+  geo?: string;
 }
 
 export interface FilterSettings {

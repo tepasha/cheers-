@@ -1,6 +1,6 @@
 import type { AppThunk } from '../hooks';
-import { inboxSynced } from '../slices/chatsSlice';
-import { CloudChat, otherMemberId, placeholderBuddy, threadFromCloudChat } from '../../logic/chats';
+import { inboxSynced, olderMessagesLoaded } from '../slices/chatsSlice';
+import { CloudChat, oldestConfirmedAt, otherMemberId, placeholderBuddy, threadFromCloudChat } from '../../logic/chats';
 import { cryptoService } from '../../services/cryptoService';
 import { asString } from '../../logic/cloudData';
 import { firestoreSyncService } from '../../services/firestoreSyncService';
@@ -9,6 +9,17 @@ import { notifyChatMessage } from './notifications';
 import { captureSession } from '../sessionGuard';
 import { inboxSyncStarted, inboxReady } from '../slices/uiSlice';
 import { identityRedacted } from '../actions';
+
+/** "Show earlier": the page of messages before the oldest one this device holds */
+export const loadOlderMessages =
+  (chatId: string): AppThunk<Promise<void>> =>
+  async (dispatch, getState) => {
+    const before = oldestConfirmedAt(getState().chats.threads.find((t) => t.id === chatId)?.messages);
+    if (before === undefined) return;
+    const current = captureSession(getState);
+    const page = await firestoreSyncService.loadOlderMessages(chatId, getState().auth.user.id, before);
+    if (current()) dispatch(olderMessagesLoaded({ chatId, ...page }));
+  };
 
 /**
  * Turns the Firestore chat list into local threads. The ciphertext preview is decrypted here, and the

@@ -7,7 +7,7 @@ import { DarkTheme, NavigationContainer, type Theme } from '@react-navigation/na
 import { Provider } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
 
-import { persistor, store } from './src/store';
+import { chatsPersistence, persistor, store } from './src/store';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/ref';
 import { EndedTableModal, PushBanner } from './src/components/shell';
@@ -43,7 +43,10 @@ const AppShell = () => {
   // Persistence is throttled; write everything out before the OS may kill the backgrounded app
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') void persistor.flush();
+      if (state !== 'active') {
+        void persistor.flush();
+        void chatsPersistence.flush();
+      }
     });
     return () => sub.remove();
   }, []);

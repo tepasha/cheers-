@@ -10,16 +10,25 @@ import { checkAge } from '../logic/session';
 export const selectUser = (s: RootState) => s.auth.user;
 
 /**
+ * The sanctioned-territory check. Every gate reads this one result, so a position change runs the polygon test once
+ * (logic/territory.ts), not once per selector.
+ */
+export const selectGeoBlock = createSelector(
+  [(s: RootState) => s.location.current, (s: RootState) => s.settings.simulateRuBlock],
+  (location, simulate) => checkRussianTerritoryRestriction(location, simulate)
+);
+
+/**
  * The one gate in front of everything that talks to other people: signed in, e-mail verified AND the birth date known
  * and 21 or over. Until all three hold, the app reads nothing about other users and publishes nothing about this one
  * (profile, position, presence, push device) - a first Google sign-in sits on the birth-date screen in that state, and
- * a person who turns out to be too young is removed without ever having been visible. Memoized on its three inputs.
+ * a person who turns out to be too young is removed without ever having been visible. Memoized on its inputs.
  */
 export const selectCanUseApp = createSelector(
   [(s: RootState) => s.auth.user.isLoggedIn, (s: RootState) => s.auth.user.emailVerified, (s: RootState) => s.auth.user.birthDate,
-    (s: RootState) => s.auth.user.serverEligible, (s: RootState) => s.location.current, (s: RootState) => s.settings.simulateRuBlock],
-  (isLoggedIn, emailVerified, birthDate, eligible, location, simulate): boolean =>
-    isLoggedIn === true && emailVerified === true && eligible !== false && checkAge(birthDate) === 'ok' && !checkRussianTerritoryRestriction(location, simulate).isBlocked
+    (s: RootState) => s.auth.user.serverEligible, (s: RootState) => selectGeoBlock(s).isBlocked],
+  (isLoggedIn, emailVerified, birthDate, eligible, geoBlocked): boolean =>
+    isLoggedIn === true && emailVerified === true && eligible !== false && checkAge(birthDate) === 'ok' && !geoBlocked
 );
 export const selectLocation = (s: RootState) => s.location.current;
 export const selectSettings = (s: RootState) => s.settings;
@@ -32,11 +41,6 @@ export const selectIsOnline = (s: RootState) => s.ui.isOnline;
 
 const selectBlockedIds = createSelector([selectBlockedUsers], (blocked) => new Set(blocked.map((u) => u.userId)));
 const selectFriendIds = createSelector([(s: RootState) => s.friends.ids], (ids) => new Set(ids));
-
-export const selectGeoBlock = createSelector(
-  [selectLocation, (s: RootState) => s.settings.simulateRuBlock],
-  (location, simulate) => checkRussianTerritoryRestriction(location, simulate)
-);
 
 /**
  * Live buddies with distance recomputed from the current position, blocked users hidden.
@@ -67,17 +71,33 @@ export const selectBuddies = createSelector(
   }
 );
 
+/** Same reuse as selectBuddies: a table whose source object and distance are unchanged keeps its output object */
+const derivedHangouts = new Map<string, { source: HangoutAlert; out: HangoutAlert }>();
 export const selectHangouts = createSelector(
   [(s: RootState) => s.hangouts.items, selectLocation, selectBlockedIds],
-  (items, location, blocked): HangoutAlert[] =>
-    items
+  (items, location, blocked): HangoutAlert[] => {
+    const seen = new Set<string>();
+    const result = items
       .filter((h) => !blocked.has(h.userId))
       .map((h) => {
         if (typeof h.lat !== 'number' || typeof h.lng !== 'number') return h;
         const distanceKm = calculateDistanceKm(location.lat, location.lng, h.lat, h.lng);
-        return { ...h, distanceKm, distanceFormatted: formatDistance(distanceKm) };
+        seen.add(h.id);
+        const cached = derivedHangouts.get(h.id);
+        if (cached && cached.source === h && cached.out.distanceKm === distanceKm) return cached.out;
+        const out = { ...h, distanceKm, distanceFormatted: formatDistance(distanceKm) };
+        derivedHangouts.set(h.id, { source: h, out });
+        return out;
       })
-      .sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999))
+      .sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999));
+    for (const id of derivedHangouts.keys()) if (!seen.has(id)) derivedHangouts.delete(id);
+    return result;
+  }
+);
+
+/** The tab badge needs only how many tables there are, so a GPS update (new distances) does not re-render the tab bar */
+export const selectHangoutsCount = createSelector([(s: RootState) => s.hangouts.items, selectBlockedIds], (items, blocked) =>
+  items.filter((h) => !blocked.has(h.userId)).length
 );
 
 export const selectMeetups = createSelector(

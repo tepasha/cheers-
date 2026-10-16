@@ -12,6 +12,7 @@ import { notifyChatMessage } from './push';
 import { adultAge, rateLimit, TERMS_VERSION } from './access';
 import { discoverPeople, getPublicProfile } from './discovery';
 import { checkPushReceipts } from './receipts';
+import { backfillFeedCells, tagFeedCell } from './feedArea';
 
 const requireEligible = (auth: { uid: string; token: Record<string, unknown> } | undefined) => {
   if (!auth) throw new HttpsError('unauthenticated', 'Sign in first');
@@ -101,6 +102,8 @@ export const onChatMessage = onDocumentCreated(
 export const cleanupExpiredContent = onSchedule({ schedule: 'every 60 minutes', timeZone: 'Europe/Kyiv' }, async () => {
   const db = getFirestore(DATABASE_ID.value());
   const result = await cleanupExpired(createCleanupDeps(db), Date.now());
+  const tagged = await backfillFeedCells(db, Date.now());
+  if (tagged) console.log('feed cells backfill', tagged);
   const reports = await db.collection('reports').where('receivedAt', '<', new Date(Date.now() - 90 * 24 * 3600_000)).limit(300).get();
   const devices = await db.collection('devices').where('leaseUntil', '<', Date.now() - 24 * 3600_000).limit(100).get();
   const batch = db.batch();
@@ -111,6 +114,15 @@ export const cleanupExpiredContent = onSchedule({ schedule: 'every 60 minutes', 
 
 export const reconcilePushReceipts = onSchedule('every 15 minutes', async () => {
   console.log('push receipts', await checkPushReceipts(getFirestore(DATABASE_ID.value()), expoAccessToken()));
+});
+
+// Tables and meetups from builds that do not write `geo` yet: the apps listen by area (src/logic/feedArea.ts)
+export const onHangoutCreated = onDocumentCreated({ document: 'hangouts/{hangoutId}', database: DATABASE_ID }, async (event) => {
+  if (event.data) await tagFeedCell(event.data.ref, event.data.data());
+});
+
+export const onMeetupCreated = onDocumentCreated({ document: 'group_meetups/{meetupId}', database: DATABASE_ID }, async (event) => {
+  if (event.data) await tagFeedCell(event.data.ref, event.data.data());
 });
 
 // The queue is private to Admin SDK operators. Structured logs can be wired to Cloud Monitoring alerts.

@@ -48,7 +48,7 @@
     │   └── selectors.ts # Похідні дані (відстані, блокування, лічильники)
     ├── logic/           # Чисті правила: гейміфікація, мітапи, сесія, фільтри, дати
     ├── services/        # Firebase, Firestore sync, шифрування, гео, локація, i18n, аналітика
-    ├── hooks/           # useAppLifecycle (сесія, мережа, GPS, push), useCloudSync (Firestore-потоки, присутність, профіль), useChatSync…
+    ├── hooks/           # useAppLifecycle (сесія, мережа, GPS, push), useCloudSync (Firestore-потоки, профіль), useChatSync…
     ├── data/            # Заклади, тости, довідники
     └── theme/           # Кольори, відступи, типографіка
 ```

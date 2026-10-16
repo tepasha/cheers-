@@ -104,6 +104,7 @@ service cloud.firestore {
         && str(d.name, 60) && d.name.size() > 0
         && optStr(d, 'avatar', 500) && optStr(d, 'tagline', 140) && optStr(d, 'locationName', 120)
         && optStr(d, 'bio', 500) && optStr(d, 'levelTitle', 60) && optStr(d, 'updatedAt', 40)
+        // lastSeenAt: no longer written (2026-10-16), still accepted so older installed builds keep saving profiles
         && optStr(d, 'geohash', 12) && optStr(d, 'lastSeenAt', 40)
         && optNum(d, 'lat', -90, 90) && optNum(d, 'lng', -180, 180) && optNum(d, 'age', 21, 120)
         && optNum(d, 'level', 1, 100) && optNum(d, 'totalCheckIns', 0, 1000000)
@@ -169,13 +170,20 @@ service cloud.firestore {
 
     // ─── Hangouts (live "I'm at this bar" check-ins) ──────────────────────────
 
+    // The area clients listen to: a 4-character geohash (src/logic/feedArea.ts). Older builds do not write it; the
+    // server fills it in from the coordinates (functions/src/feedArea.ts).
+    function validFeedCell(d) {
+      return !('geo' in d) || (d.geo is string && d.geo.size() == 4);
+    }
+
     function validHangout(d) {
       return d.keys().hasOnly([
           'id', 'userId', 'userName', 'userAvatar', 'barName', 'locationArea', 'drinkPreference', 'description',
           'createdAt', 'createdAtTimestamp', 'expiresAt', 'slotsAvailable', 'participantsCount', 'lat', 'lng', 'status',
-          'joinedUsers', 'updatedAt'
+          'joinedUsers', 'updatedAt', 'geo'
         ])
         && d.id is string && d.userId is string
+        && validFeedCell(d)
         && safeSharedText(d, 'barName') && safeSharedText(d, 'description') && safeSharedText(d, 'userName')
         && d.expiresAt is number
         && str(d.barName, 80) && d.barName.size() > 0
@@ -237,8 +245,9 @@ service cloud.firestore {
       return d.keys().hasOnly([
           'id', 'title', 'description', 'venueName', 'venueAddress', 'scheduledDate', 'scheduledTime', 'dateTimeIso',
           'drinkPreference', 'maxParticipants', 'participants', 'creatorId', 'creatorName', 'creatorAvatar', 'status',
-          'lat', 'lng', 'distanceKm', 'distanceFormatted', 'createdAt', 'endsAt', 'topicTag', 'updatedAt'
+          'lat', 'lng', 'distanceKm', 'distanceFormatted', 'createdAt', 'endsAt', 'topicTag', 'updatedAt', 'geo'
         ])
+        && validFeedCell(d)
         // Listed until 24 h after the start, planned at most 90 days ahead (91 days = 7862400000 ms): `endsAt` cannot park a document forever
         && d.endsAt is number && d.endsAt <= request.time.toMillis() + 7862400000
         && d.id is string && d.creatorId is string

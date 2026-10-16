@@ -24,8 +24,10 @@ export const createMeetup =
   (dispatch, getState) => {
     const tr = trFor(getState);
     const user = getState().auth.user;
+    const { lat, lng } = getState().location.current;
     const meetup = buildMeetup({
       ...params,
+      area: { lat, lng },
       creatorId: user.id,
       creatorName: user.name || tr('Ви'),
       creatorAvatar: user.avatar,

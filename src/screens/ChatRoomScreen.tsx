@@ -15,9 +15,11 @@ import { chatOpened } from '../store/slices/uiSlice';
 import { addGroupParticipants, deleteChat, respondToProposal, sendMessage } from '../store/thunks/social';
 import { blockUser } from '../store/thunks/safety';
 import { GOOGLE_MAPS_VENUES } from '../data/venuesData';
-import { MAX_GROUP_MEMBERS } from '../logic/chats';
+import { CHAT_FIRST_PAGE, MAX_GROUP_MEMBERS } from '../logic/chats';
+import { MAX_MESSAGES_PER_THREAD } from '../store/slices/chatsSlice';
+import { loadOlderMessages } from '../store/thunks/inbox';
 import { cryptoService } from '../services/cryptoService';
-import { Message } from '../types';
+import { ChatParticipant, Message } from '../types';
 import type { RootScreenProps } from '../navigation/types';
 import { useTr } from '../hooks/useT';
 import { usePushOptIn } from '../hooks/usePushOptIn';
@@ -25,6 +27,7 @@ import { ph } from '../services/i18nService';
 import { DateTimeField } from '../components/DateTimeField';
 import { addDays, formatDateInput, toIsoDateTime } from '../logic/dateInput';
 import { useCurrentTime } from '../hooks/useCurrentTime';
+import { useMountDemand } from '../services/demand';
 
 const QUICK_TIMES = [
   { label: ph('Сьогодні о 19:00'), days: 0, time: '19:00' },
@@ -33,13 +36,21 @@ const QUICK_TIMES = [
   { label: ph('У п’ятницю о 20:00'), days: 'friday', time: '20:00' },
 ] as const;
 
+const NO_PARTICIPANTS: ChatParticipant[] = [];
+const messageKey = (m: Message) => m.id;
+
+/** The newest ciphertext as stored in Firestore, for the security sheet */
+const lastCipherOf = (messages: Message[]): string | undefined => {
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i].cipherPayload) return messages[i].cipherPayload;
+  return undefined;
+};
+
 export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'>) => {
   const tr = useTr();
   const { chatId } = route.params;
   const dispatch = useAppDispatch();
   const selectChat = useMemo(() => makeSelectChat(chatId), [chatId]);
   const chat = useAppSelector(selectChat);
-  const buddies = useAppSelector(selectBuddies);
   const myId = useAppSelector((s) => s.auth.user.id);
   const blockedUsers = useAppSelector((s) => s.safety.blockedUsers);
   const blockedIds = useMemo(() => new Set(blockedUsers.map((u) => u.userId)), [blockedUsers]);
@@ -55,13 +66,38 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
     };
   }, [dispatch, chatId]));
 
-  const [draft, setDraft] = useState('');
   const [sheet, setSheet] = useState<null | 'menu' | 'proposal' | 'security' | 'group'>(null);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const showEarlier = useCallback(async () => {
+    setLoadingEarlier(true);
+    try {
+      await dispatch(loadOlderMessages(chatId));
+    } catch (error) {
+      console.warn('Could not load earlier messages:', error); // offline, say: the button stays for another try
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [dispatch, chatId]);
   const [showSos, setShowSos] = useState(false);
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
 
   // Newest first: the list is inverted so the conversation sticks to the bottom
   const data = useMemo(() => (chat ? [...chat.messages].filter((m) => !blockedIds.has(m.senderId)).reverse() : []), [chat, blockedIds]);
+  const lastCipher = useMemo(() => lastCipherOf(chat?.messages ?? []), [chat?.messages]);
+
+  // Stable callbacks: the memoized bubbles and the input row re-render only when their own data changes
+  const isGroup = !!chat?.isGroup;
+  const sendText = useCallback((text: string) => dispatch(sendMessage({ chatId, text })), [dispatch, chatId]);
+  const openToasts = useCallback(() => navigation.navigate('Toasts', { chatId }), [navigation, chatId]);
+  const openProposal = useCallback(() => setSheet('proposal'), []);
+  const answerProposal = useCallback(
+    (messageId: string, status: 'accepted' | 'declined') => dispatch(respondToProposal(chatId, messageId, status)),
+    [dispatch, chatId]
+  );
+  const renderMessage = useCallback(
+    ({ item }: { item: Message }) => <MessageBubble message={item} isGroup={isGroup} myId={myId} onProposal={answerProposal} />,
+    [isGroup, myId, answerProposal]
+  );
 
   if (!chat || (!chat.isGroup && blockedIds.has(chat.buddy.id))) {
     return (
@@ -81,14 +117,9 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
       ? tr('онлайн')
       : tr('офлайн');
 
-  const send = () => {
-    const text = draft.trim();
-    if (!text) return;
-    dispatch(sendMessage({ chatId, text }));
-    setDraft('');
-  };
-
   const interlocutor = chat.isGroup ? undefined : { id: chat.buddy.id, name: chat.buddy.name };
+  // A chat opened on this device starts from its newest page; anything shorter than a page is the whole history
+  const canShowEarlier = !chat.historyComplete && chat.messages.length >= CHAT_FIRST_PAGE && chat.messages.length < MAX_MESSAGES_PER_THREAD;
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
@@ -121,34 +152,17 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
           inverted
           keyboardShouldPersistTaps="handled"
           data={data}
-          keyExtractor={(m) => m.id}
-          contentContainerStyle={{ padding: spacing.md, gap: spacing.sm }}
-          renderItem={({ item }) => (
-            <MessageBubble
-              message={item}
-              isGroup={!!chat.isGroup}
-              myId={myId}
-              onProposal={(status) => dispatch(respondToProposal(chatId, item.id, status))}
-            />
-          )}
+          keyExtractor={messageKey}
+          contentContainerStyle={styles.list}
+          renderItem={renderMessage}
           ListEmptyComponent={<Text style={[typography.small, { textAlign: 'center' }]}>{tr('Почніть розмову 🍻')}</Text>}
+          // The list is inverted: its footer is the top of the conversation
+          ListFooterComponent={canShowEarlier
+            ? <Button label={tr('Показати раніші повідомлення')} icon="chevron-up" small variant="ghost" loading={loadingEarlier} onPress={showEarlier} style={{ alignSelf: 'center', marginBottom: spacing.sm }} />
+            : null}
         />
 
-        <View style={styles.composer}>
-          <IconButton icon="zap" label={tr('Надіслати тост')} color={colors.amberSoft} onPress={() => navigation.navigate('Toasts', { chatId })} />
-          <IconButton icon="map-pin" label={tr('Запропонувати місце')} onPress={() => setSheet('proposal')} />
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            placeholder={tr('Повідомлення…')}
-            placeholderTextColor={colors.textDim}
-            style={styles.input}
-            multiline
-            maxLength={1000}
-            accessibilityLabel={tr('Повідомлення')}
-          />
-          <IconButton icon="send" label={tr('Надіслати')} color={draft.trim() ? colors.amber : colors.textDim} onPress={send} />
-        </View>
+        <Composer onSend={sendText} onToasts={openToasts} onPropose={openProposal} />
       </KeyboardAvoidingView>
 
       {sheet === 'proposal' && <ProposalSheet
@@ -168,7 +182,7 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
         }}
       />}
 
-      <SecuritySheet visible={sheet === 'security'} chatId={chatId} lastCipher={[...chat.messages].reverse().find((m) => m.cipherPayload)?.cipherPayload} onClose={() => setSheet(null)} />
+      <SecuritySheet visible={sheet === 'security'} chatId={chatId} lastCipher={lastCipher} onClose={() => setSheet(null)} />
 
       <Sheet visible={sheet === 'menu'} onClose={() => setSheet(null)} title={tr('Дії з чатом')}>
         <View style={{ gap: spacing.sm }}>
@@ -226,41 +240,65 @@ export const ChatRoomScreen = ({ navigation, route }: RootScreenProps<'ChatRoom'
         </View>
       </Sheet>
 
-      <GroupSheet
-        visible={sheet === 'group'}
-        onClose={() => setSheet(null)}
-        title={chat.groupName ?? tr('Група')}
-        topic={chat.groupTopic}
-        participants={chat.participants ?? []}
-        room={Math.max(0, MAX_GROUP_MEMBERS - (chat.memberIds?.length ?? (chat.participants?.length ?? 0) + 1))}
-        // Only the creator may change membership (firestore.rules enforce it as well)
-        candidates={chat.createdBy === myId ? buddies.filter((b) => !(chat.participants ?? []).some((p) => p.id === b.id)) : []}
-        blockedIds={blockedIds}
-        onReport={(p) => {
-          setSheet(null);
-          setReportTarget({ id: p.id, name: p.name, avatar: p.avatar, type: 'chat', contextId: chat.id });
-        }}
-        onBlock={(p) =>
-          Alert.alert(tr('Заблокувати {name}?', { name: p.name }), tr('Ця людина не зможе писати вам, бачити ваш профіль за посиланням чи запрошувати вас. Групу ви залишаєте спільну: щоб не бачити її, видаліть чат.'), [
-            { text: tr('Скасувати'), style: 'cancel' },
-            { text: tr('Заблокувати'), style: 'destructive', onPress: () => dispatch(blockUser(p.id, p.name, p.avatar)) },
-          ])
-        }
-        onAdd={(ids) =>
-          dispatch(
-            addGroupParticipants(
-              chatId,
-              buddies.filter((b) => ids.includes(b.id)).map((b) => ({ id: b.id, name: b.name, avatar: b.avatar, online: b.online, role: 'member' as const }))
-            )
-          )
-        }
-      />
+      {sheet === 'group' && (
+        <GroupSheet
+          visible
+          onClose={() => setSheet(null)}
+          title={chat.groupName ?? tr('Група')}
+          topic={chat.groupTopic}
+          participants={chat.participants ?? NO_PARTICIPANTS}
+          room={Math.max(0, MAX_GROUP_MEMBERS - (chat.memberIds?.length ?? (chat.participants?.length ?? 0) + 1))}
+          // Only the creator may change membership (firestore.rules enforce it as well)
+          canAdd={chat.createdBy === myId}
+          blockedIds={blockedIds}
+          onReport={(p) => {
+            setSheet(null);
+            setReportTarget({ id: p.id, name: p.name, avatar: p.avatar, type: 'chat', contextId: chat.id });
+          }}
+          onBlock={(p) =>
+            Alert.alert(tr('Заблокувати {name}?', { name: p.name }), tr('Ця людина не зможе писати вам, бачити ваш профіль за посиланням чи запрошувати вас. Групу ви залишаєте спільну: щоб не бачити її, видаліть чат.'), [
+              { text: tr('Скасувати'), style: 'cancel' },
+              { text: tr('Заблокувати'), style: 'destructive', onPress: () => dispatch(blockUser(p.id, p.name, p.avatar)) },
+            ])
+          }
+          onAdd={(people) => dispatch(addGroupParticipants(chatId, people))}
+        />
+      )}
 
       <SosSheet visible={showSos} onClose={() => setShowSos(false)} interlocutor={interlocutor} />
       <ReportSheet target={reportTarget} onClose={() => setReportTarget(null)} />
     </SafeAreaView>
   );
 };
+
+/** The input row keeps the draft to itself: typing re-renders this row only, not the conversation above it */
+const Composer = React.memo(({ onSend, onToasts, onPropose }: { onSend: (text: string) => void; onToasts: () => void; onPropose: () => void }) => {
+  const tr = useTr();
+  const [draft, setDraft] = useState('');
+  const send = () => {
+    const text = draft.trim();
+    if (!text) return;
+    onSend(text);
+    setDraft('');
+  };
+  return (
+    <View style={styles.composer}>
+      <IconButton icon="zap" label={tr('Надіслати тост')} color={colors.amberSoft} onPress={onToasts} />
+      <IconButton icon="map-pin" label={tr('Запропонувати місце')} onPress={onPropose} />
+      <TextInput
+        value={draft}
+        onChangeText={setDraft}
+        placeholder={tr('Повідомлення…')}
+        placeholderTextColor={colors.textDim}
+        style={styles.input}
+        multiline
+        maxLength={1000}
+        accessibilityLabel={tr('Повідомлення')}
+      />
+      <IconButton icon="send" label={tr('Надіслати')} color={draft.trim() ? colors.amber : colors.textDim} onPress={send} />
+    </View>
+  );
+});
 
 const MessageBubble = React.memo(
   ({
@@ -272,7 +310,7 @@ const MessageBubble = React.memo(
     message: Message;
     isGroup: boolean;
     myId: string;
-    onProposal: (status: 'accepted' | 'declined') => void;
+    onProposal: (messageId: string, status: 'accepted' | 'declined') => void;
   }) => {
   const tr = useTr();
     const mine = message.isMe || message.senderId === myId;
@@ -305,8 +343,8 @@ const MessageBubble = React.memo(
             </Text>
             {p.status === 'pending' && !mine ? (
               <Row>
-                <Button label={tr('Прийняти')} small icon="check" onPress={() => onProposal('accepted')} style={{ flex: 1 }} />
-                <Button label={tr('Відхилити')} small variant="secondary" onPress={() => onProposal('declined')} style={{ flex: 1 }} />
+                <Button label={tr('Прийняти')} small icon="check" onPress={() => onProposal(message.id, 'accepted')} style={{ flex: 1 }} />
+                <Button label={tr('Відхилити')} small variant="secondary" onPress={() => onProposal(message.id, 'declined')} style={{ flex: 1 }} />
               </Row>
             ) : (
               <Badge
@@ -437,7 +475,7 @@ const GroupSheet = ({
   title,
   topic,
   participants,
-  candidates,
+  canAdd,
   room,
   blockedIds,
   onReport,
@@ -449,16 +487,22 @@ const GroupSheet = ({
   title: string;
   topic?: string;
   participants: { id: string; name: string; avatar: string; role?: string }[];
-  candidates: { id: string; name: string; avatar: string }[];
+  /** The group's creator may add people from those nearby */
+  canAdd: boolean;
   /** How many more people the group can take (groups hold at most MAX_GROUP_MEMBERS) */
   room: number;
   /** People this user has already blocked: no second block button for them */
   blockedIds: ReadonlySet<string>;
   onReport: (p: { id: string; name: string; avatar: string }) => void;
   onBlock: (p: { id: string; name: string; avatar: string }) => void;
-  onAdd: (ids: string[]) => void;
+  onAdd: (people: ChatParticipant[]) => void;
 }) => {
   const tr = useTr();
+  // Read here, while the sheet is open, not by the chat screen: the people nearby change with every refresh and GPS update.
+  // The creator picks from them, so they are refreshed while the sheet is open (services/demand.ts).
+  useMountDemand('people', canAdd);
+  const buddies = useAppSelector(selectBuddies);
+  const candidates = useMemo(() => (canAdd ? buddies.filter((b) => !participants.some((p) => p.id === b.id)) : []), [canAdd, buddies, participants]);
   const [selected, setSelected] = useState<string[]>([]);
   return (
     <Sheet
@@ -471,7 +515,7 @@ const GroupSheet = ({
             label={tr('Додати ({count})', { count: selected.length })}
             icon="user-plus"
             onPress={() => {
-              onAdd(selected);
+              onAdd(candidates.filter((b) => selected.includes(b.id)).map((b) => ({ id: b.id, name: b.name, avatar: b.avatar, online: b.online, role: 'member' as const })));
               setSelected([]);
             }}
           />
@@ -533,6 +577,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   headerTitle: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  list: { padding: spacing.md, gap: spacing.sm },
   bubbleWrap: { gap: 2, alignItems: 'flex-start' },
   bubble: { maxWidth: '82%', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.lg },
   bubbleMine: { backgroundColor: colors.amber, borderBottomRightRadius: 4 },

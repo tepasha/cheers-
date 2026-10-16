@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const fs = vi.hoisted(() => ({ next: [] as Array<(snap: unknown) => unknown> }));
+const fs = vi.hoisted(() => ({ next: [] as Array<(snap: unknown) => unknown>, fail: [] as Array<(error: unknown) => unknown> }));
 const callable = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/firebase', () => ({ db: {}, auth: {}, firebaseApp: {}, functions: {} }));
@@ -16,9 +16,12 @@ vi.mock('firebase/firestore', () => {
     doc: ref, collection: ref, query: ref, where: ref, orderBy: ref, startAt: ref, endAt: ref, limit: ref,
     setDoc: vi.fn(), getDoc: vi.fn(), getDocs: vi.fn(), deleteDoc: vi.fn(), updateDoc: vi.fn(), writeBatch: vi.fn(),
     runTransaction: vi.fn(), arrayUnion: vi.fn(), increment: vi.fn(), deleteField: vi.fn(), serverTimestamp: vi.fn(),
+    FieldPath: class {},
     // onSnapshot(query, next, error) or onSnapshot(query, options, next, error)
     onSnapshot: vi.fn((...args: unknown[]) => {
-      fs.next.push((typeof args[1] === 'function' ? args[1] : args[2]) as (snap: unknown) => unknown);
+      const at = typeof args[1] === 'function' ? 1 : 2;
+      fs.next.push(args[at] as (snap: unknown) => unknown);
+      fs.fail.push(args[at + 1] as (error: unknown) => unknown);
       return () => {};
     }),
   };
@@ -31,29 +34,58 @@ const docOf = (id: string, data: unknown) => ({ id, data: () => data, metadata: 
 const snapOf = (docs: unknown[]) => ({ docs, forEach: (fn: (d: unknown) => void) => docs.forEach(fn), metadata: { fromCache: false } });
 const lastListener = () => fs.next[fs.next.length - 1];
 const throwing = { id: 'boom', data: () => { throw new Error('unreadable'); }, metadata: { hasPendingWrites: false } };
+/** The tables and meetups feeds listen to the area and to "mine": [area listener, mine listener] of the last subscription */
+const areaAndMine = () => fs.next.slice(-2);
+/** "Mine" answers empty, the area answers `snap` (what most tests look at) */
+const answerArea = (snap: unknown) => {
+  const [area, mine] = areaAndMine();
+  mine(snapOf([]));
+  return area(snap);
+};
+const AREA = ['u8vx'];
 
 beforeEach(() => {
   fs.next = [];
+  fs.fail = [];
 });
 
 describe('meetups listener', () => {
-  const good = { id: 'm1', title: 'Настілки', creatorId: 'alice', participants: { alice: { userId: 'alice', role: 'host', status: 'going' } }, endsAt: 1 };
+  const good = { id: 'm1', title: 'Настілки', creatorId: 'alice', participants: { alice: { userId: 'alice', role: 'host', status: 'going' } }, endsAt: Date.now() + 86_400_000 };
 
   it('keeps the good meetup and drops the one with a null participant, without throwing', () => {
     const cb = vi.fn();
-    svc.subscribeToMeetups(cb);
+    svc.subscribeToMeetups('alice', AREA, cb);
     const bad = { ...good, id: 'm2', participants: { z: null, y: 1 } };
-    expect(() => lastListener()(snapOf([docOf('m1', good), docOf('m2', bad), docOf('m3', null), throwing]))).not.toThrow();
+    expect(() => answerArea(snapOf([docOf('m1', good), docOf('m2', bad), docOf('m3', null), throwing]))).not.toThrow();
     const ids = (cb.mock.calls[0][0] as Array<{ id: string; participants: unknown[] }>).map((m) => [m.id, m.participants.length]);
     expect(ids).toEqual([['m1', 1], ['m2', 0]]);
   });
 
+  it('skips a meetup archived since the hour the query is rounded to', () => {
+    const cb = vi.fn();
+    svc.subscribeToMeetups('alice', AREA, cb);
+    answerArea(snapOf([docOf('m1', good), docOf('old', { ...good, id: 'old', endsAt: Date.now() - 60_000 })]));
+    expect((cb.mock.calls[0][0] as Array<{ id: string }>).map((m) => m.id)).toEqual(['m1']);
+  });
+
   it('a callback that throws is contained (the listener keeps working for the next snapshot)', () => {
     const cb = vi.fn().mockImplementationOnce(() => { throw new Error('consumer bug'); });
-    svc.subscribeToMeetups(cb);
-    expect(() => lastListener()(snapOf([docOf('m1', good)]))).not.toThrow();
-    lastListener()(snapOf([docOf('m1', good)]));
+    svc.subscribeToMeetups('alice', AREA, cb);
+    expect(() => answerArea(snapOf([docOf('m1', good)]))).not.toThrow();
+    areaAndMine()[0](snapOf([docOf('m1', good)]));
     expect(cb).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports the area and "mine" together: once both answered, each meetup once, a failed query as empty', () => {
+    const cb = vi.fn();
+    svc.subscribeToMeetups('alice', AREA, cb);
+    const [area, mine] = areaAndMine();
+    area(snapOf([docOf('m1', good)]));
+    expect(cb).not.toHaveBeenCalled(); // "mine" has not answered yet: no half list
+    mine(snapOf([docOf('m1', good), docOf('far', { ...good, id: 'far' })]));
+    expect((cb.mock.calls.at(-1)![0] as Array<{ id: string }>).map((m) => m.id).sort()).toEqual(['far', 'm1']);
+    fs.fail.at(-2)!(new Error('index missing')); // the area query dies; what "mine" has stays
+    expect((cb.mock.calls.at(-1)![0] as Array<{ id: string }>).map((m) => m.id).sort()).toEqual(['far', 'm1']);
   });
 });
 
@@ -126,10 +158,10 @@ describe('nearby people listener', () => {
 describe('live tables listener', () => {
   it('keeps text fields as text (no "__proto__" object can reach tr())', () => {
     const cb = vi.fn();
-    svc.subscribeToLiveHangouts({ lat: 50.45, lng: 30.52 } as never, cb);
+    svc.subscribeToLiveHangouts('alice', { lat: 50.45, lng: 30.52 } as never, AREA, cb);
     const later = Date.now() + 3600_000;
     const table = { userId: 'bob', userName: 'Bob', barName: 'Squat', expiresAt: later, drinkPreference: { a: 1 }, locationArea: ['x'] };
-    expect(() => lastListener()(snapOf([docOf('h1', table), docOf('h2', { userId: 5, expiresAt: later }), throwing]))).not.toThrow();
+    expect(() => answerArea(snapOf([docOf('h1', table), docOf('h2', { userId: 5, expiresAt: later }), throwing]))).not.toThrow();
     const tables = cb.mock.calls[0][0] as Array<{ id: string; drinkPreference: unknown; locationArea: unknown }>;
     expect(tables.map((t) => t.id)).toEqual(['h1']);
     expect(typeof tables[0].drinkPreference).toBe('string');

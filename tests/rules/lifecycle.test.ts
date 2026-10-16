@@ -30,6 +30,8 @@ import { discoverPeople, getPublicProfile } from '../../functions/src/discovery'
 vi.mock('firebase/functions', () => ({ httpsCallable: () => async (input: { lat: number; lng: number }) => ({ data: await discoverPeople(adminDb, current.uid, input.lat, input.lng) }) }));
 
 import { cleanupExpired } from '../../functions/src/lifecycle';
+import { backfillFeedCells, tagFeedCell } from '../../functions/src/feedArea';
+import { feedCell, feedCells } from '@/logic/feedArea';
 import type { GroupMeetup, HangoutAlert } from '@/types';
 
 const HOUR = 3600_000;
@@ -62,15 +64,17 @@ beforeEach(async () => {
 
 const table = (id: string, expiresAt: number | undefined) => ({
   id, userId: 'host', userName: 'Host', userAvatar: '', barName: 'Squat', locationArea: 'Київ', drinkPreference: '', description: '',
-  createdAt: 'x', createdAtTimestamp: 1, slotsAvailable: 2, participantsCount: 1, lat: 50.4, lng: 30.5, status: 'active', joinedUsers: ['host'],
+  createdAt: 'x', createdAtTimestamp: 1, slotsAvailable: 2, participantsCount: 1, lat: 50.4, lng: 30.5, geo: feedCell(50.4, 30.5), status: 'active', joinedUsers: ['host'],
   ...(expiresAt === undefined ? {} : { expiresAt }),
 });
 const meetupDoc = (id: string, endsAt: number | undefined) => ({
   id, title: id, description: '', venueName: '', venueAddress: '', scheduledDate: '', scheduledTime: '', maxParticipants: 6,
   participants: { host: { userId: 'host', userName: 'Host', userAvatar: '', role: 'host', status: 'going' } },
-  creatorId: 'host', creatorName: 'Host', creatorAvatar: '', status: 'upcoming', createdAt: 'x',
+  creatorId: 'host', creatorName: 'Host', creatorAvatar: '', status: 'upcoming', createdAt: 'x', geo: feedCell(50.4, 30.5),
   ...(endsAt === undefined ? {} : { endsAt }),
 });
+const KYIV_AREA = feedCells(feedCell(50.45, 30.52));
+const LVIV = { lat: 49.84, lng: 24.03, geo: feedCell(49.84, 24.03) };
 
 const firstSnapshot = <T,>(subscribe: (cb: (items: T[]) => void) => () => void): Promise<T[]> =>
   new Promise((resolve) => {
@@ -88,7 +92,7 @@ describe('what the client receives', () => {
     as('bob');
 
     const items = await firstSnapshot<HangoutAlert>((cb) =>
-      svc.subscribeToLiveHangouts({ lat: 50.45, lng: 30.52 } as never, cb)
+      svc.subscribeToLiveHangouts('bob', { lat: 50.45, lng: 30.52 } as never, KYIV_AREA, cb)
     );
     expect(items.map((h) => h.id)).toEqual(['live']);
     expect(items[0].expiresAt).toBeGreaterThan(Date.now());
@@ -100,8 +104,35 @@ describe('what the client receives', () => {
     await adminDb.doc('group_meetups/legacy').set(meetupDoc('legacy', undefined));
     as('bob');
 
-    const items = await firstSnapshot<GroupMeetup>((cb) => svc.subscribeToMeetups(cb));
+    const items = await firstSnapshot<GroupMeetup>((cb) => svc.subscribeToMeetups('bob', KYIV_AREA, cb));
     expect(items.map((m) => m.id)).toEqual(['tonight']);
+  });
+
+  it('tables from the area around the person, and their own ones wherever they are', async () => {
+    const later = Date.now() + 2 * HOUR;
+    await adminDb.doc('hangouts/kyiv').set(table('kyiv', later));
+    await adminDb.doc('hangouts/lviv').set({ ...table('lviv', later), ...LVIV });
+    await adminDb.doc('hangouts/lviv-seat').set({ ...table('lviv-seat', later), ...LVIV, participantsCount: 2, joinedUsers: ['host', 'bob'] });
+    await adminDb.doc('hangouts/lviv-host').set({ ...table('lviv-host', later), ...LVIV, userId: 'bob', joinedUsers: ['bob'] });
+    as('bob');
+
+    const items = await firstSnapshot<HangoutAlert>((cb) => svc.subscribeToLiveHangouts('bob', { lat: 50.45, lng: 30.52 } as never, KYIV_AREA, cb));
+    expect(items.map((h) => h.id).sort()).toEqual(['kyiv', 'lviv-host', 'lviv-seat']);
+  });
+
+  it('meetups from the area around the person, and every one they host or are invited to', async () => {
+    const later = Date.now() + 3 * HOUR;
+    const bob = { userId: 'bob', userName: 'Bob', userAvatar: '', role: 'member', status: 'invited' };
+    await adminDb.doc('group_meetups/kyiv').set(meetupDoc('kyiv', later));
+    await adminDb.doc('group_meetups/lviv').set({ ...meetupDoc('lviv', later), ...LVIV });
+    const invite = meetupDoc('lviv-invite', later);
+    await adminDb.doc('group_meetups/lviv-invite').set({ ...invite, ...LVIV, participants: { ...invite.participants, bob } });
+    const { geo: _unplaced, ...own } = meetupDoc('nowhere-mine', later);
+    await adminDb.doc('group_meetups/nowhere-mine').set({ ...own, creatorId: 'bob', participants: { bob: { ...bob, role: 'host', status: 'going' } } });
+    as('bob');
+
+    const items = await firstSnapshot<GroupMeetup>((cb) => svc.subscribeToMeetups('bob', KYIV_AREA, cb));
+    expect(items.map((m) => m.id).sort()).toEqual(['kyiv', 'lviv-invite', 'nowhere-mine']);
   });
 });
 
@@ -199,7 +230,7 @@ describe('people nearby, through the real client', () => {
     expect((await nearby()).map((b) => b.id)).toEqual(['friend']);
   });
 
-  it('marks people who have not been around for a week as inactive instead of hiding them', async () => {
+  it('profiles stamped with a visit time by older builds are found, without that time and never as online', async () => {
     const now = Date.now();
     await seedPeople([
       person('here', km(0.2), { lastSeenAt: new Date(now - 60_000).toISOString() }),
@@ -234,12 +265,11 @@ describe('people nearby, through the real client', () => {
     expect((await nearby(KYIV, 'bob')).map((b) => b.id)).toContain('alice');
   });
 
-  it('touchPresence records the visit', async () => {
+  it('a profile write drops the visit time an older build left behind', async () => {
     as('alice');
-    await adminDb.doc('users/alice').set({ id: 'alice', name: 'Alice' });
-    await svc.touchPresence('alice');
-    const seen = (await adminDb.doc('users/alice').get()).data()!.lastSeenAt as string;
-    expect(Date.now() - Date.parse(seen)).toBeLessThan(10_000);
+    await adminDb.doc('users/alice').set({ id: 'alice', name: 'Alice', lastSeenAt: new Date().toISOString() });
+    await svc.saveUserProfile({ id: 'alice', name: 'Alice' });
+    expect((await adminDb.doc('users/alice').get()).data()).not.toHaveProperty('lastSeenAt');
   });
 });
 
@@ -268,6 +298,93 @@ describe('the cleanup job on a real Firestore', () => {
   });
 });
 
+describe('chat history in pages through the real client', () => {
+  const T0 = Date.UTC(2026, 9, 1);
+  const id = (i: number) => `m${String(i).padStart(3, '0')}`;
+  const at = (i: number) => T0 + i * 1000;
+  const seedChat = async (count: number) => {
+    await adminDb.doc('chats/c1').set({ members: ['alice', 'bob'], isGroup: false });
+    const batch = adminDb.batch();
+    for (let i = 0; i < count; i++) {
+      // Plain text is what decryptMessage passes through unchanged (messages from before encryption)
+      batch.set(adminDb.doc(`chats/c1/messages/${id(i)}`), { id: id(i), senderId: 'bob', senderName: 'Bob', cipherPayload: `text ${i}`, type: 'text', timestamp: 'x', createdAt: new Date(at(i)) });
+    }
+    await batch.commit();
+    as('alice');
+  };
+  const firstPage = (since?: number) =>
+    new Promise<{ ids: string[]; replacesOlder: boolean }>((resolve) => {
+      const stop = svc.subscribeToEncryptedChat('c1', 'alice', (messages, replacesOlder) => {
+        stop();
+        resolve({ ids: messages.map((m) => m.id), replacesOlder });
+      }, since);
+    });
+
+  it('a chat new to this device starts from its newest 30 messages', async () => {
+    await seedChat(50);
+    const page = await firstPage();
+    expect(page.ids).toEqual(Array.from({ length: 30 }, (_, i) => id(20 + i)));
+    expect(page.replacesOlder).toBe(false);
+  });
+
+  it('"Show earlier" pages back from the oldest message held until the first one', async () => {
+    await seedChat(50);
+    const older = await svc.loadOlderMessages('c1', 'alice', at(35));
+    expect(older.messages.map((m) => m.id)).toEqual(Array.from({ length: 30 }, (_, i) => id(5 + i)));
+    expect(older.complete).toBe(false);
+    const first = await svc.loadOlderMessages('c1', 'alice', at(5));
+    expect(first.messages.map((m) => m.id)).toEqual([id(0), id(1), id(2), id(3), id(4)]);
+    expect(first.complete).toBe(true);
+  });
+
+  it('after a long absence the page since the last message says it may not reach back', async () => {
+    await seedChat(150);
+    const away = await firstPage(at(9)); // 140 arrived since: only the newest 100 come
+    expect(away.ids).toHaveLength(100);
+    expect(away.ids[0]).toBe(id(50));
+    expect(away.replacesOlder).toBe(true);
+  });
+
+  it('a short absence just continues the thread', async () => {
+    await seedChat(150);
+    const back = await firstPage(at(120));
+    expect(back.ids).toEqual(Array.from({ length: 29 }, (_, i) => id(121 + i)));
+    expect(back.replacesOlder).toBe(false);
+  });
+});
+
+describe('the area cell of documents from older builds', () => {
+  it('is filled in from the coordinates on creation, and left alone when present or not placeable', async () => {
+    const { geo: _none, ...old } = table('old', Date.now() + HOUR);
+    const ref = adminDb.doc('hangouts/old');
+    await ref.set({ ...old, lat: 49.84, lng: 24.03 });
+    expect(await tagFeedCell(ref, (await ref.get()).data())).toBe(true);
+    expect((await ref.get()).data()!.geo).toBe(feedCell(49.84, 24.03));
+    expect(await tagFeedCell(ref, (await ref.get()).data())).toBe(false);
+    expect(await tagFeedCell(adminDb.doc('group_meetups/x'), { title: 'no place' })).toBe(false);
+    await ref.delete();
+    expect(await tagFeedCell(ref, old)).toBe(false); // closed before the trigger ran
+  });
+
+  it('a one-time pass tags the live documents written before the deploy, then costs a single read', async () => {
+    const now = Date.now();
+    const { geo: _a, ...liveTable } = table('live', now + HOUR);
+    const { geo: _b, ...overTable } = table('over', now - HOUR);
+    const { geo: _c, ...liveMeetup } = meetupDoc('placed', now + DAY);
+    await adminDb.doc('hangouts/live').set(liveTable);
+    await adminDb.doc('hangouts/over').set(overTable);
+    await adminDb.doc('group_meetups/placed').set({ ...liveMeetup, lat: 50.4, lng: 30.5 });
+    await adminDb.doc('group_meetups/unplaced').set({ ...liveMeetup, id: 'unplaced' });
+
+    expect(await backfillFeedCells(adminDb, now)).toEqual({ hangouts: 1, meetups: 1 });
+    expect((await adminDb.doc('hangouts/live').get()).data()!.geo).toBe(feedCell(50.4, 30.5));
+    expect((await adminDb.doc('hangouts/over').get()).data()!.geo).toBeUndefined();
+    expect((await adminDb.doc('group_meetups/placed').get()).data()!.geo).toBe(feedCell(50.4, 30.5));
+    expect((await adminDb.doc('group_meetups/unplaced').get()).data()!.geo).toBeUndefined();
+    expect(await backfillFeedCells(adminDb, now)).toBeNull();
+  });
+});
+
 describe('server discovery privacy', () => {
   it('filters both block directions and bans before the 50-person cap', async () => {
     const batch = adminDb.batch();
@@ -291,5 +408,19 @@ describe('server discovery privacy', () => {
     expect(await getPublicProfile(adminDb, 'alice', 'near-01')).toBeNull();
     expect(await getPublicProfile(adminDb, 'alice', 'near-02')).toBeNull();
     expect(await getPublicProfile(adminDb, 'alice', 'near-03')).toHaveProperty('id', 'near-03');
+  });
+
+  it('checks bans nearest first across batches and still returns the 50 nearest allowed people', async () => {
+    const batch = adminDb.batch();
+    for (let i = 0; i < 80; i++) {
+      const id = `far-${String(i).padStart(2, '0')}`;
+      batch.set(adminDb.doc(`users/${id}`), { id, name: id, age: 30, shareLocation: true, lat: 50.45 + 0.0002 * i, lng: 30.52, geohash: publicGeohash(50.45 + 0.0002 * i, 30.52) });
+    }
+    for (const id of ['far-05', 'far-31', 'far-47']) batch.set(adminDb.doc(`bannedUsers/${id}`), { reportId: 'test' });
+    batch.set(adminDb.doc('users/far-60/blocks/alice'), { userId: 'alice' }); // beyond the cap: changes nothing
+    await batch.commit();
+    const found = (await discoverPeople(adminDb, 'alice', 50.45, 30.52)).map((p) => p.id);
+    const banned = ['far-05', 'far-31', 'far-47'];
+    expect(found).toEqual(Array.from({ length: 53 }, (_, i) => `far-${String(i).padStart(2, '0')}`).filter((id) => !banned.includes(id)));
   });
 });

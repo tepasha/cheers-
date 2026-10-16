@@ -15,21 +15,34 @@ import {
   arrayUnion as arrayUnionFs,
   orderBy,
     limit,
+  limitToLast,
+  Timestamp,
   serverTimestamp,
   runTransaction,
   arrayUnion,
   increment,
-  deleteField
+  deleteField,
+  FieldPath
 } from 'firebase/firestore';
-import type { Transaction } from 'firebase/firestore';
+import type { DocumentData, Query, QueryDocumentSnapshot, Transaction } from 'firebase/firestore';
 
-/** Newest messages loaded per chat; older history is not streamed */
-const CHAT_PAGE_SIZE = 100;
+/**
+ * At most this many messages arrive when a chat this device already holds is opened (those sent since). More means it
+ * was away long enough for the page not to reach back to them: the stream says so (`replacesOlder`).
+ */
+const CHAT_SINCE_LIMIT = 100;
+
+/**
+ * Lower bound of the "still live" feed queries, rounded down to the hour. A re-subscription within the hour sends the
+ * very same query, so it resumes from the cached result and downloads only the changes (LRU cache, services/firebase.ts);
+ * whatever ended since the full hour is dropped on the client.
+ */
+const liveSince = (now: number): number => now - (now % 3_600_000);
 import { db } from './firebase';
 import { auth, functions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
 import { FavoriteVenueItem, PaymentEtiquette, DrinkType, Message, HangoutAlert, UserGamificationState, BuddyProfile, GroupMeetup, ChatThread, ChatParticipant } from '../types';
-import type { CloudChat } from '../logic/chats';
+import { CHAT_FIRST_PAGE, type CloudChat } from '../logic/chats';
 import { meetupToCloud } from '../logic/meetups';
 import { DRINK_TYPES, MOOD_TYPES, PAYMENT_RULES, asNumber, asOptString, asString, asStringList, oneOf, readCloudChat, readCloudHangout, readCloudMeetup, readEach, timeMillis } from '../logic/cloudData';
 import type { MeetupParticipant } from '../types';
@@ -37,9 +50,10 @@ import { omitUndefined } from '../utils/firestoreData';
 import type { BlockedUserRecord } from '../types';
 import { cryptoService } from './cryptoService';
 import { deviceIdFor } from '../logic/push';
-import { hangoutExpiresAt, isHangoutExpired } from '../logic/lifecycle';
+import { hangoutExpiresAt, isHangoutExpired, isMeetupArchived } from '../logic/lifecycle';
 import { coarseCoordinate as coarse } from '../logic/privacy';
 import { publicGeohash, type GeoPoint } from '../logic/nearby';
+import { feedCellOf } from '../logic/feedArea';
 import { UserGeoLocation, calculateDistanceKm, formatDistance } from './geoService';
 
 export interface FirestoreUserProfile {
@@ -56,7 +70,6 @@ export interface FirestoreUserProfile {
   age?: number;
   /** Added on save from the coarsened coordinates; used for the "nearby" range queries */
   geohash?: string;
-  lastSeenAt?: string;
   shareLocation?: boolean;
   bio?: string;
   currentMood?: string;
@@ -105,6 +118,83 @@ function guard<T>(what: string, onNext: (value: T) => void | Promise<void>): (va
   };
 }
 
+/**
+ * Listens to several queries over one collection and reports the union of their documents (by id). Nothing is
+ * reported until every query has answered once, so a partial first answer cannot make the list blink. A query that
+ * fails (a missing index, say) counts as empty, so the others still show.
+ */
+function onUnionSnapshot(queries: Query[], what: string, onDocs: (docs: QueryDocumentSnapshot[]) => void, onError: (error: unknown) => void): () => void {
+  const latest: Array<QueryDocumentSnapshot[] | undefined> = queries.map(() => undefined);
+  const emit = guard(what, () => {
+    if (latest.some((docs) => docs === undefined)) return;
+    const byId = new Map<string, QueryDocumentSnapshot>();
+    latest.forEach((docs) => docs!.forEach((d) => byId.set(d.id, d)));
+    onDocs([...byId.values()]);
+  });
+  const stops = queries.map((q, i) =>
+    onSnapshot(
+      q,
+      (snapshot) => { latest[i] = snapshot.docs; emit(undefined); },
+      (error) => { onError(error); latest[i] = []; emit(undefined); }
+    )
+  );
+  return () => stops.forEach((stop) => stop());
+}
+
+type ReadMessage = Message & { _createdAt: number };
+
+/** One stored chat message, decrypted; null (and reported) when it cannot be read */
+async function readChatMessage(docSnap: QueryDocumentSnapshot, chatId: string, currentUserId: string, fromCache: boolean, report: (error: unknown) => void): Promise<ReadMessage | null> {
+  try {
+    // A message still on its way has no server time yet: use the local estimate until the server answers
+    const data = docSnap.data({ serverTimestamps: 'estimate' });
+    const senderId = asString(data.senderId);
+    if (!senderId) return null;
+    const cipher = asString(data.cipherPayload);
+    const proposalCipher = asOptString(data.proposalCipher);
+    const type = asString(data.type, 'text');
+    return {
+      id: asString(data.id, docSnap.id),
+      chatId,
+      senderId,
+      senderName: asString(data.senderName),
+      senderAvatar: asOptString(data.senderAvatar) || undefined,
+      text: await cryptoService.decryptMessage(cipher, chatId),
+      timestamp: asString(data.timestamp) || ph('Щойно'),
+      isMe: senderId === currentUserId,
+      type: (['text', 'cheers', 'location_proposal', 'audio', 'proposal_response'].includes(type) ? type : 'text') as Message['type'],
+      audioUrl: asOptString(data.audioUrl) || undefined,
+      audioDuration: asNumber(data.audioDuration),
+      isEncrypted: true,
+      cipherPayload: cipher,
+      proposalData: proposalCipher ? await readProposal(proposalCipher, chatId) : undefined,
+      proposalId: asOptString(data.proposalId) || undefined,
+      proposalStatus: data.proposalStatus === 'accepted' || data.proposalStatus === 'declined' ? data.proposalStatus : undefined,
+      isFromCache: fromCache,
+      hasPendingWrites: docSnap.metadata.hasPendingWrites,
+      _createdAt: timeMillis(data.createdAt),
+      createdAt: timeMillis(data.createdAt),
+    };
+  } catch (error) {
+    console.warn('[Firestore] unreadable message skipped:', docSnap.id, error);
+    report(error);
+    return null;
+  }
+}
+
+/** Readable messages oldest first (by server time), so a thread appends in order */
+function oldestFirst(read: Array<ReadMessage | null>): Message[] {
+  const messages = read.filter((m): m is ReadMessage => m !== null);
+  messages.sort((x, y) => x._createdAt - y._createdAt);
+  return messages.map(({ _createdAt, ...m }) => m);
+}
+
+/** An earlier attempt already wrote this message (it committed after its timeout): report that one, never rewrite it */
+function alreadySent(data: DocumentData, senderId: string): { cipherPayload: string; success: boolean } {
+  if (data.senderId !== senderId) throw Object.assign(new Error('Message id belongs to another sender'), { code: 'permission-denied' });
+  return { cipherPayload: asString(data.cipherPayload), success: true };
+}
+
 /** Decrypts the details of a meetup proposal; a proposal starts out pending until an answer message says otherwise */
 async function readProposal(cipher: string, chatId: string): Promise<Message['proposalData']> {
   try {
@@ -129,6 +219,8 @@ export const firestoreSyncService = {
       if (typeof fields.lat === 'number') fields.lat = coarse(fields.lat);
       if (typeof fields.lng === 'number') fields.lng = coarse(fields.lng);
       if (typeof fields.lat === 'number' && typeof fields.lng === 'number') fields.geohash = publicGeohash(fields.lat, fields.lng);
+      // Builds before 2026-10-16 stamped a visit time here; nothing reads it, so the next profile write drops it
+      fields.lastSeenAt = deleteField();
       await setDoc(doc(db, 'users', profile.id), { ...fields, updatedAt: new Date().toISOString() }, { merge: true });
     } catch (error) {
       throw error;
@@ -284,6 +376,8 @@ export const firestoreSyncService = {
         participantsCount: Number(hangout.participantsCount ?? 1),
         lat: typeof hangout.lat === 'number' ? hangout.lat : null,
         lng: typeof hangout.lng === 'number' ? hangout.lng : null,
+        // The area clients listen to (logic/feedArea.ts)
+        ...omitUndefined({ geo: feedCellOf(hangout.lat, hangout.lng) }),
         status: 'active',
         joinedUsers: hangout.joinedUsers || [],
       });
@@ -295,31 +389,35 @@ export const firestoreSyncService = {
   },
 
   /**
-   * Миттєва підписка на живі чекіни (Hangouts) у реальному часі.
-   * Розраховує дистанцію до кожного бару відносно поточних координат користувача.
+   * Live tables in the area around `cells` (logic/feedArea.ts), plus the ones this person hosts or sits at wherever
+   * they are (the "ended" modal relies on those). Distances are measured from `userLocation`.
    */
   subscribeToLiveHangouts(
+    userId: string,
     userLocation: UserGeoLocation,
-    callback: (hangouts: HangoutAlert[]) => void,
-    options: { throttleMs?: number } = {}
+    cells: string[],
+    callback: (hangouts: HangoutAlert[]) => void
   ): () => void {
     const report = captureAppErrorReporter({ restart: true });
     try {
-      // Only tables that are still live: expired ones are never read (and never billed), whoever forgot to close them
-      const hangoutsCol = query(collection(db, 'hangouts'), where('expiresAt', '>', Date.now()));
-      let lastEmissionTimestamp = 0;
+      // Only tables live this hour: older expired ones are never read (and never billed), whoever forgot to close them.
+      // Tables that ended within the hour are skipped below (isHangoutExpired).
+      // Battery saver does not drop snapshots here (that saved no traffic and could lose the last change): it keeps the
+      // whole listener to the screens that show tables instead (hooks/useCloudSync.ts).
+      const since = liveSince(Date.now());
+      const hangouts = collection(db, 'hangouts');
+      const queries = [
+        ...(cells.length ? [query(hangouts, where('geo', 'in', cells), where('expiresAt', '>', since))] : []),
+        // The host is in joinedUsers from the start (rules), so this one query covers hosting and sitting at a table
+        query(hangouts, where('joinedUsers', 'array-contains', userId), where('expiresAt', '>', since)),
+      ];
 
-      const unsubscribe = onSnapshot(
-        hangoutsCol,
-        guard('hangouts', (snapshot) => {
+      const unsubscribe = onUnionSnapshot(
+        queries,
+        'hangouts',
+        (docs) => {
           const now = Date.now();
-          // In Battery Saver mode the caller passes a throttle to conserve CPU & battery
-          if (options.throttleMs && lastEmissionTimestamp > 0 && now - lastEmissionTimestamp < options.throttleMs) {
-            return;
-          }
-          lastEmissionTimestamp = now;
-
-          const liveFirestoreItems = readEach(snapshot.docs, (d) => {
+          const liveFirestoreItems = readEach(docs, (d) => {
             const data = readCloudHangout(d.id, d.data());
             if (!data || data.status === 'closed' || isHangoutExpired(data, now)) return null;
 
@@ -355,7 +453,7 @@ export const firestoreSyncService = {
           });
 
           callback(merged);
-        }),
+        },
         (error) => {
           console.warn('[Firestore] Live Hangouts subscription warning:', error);
           report(error);
@@ -473,17 +571,27 @@ export const firestoreSyncService = {
   },
 
   /**
-   * Live stream of scheduled group meetups
+   * Scheduled group meetups in the area around `cells` (logic/feedArea.ts), plus every meetup this person hosts or is
+   * invited to, wherever it is
    */
-  subscribeToMeetups(callback: (meetups: GroupMeetup[]) => void): () => void {
+  subscribeToMeetups(userId: string, cells: string[], callback: (meetups: GroupMeetup[]) => void): () => void {
     const report = captureAppErrorReporter({ restart: true });
     try {
-      // Meetups are listed until 24 h after their start; the archive (30 more days) is not loaded
-      return onSnapshot(
-        query(collection(db, 'group_meetups'), where('endsAt', '>', Date.now())),
-        guard('group_meetups', (snapshot) => {
-          callback(readEach(snapshot.docs, (d) => readCloudMeetup(d.data())));
-        }),
+      // Meetups are listed until 24 h after their start; the archive (30 more days) is not loaded, and the ones archived
+      // within the current hour (the query bound is rounded, see liveSince) are skipped here.
+      // "Mine" filters on the person's own participant entry alone: the automatic single-field index serves it, and
+      // the few archived meetups it also returns are skipped like the rest.
+      const meetups = collection(db, 'group_meetups');
+      return onUnionSnapshot(
+        [
+          ...(cells.length ? [query(meetups, where('geo', 'in', cells), where('endsAt', '>', liveSince(Date.now())))] : []),
+          query(meetups, where(new FieldPath('participants', userId, 'userId'), '==', userId)),
+        ],
+        'group_meetups',
+        (docs) => {
+          const now = Date.now();
+          callback(readEach(docs, (d) => readCloudMeetup(d.data())).filter((m) => !isMeetupArchived(m, now)));
+        },
         (error) => { console.warn('[Firestore] group_meetups sync warning:', error); report(error); }
       );
     } catch (err) {
@@ -504,17 +612,27 @@ export const firestoreSyncService = {
    * members just update the preview (their writes would be rejected if they touched `members`).
    */
   async sendEncryptedMessage(
-    chat: Pick<ChatThread, 'id' | 'isGroup' | 'memberIds' | 'createdBy' | 'groupName' | 'groupTopic' | 'groupAvatar' | 'participants'>,
+    chat: Pick<ChatThread, 'id' | 'isGroup' | 'memberIds' | 'createdBy' | 'groupName' | 'groupTopic' | 'groupAvatar' | 'participants'> & {
+      /** The inbox already received this chat from the cloud: it exists, and this sender may read it */
+      existsInCloud?: boolean;
+    },
     message: Message,
     me: { id: string; name: string; avatar?: string }
   ): Promise<{ cipherPayload: string; success: boolean; errorCode?: string }> {
     try {
-      // A previous attempt may have committed after its timeout. Never rewrite an immutable message on retry.
       requireAllowedContent(message.text, chat.groupName, chat.groupTopic, message.proposalData?.barName, message.proposalData?.address);
-      const existing = await getDoc(doc(db, 'chats', chat.id, 'messages', message.id)).catch(() => null);
-      if (existing?.exists()) {
-        if (existing.data().senderId !== me.id) throw Object.assign(new Error('Message id belongs to another sender'), { code: 'permission-denied' });
-        return { cipherPayload: asString(existing.data().cipherPayload), success: true };
+      const messageRef = doc(db, 'chats', chat.id, 'messages', message.id);
+      // A previous attempt may have committed after its timeout. Never rewrite an immutable message on retry.
+      // In a chat known to exist, that check is one of the transaction's reads below (no extra round trip). Reading a
+      // message of a chat that may not exist yet is refused by the rules, so a new chat is checked here, with its parent.
+      let parentExists = chat.existsInCloud === true;
+      if (!parentExists) {
+        const [existing, parent] = await Promise.all([
+          getDoc(messageRef).catch(() => null),
+          getDoc(doc(db, 'chats', chat.id)).catch(() => null),
+        ]);
+        if (existing?.exists()) return alreadySent(existing.data(), me.id);
+        parentExists = !!parent?.exists();
       }
       const cipherPayload = await cryptoService.encryptMessage(message.text, chat.id);
       const now = new Date().toISOString();
@@ -527,15 +645,14 @@ export const firestoreSyncService = {
         updatedAt: now,
       };
       // Rules hide a missing parent too; the atomic write below proves membership on creation.
-      const parent = await getDoc(doc(db, 'chats', chat.id)).catch(() => null);
       const members = chat.memberIds ?? [];
-      if (!chat.isGroup && !parent?.exists()) {
+      if (!chat.isGroup && !parentExists) {
         chatFields.members = members;
         chatFields.isGroup = false;
         chatFields.profiles = { [me.id]: { name: me.name.slice(0, 60), avatar: me.avatar ?? '' } };
       } else if (!chat.isGroup) {
         chatFields.profiles = { [me.id]: { name: me.name.slice(0, 60), avatar: me.avatar ?? '' } };
-      } else if (chat.isGroup && chat.createdBy === me.id && !parent?.exists()) {
+      } else if (chat.isGroup && chat.createdBy === me.id && !parentExists) {
         chatFields.members = members;
         chatFields.isGroup = true;
         chatFields.createdBy = me.id;
@@ -556,11 +673,18 @@ export const firestoreSyncService = {
           )
         : null;
 
+      let result: { cipherPayload: string; success: boolean } = { cipherPayload, success: true };
       await runTransaction(db, async (tx) => {
-      const messageRef = doc(db, 'chats', chat.id, 'messages', message.id);
-      // Reading a not-yet-created parent is forbidden by the membership rule, so message idempotency
-      // is checked above. A concurrent retry that loses creation is retried by the durable outbox.
-      const debit = await prepareWriteBudget(tx, me.id, 'message', `${chat.id}/${message.id}`);
+      // A concurrent retry that loses creation is retried by the durable outbox.
+      const [debit, existing] = await Promise.all([
+        prepareWriteBudget(tx, me.id, 'message', `${chat.id}/${message.id}`),
+        chat.existsInCloud === true ? tx.get(messageRef) : null,
+      ]);
+      if (existing?.exists()) {
+        result = alreadySent(existing.data(), me.id);
+        return;
+      }
+      result = { cipherPayload, success: true };
       debit();
       tx.set(messageRef, {
         id: message.id,
@@ -582,7 +706,7 @@ export const firestoreSyncService = {
       tx.set(doc(db, 'chats', chat.id), chatFields, { merge: true });
       });
 
-      return { cipherPayload, success: true };
+      return result;
     } catch (error) {
       console.warn('Could not sync encrypted message to Firestore (running in offline/local fallback):', error);
       return { cipherPayload: '', success: false, errorCode: String((error as { code?: unknown })?.code ?? 'unavailable') };
@@ -700,67 +824,40 @@ export const firestoreSyncService = {
   },
 
   /**
-   * Subscribes to real-time chat messages from Cloud Firestore and decrypts them on the fly
+   * Subscribes to real-time chat messages from Cloud Firestore and decrypts them on the fly.
+   * Messages never change once written (rules), so a chat this device already holds only needs what came after the
+   * newest message the server confirmed (`since`, server time in ms); the newest page is loaded only without one.
    */
   subscribeToEncryptedChat(
     chatId: string,
     currentUserId: string,
-    onMessages: (messages: Message[]) => void
+    onMessages: (messages: Message[], replacesOlder: boolean) => void,
+    since?: number
   ): () => void {
     const report = captureAppErrorReporter({ restart: true });
     try {
-      const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(CHAT_PAGE_SIZE));
+      const messages = collection(db, 'chats', chatId, 'messages');
+      const q = since !== undefined
+        ? query(messages, where('createdAt', '>', Timestamp.fromMillis(since)), orderBy('createdAt'), limitToLast(CHAT_SINCE_LIMIT))
+        : query(messages, orderBy('createdAt', 'desc'), limit(CHAT_FIRST_PAGE));
+      // Settled by the first answer from the server (a cached one may be partial)
+      let gapChecked = since === undefined;
 
       const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, guard(`chat ${chatId}`, async (snapshot) => {
-        // Only what changed since the last snapshot (incl. delivery-state changes); the initial
-        // snapshot reports every loaded doc as "added". Avoids re-decrypting the whole history.
-        const changed = snapshot.docChanges({ includeMetadataChanges: true }).filter((c) => c.type !== 'removed');
-        if (changed.length === 0) return;
+        let replacesOlder = false;
+        if (!gapChecked && !snapshot.metadata.fromCache) {
+          gapChecked = true;
+          replacesOlder = snapshot.size >= CHAT_SINCE_LIMIT;
+        }
+        // Only what changed since the last snapshot (incl. delivery-state changes); the initial snapshot reports every
+        // loaded doc as "added". Avoids re-decrypting the whole history. A page that replaces the older messages goes whole.
+        const docs = replacesOlder
+          ? snapshot.docs
+          : snapshot.docChanges({ includeMetadataChanges: true }).filter((c) => c.type !== 'removed').map((c) => c.doc);
+        if (docs.length === 0) return;
 
-        const read = await Promise.all(
-          changed.map(async ({ doc: docSnap }): Promise<(Message & { _createdAt: number }) | null> => {
-            try {
-              // A message still on its way has no server time yet: use the local estimate until the server answers
-              const data = docSnap.data({ serverTimestamps: 'estimate' });
-              const senderId = asString(data.senderId);
-              if (!senderId) return null;
-              const cipher = asString(data.cipherPayload);
-              const proposalCipher = asOptString(data.proposalCipher);
-              const type = asString(data.type, 'text');
-              return {
-                id: asString(data.id, docSnap.id),
-                chatId,
-                senderId,
-                senderName: asString(data.senderName),
-                senderAvatar: asOptString(data.senderAvatar) || undefined,
-                text: await cryptoService.decryptMessage(cipher, chatId),
-                timestamp: asString(data.timestamp) || ph('Щойно'),
-                isMe: senderId === currentUserId,
-                type: (['text', 'cheers', 'location_proposal', 'audio', 'proposal_response'].includes(type) ? type : 'text') as Message['type'],
-                audioUrl: asOptString(data.audioUrl) || undefined,
-                audioDuration: asNumber(data.audioDuration),
-                isEncrypted: true,
-                cipherPayload: cipher,
-                proposalData: proposalCipher ? await readProposal(proposalCipher, chatId) : undefined,
-                proposalId: asOptString(data.proposalId) || undefined,
-                proposalStatus: data.proposalStatus === 'accepted' || data.proposalStatus === 'declined' ? data.proposalStatus : undefined,
-                isFromCache: snapshot.metadata.fromCache,
-                hasPendingWrites: docSnap.metadata.hasPendingWrites,
-                _createdAt: timeMillis(data.createdAt),
-                createdAt: timeMillis(data.createdAt),
-              };
-            } catch (error) {
-              console.warn('[Firestore] unreadable message skipped:', docSnap.id, error);
-              report(error);
-              return null;
-            }
-          })
-        );
-
-        // The query is newest-first; deliver oldest-first (by server time) so the thread appends in order
-        const messages = read.filter((m): m is Message & { _createdAt: number } => m !== null);
-        messages.sort((x, y) => x._createdAt - y._createdAt);
-        onMessages(messages.map(({ _createdAt, ...m }) => m));
+        const read = await Promise.all(docs.map((d) => readChatMessage(d, chatId, currentUserId, snapshot.metadata.fromCache, report)));
+        onMessages(oldestFirst(read), replacesOlder);
       }), (err) => {
         console.warn('Firestore snapshot listener notice (local state remains active):', err);
         report(err);
@@ -772,6 +869,22 @@ export const firestoreSyncService = {
       report(err);
       return () => {};
     }
+  },
+
+  /**
+   * "Show earlier": the page of messages sent before `before` (server time in ms), oldest first. `complete` when the
+   * server has nothing older; an answer from the cache (offline) never claims that.
+   */
+  async loadOlderMessages(chatId: string, currentUserId: string, before: number): Promise<{ messages: Message[]; complete: boolean }> {
+    const report = captureAppErrorReporter();
+    const snapshot = await getDocs(query(
+      collection(db, 'chats', chatId, 'messages'),
+      where('createdAt', '<', Timestamp.fromMillis(before)),
+      orderBy('createdAt', 'desc'),
+      limit(CHAT_FIRST_PAGE)
+    ));
+    const read = await Promise.all(snapshot.docs.map((d) => readChatMessage(d, chatId, currentUserId, snapshot.metadata.fromCache, report)));
+    return { messages: oldestFirst(read), complete: !snapshot.metadata.fromCache && snapshot.size < CHAT_FIRST_PAGE };
   },
 
   /**
@@ -845,11 +958,10 @@ export const firestoreSyncService = {
   },
 
   /**
-   * "People nearby": registered users within ~3 km of `center`, nearest first, at most 50. Firestore cannot filter by
-   * distance, so the circle is covered by a few geohash ranges (one listener each) and the exact distance is applied
-   * here. Users without a location carry no geohash and are never returned.
+   * "People nearby": registered users within ~3 km of `center`, nearest first, at most 50 (callable discoverNearby).
+   * Asked right away, then every `refreshMs` while subscribed.
    */
-  subscribeToPublicBuddies(currentUserId: string, center: GeoPoint, callback: (buddies: BuddyProfile[]) => void): () => void {
+  subscribeToPublicBuddies(currentUserId: string, center: GeoPoint, callback: (buddies: BuddyProfile[]) => void, refreshMs = 2 * 60 * 1000): () => void {
     const report = captureAppErrorReporter({ restart: true });
     let cancelled = false;
     let inFlight = false;
@@ -878,7 +990,7 @@ export const firestoreSyncService = {
       finally { inFlight = false; }
     };
     void poll();
-    const timer = setInterval(() => void poll(), 60_000);
+    const timer = setInterval(() => void poll(), refreshMs);
     return () => { cancelled = true; clearInterval(timer); };
   },
 
@@ -893,17 +1005,6 @@ export const firestoreSyncService = {
       tx.set(quota, { count: reset ? 1 : Number(previous?.count ?? 0) + 1, windowStartedAt: reset ? serverTimestamp() : previous!.windowStartedAt, lastAt: serverTimestamp(), lastReportId: report.id });
       tx.set(ref, omitUndefined({ ...report, syncedAt: new Date().toISOString(), receivedAt: serverTimestamp() }));
     });
-  },
-
-  /** Tells other users this person has the app open (the online dot, and the "inactive" mark after a week away) */
-  async touchPresence(userId: string): Promise<void> {
-    const report = captureAppErrorReporter();
-    try {
-      await setDoc(doc(db, 'users', userId), { id: userId, lastSeenAt: new Date().toISOString() }, { merge: true });
-    } catch (error) {
-      console.warn('Could not update presence:', error);
-      report(error);
-    }
   },
 };
 

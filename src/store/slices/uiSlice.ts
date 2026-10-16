@@ -1,7 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { HangoutAlert, PushNotificationItem } from '../../types';
 import { personalDataReset, identityRedacted } from '../actions';
-import { loggedIn, loggedOut, profileUpdated } from './authSlice';
+import { claimsChecked, loggedIn, loggedOut, profileUpdated } from './authSlice';
 
 /** Transient UI state that must not survive an app restart (never persisted) */
 interface UiState {
@@ -22,12 +22,15 @@ interface UiState {
   endedTables: HangoutAlert[];
   /** Why the person is back on the sign-in screen (shown there once) */
   authNotice: 'underage' | null;
+  /** The server's claims are being checked: the app shows the splash, not the birth-date form, meanwhile */
+  claimsPending: boolean;
 }
 
 const uiSlice = createSlice({
   name: 'ui',
-  initialState: { sessionGeneration: 0, inboxGeneration: 0, inboxReady: false, authError: false, authOperation: false, activeBanner: null, isOnline: true, authReady: false, openChatId: null, pendingChatId: null, endedTables: [], authNotice: null } as UiState,
+  initialState: { sessionGeneration: 0, inboxGeneration: 0, inboxReady: false, authError: false, authOperation: false, activeBanner: null, isOnline: true, authReady: false, openChatId: null, pendingChatId: null, endedTables: [], authNotice: null, claimsPending: false } as UiState,
   reducers: {
+    claimsPending(state, action: PayloadAction<boolean>) { state.claimsPending = action.payload; },
     inboxSyncStarted(state) { state.inboxGeneration += 1; },
     inboxReady(state) { state.inboxReady = true; },
     authErrorSet(state, action: PayloadAction<boolean>) { state.authError = action.payload; },
@@ -78,7 +81,9 @@ const uiSlice = createSlice({
       state.pendingChatId = null;
       state.inboxReady = false;
       state.authError = false;
+      state.claimsPending = false;
     });
+    builder.addCase(claimsChecked, (state) => { state.claimsPending = false; });
     builder.addCase(loggedIn, (state) => { state.sessionGeneration += 1; state.inboxReady = false; });
     // A completed onboarding invalidates older profile/token lookups made before the callable finished.
     builder.addCase(profileUpdated, (state, { payload }) => { if (payload.serverEligible === true) state.sessionGeneration += 1; });
@@ -87,5 +92,5 @@ const uiSlice = createSlice({
 });
 
 export const { bannerShown, bannerDismissed, networkStatusChanged, authReady, chatOpened, chatOpenRequested, endedTablesNoticed, endedTableAcknowledged, authNoticeSet } = uiSlice.actions;
-export const { inboxSyncStarted, inboxReady, authErrorSet, authOperationSet } = uiSlice.actions;
+export const { inboxSyncStarted, inboxReady, authErrorSet, authOperationSet, claimsPending } = uiSlice.actions;
 export default uiSlice.reducer;

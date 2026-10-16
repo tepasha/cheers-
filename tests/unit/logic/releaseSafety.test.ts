@@ -40,6 +40,12 @@ describe('release safety regressions', () => {
     expect(saved.outbox.jobs[0].status).toBe('sending');
   });
 
+  it('keeps what was last saved per resource through hydration, dropping anything malformed', () => {
+    const saved = { _persist: { version: 2, rehydrated: true }, outbox: { jobs: [], synced: { 'u1:profile': '[{"id":"u1"}]', broken: 1 } } };
+    const next = normalizePersistedState(saved as unknown as PersistedState) as unknown as { outbox: { synced: Record<string, string> } };
+    expect(next.outbox.synced).toEqual({ 'u1:profile': '[{"id":"u1"}]' });
+  });
+
   it('removes a server-deleted meetup while retaining an offline creation', () => {
     const state = { items: [{ id: 'deleted' }, { id: 'pending' }, { id: 'updated', title: 'old' }] as GroupMeetup[] };
     const next = meetups(state, meetupsReconciled({ items: [{ id: 'updated', title: 'new' }] as GroupMeetup[], pendingIds: ['pending'] }));

@@ -26,7 +26,8 @@ const notificationsSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, () => ({ items: [] as PushNotificationItem[] }));
-    builder.addCase(identityRedacted, (state, { payload: uid }) => { state.items = state.items.filter((item) => item.buddyId !== uid); });
+    // Repeated by every inbox snapshot: changes the state only the first time
+    builder.addCase(identityRedacted, (state, { payload: uid }) => { if (state.items.some((item) => item.buddyId === uid)) state.items = state.items.filter((item) => item.buddyId !== uid); });
   },
 });
 

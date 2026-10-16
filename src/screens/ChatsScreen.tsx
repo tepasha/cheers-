@@ -1,5 +1,5 @@
 import { dialogs as Alert } from '../services/dialogs';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -12,6 +12,7 @@ import { MAX_GROUP_MEMBERS } from '../logic/chats';
 import { createGroupChat, deleteChat } from '../store/thunks/social';
 import { ChatParticipant, ChatThread } from '../types';
 import { useTr } from '../hooks/useT';
+import { useMountDemand } from '../services/demand';
 
 const GROUP_EMOJIS = ['🍻', '🍺', '🥂', '🍷', '🎲', '💻', '🎷', '⚽'];
 
@@ -19,7 +20,6 @@ export const ChatsScreen = () => {
   const tr = useTr();
   const navigation = useNavigation();
   const dispatch = useAppDispatch();
-  const buddies = useAppSelector(selectBuddies);
   const [creating, setCreating] = useState(false);
 
   const visibleThreads = useAppSelector(selectVisibleChatThreads);
@@ -82,52 +82,46 @@ export const ChatsScreen = () => {
         )}
       />
 
-      <CreateGroupSheet
-        visible={creating}
-        candidates={buddies.map((b) => ({ id: b.id, name: b.name, avatar: b.avatar, online: b.online }))}
-        onClose={() => setCreating(false)}
-        onCreate={(data) => {
-          const thread = dispatch(createGroupChat(data));
-          setCreating(false);
-          navigation.navigate('ChatRoom', { chatId: thread.id });
-        }}
-      />
+      {creating && (
+        <CreateGroupSheet
+          onClose={() => setCreating(false)}
+          onCreate={(data) => {
+            const thread = dispatch(createGroupChat(data));
+            setCreating(false);
+            navigation.navigate('ChatRoom', { chatId: thread.id });
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 };
 
+/**
+ * Mounted only while open, so the form starts empty every time and the chat list does not subscribe to the people
+ * nearby (they change with every refresh and GPS update)
+ */
 const CreateGroupSheet = ({
-  visible,
-  candidates,
   onClose,
   onCreate,
 }: {
-  visible: boolean;
-  candidates: ChatParticipant[];
   onClose: () => void;
   onCreate: (data: { name: string; topic: string; avatar: string; participants: ChatParticipant[] }) => void;
 }) => {
   const tr = useTr();
+  useMountDemand('people');
+  const buddies = useAppSelector(selectBuddies);
+  const candidates = useMemo<ChatParticipant[]>(() => buddies.map((b) => ({ id: b.id, name: b.name, avatar: b.avatar, online: b.online })), [buddies]);
   const [name, setName] = useState('');
   const [topic, setTopic] = useState('');
   const [avatar, setAvatar] = useState(GROUP_EMOJIS[0]);
   const [selected, setSelected] = useState<string[]>([]);
 
-  const reset = () => {
-    setName('');
-    setTopic('');
-    setAvatar(GROUP_EMOJIS[0]);
-    setSelected([]);
-  };
   const canCreate = name.trim().length > 0 && selected.length > 0;
 
   return (
     <Sheet
-      visible={visible}
-      onClose={() => {
-        reset();
-        onClose();
-      }}
+      visible
+      onClose={onClose}
       title={tr('Новий груповий чат')}
       footer={
         <Button
@@ -141,7 +135,6 @@ const CreateGroupSheet = ({
               avatar,
               participants: candidates.filter((c) => selected.includes(c.id)).map((c) => ({ ...c, role: 'member' as const })),
             });
-            reset();
           }}
         />
       }

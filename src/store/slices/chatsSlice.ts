@@ -11,9 +11,11 @@ interface ChatsState {
 
 const initialState: ChatsState = { threads: [], hiddenIds: [] };
 
-/** Keeps the persisted store bounded: only the newest messages live on the device */
-// The open chat only streams the newest 100 messages, so keeping more would just make every save slower
-export const MAX_MESSAGES_PER_THREAD = 100;
+/**
+ * In memory a thread holds at most this many of its newest messages, older pages from "Show earlier" included. On disk
+ * only the newest 100 are kept (store/chatsStorage.ts), so the saved copy stays small whatever was scrolled through.
+ */
+export const MAX_MESSAGES_PER_THREAD = 500;
 
 const trim = (messages: Message[]) => {
   if (messages.length > MAX_MESSAGES_PER_THREAD) messages.splice(0, messages.length - MAX_MESSAGES_PER_THREAD);
@@ -36,6 +38,8 @@ function applyProposalResponses(thread: ChatThread) {
     }
   });
 }
+
+const sameJson = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 const moveToFront = (threads: ChatThread[], id: string) => {
   const idx = threads.findIndex((t) => t.id === id);
@@ -94,12 +98,14 @@ const chatsSlice = createSlice({
           return;
         }
 
-        existing.memberIds = thread.memberIds;
+        // Every snapshot repeats all chats: only real changes are written, so an unchanged thread stays the same object
+        // (no re-render of its row, nothing to save in store/chatsStorage.ts)
+        if (!sameJson(existing.memberIds, thread.memberIds)) existing.memberIds = thread.memberIds;
         if (thread.isGroup) {
-          existing.groupName = thread.groupName;
-          existing.groupTopic = thread.groupTopic;
-          existing.groupAvatar = thread.groupAvatar;
-          existing.participants = thread.participants;
+          if (existing.groupName !== thread.groupName) existing.groupName = thread.groupName;
+          if (existing.groupTopic !== thread.groupTopic) existing.groupTopic = thread.groupTopic;
+          if (existing.groupAvatar !== thread.groupAvatar) existing.groupAvatar = thread.groupAvatar;
+          if (!sameJson(existing.participants, thread.participants)) existing.participants = thread.participants;
         }
 
         if (!thread.updatedAt) return;
@@ -107,8 +113,8 @@ const chatsSlice = createSlice({
         // `updatedAt` yet. Its cloud preview then only counts as news if it differs from what this device already
         // holds; otherwise every already-read chat would light up as unread after each reinstall.
         const hasNews = thread.lastMessageId ? thread.lastMessageId !== existing.lastMessageId : thread.updatedAt !== existing.updatedAt && thread.lastMessage !== existing.lastMessage;
-        existing.updatedAt = thread.updatedAt;
-        existing.lastMessageId = thread.lastMessageId;
+        if (existing.updatedAt !== thread.updatedAt) existing.updatedAt = thread.updatedAt;
+        if (existing.lastMessageId !== thread.lastMessageId) existing.lastMessageId = thread.lastMessageId;
         if (!hasNews) return;
         if (thread.lastMessage) {
           existing.lastMessage = thread.lastMessage;
@@ -136,10 +142,24 @@ const chatsSlice = createSlice({
      * get their delivery flags refreshed so optimistic local messages are never duplicated.
      * Unread counts are driven by the inbox sync, not here (this stream only runs while the chat is open).
      */
-    messagesReceived(state, action: PayloadAction<{ chatId: string; messages: Message[] }>) {
-      const { chatId, messages } = action.payload;
+    /**
+     * Messages from the open chat's stream. `replacesOlder`: the stream started after a long absence and came back as a
+     * full page, which may not reach back to what this device held; those older messages are dropped rather than shown
+     * with a hole in between ("Show earlier" brings them back in order).
+     */
+    messagesReceived(state, action: PayloadAction<{ chatId: string; messages: Message[]; replacesOlder?: boolean }>) {
+      const { chatId, messages, replacesOlder } = action.payload;
       const thread = state.threads.find((t) => t.id === chatId);
       if (!thread || messages.length === 0) return;
+
+      if (replacesOlder) {
+        const from = Math.min(...messages.map((m) => m.createdAt ?? Infinity));
+        const kept = thread.messages.filter((m) => m.hasPendingWrites !== false || (m.createdAt ?? 0) >= from);
+        if (Number.isFinite(from) && kept.length !== thread.messages.length) {
+          thread.messages = kept;
+          delete thread.historyComplete;
+        }
+      }
 
       const known = new Map(thread.messages.map((m) => [m.id, m]));
       let appended = false;
@@ -147,12 +167,15 @@ const chatsSlice = createSlice({
       messages.forEach((incoming) => {
         const existing = known.get(incoming.id);
         if (existing) {
-          existing.senderName = incoming.senderName;
-          existing.senderAvatar = incoming.senderAvatar;
-          existing.createdAt = incoming.createdAt ?? existing.createdAt;
-          existing.cipherPayload = incoming.cipherPayload ?? existing.cipherPayload;
-          existing.isFromCache = incoming.isFromCache;
-          existing.hasPendingWrites = incoming.hasPendingWrites;
+          // Only real changes are written: a snapshot that repeats what is known leaves the thread (and its saved copy) as is
+          const createdAt = incoming.createdAt ?? existing.createdAt;
+          const cipherPayload = incoming.cipherPayload ?? existing.cipherPayload;
+          if (existing.senderName !== incoming.senderName) existing.senderName = incoming.senderName;
+          if (existing.senderAvatar !== incoming.senderAvatar) existing.senderAvatar = incoming.senderAvatar;
+          if (existing.createdAt !== createdAt) existing.createdAt = createdAt;
+          if (existing.cipherPayload !== cipherPayload) existing.cipherPayload = cipherPayload;
+          if (existing.isFromCache !== incoming.isFromCache) existing.isFromCache = incoming.isFromCache;
+          if (existing.hasPendingWrites !== incoming.hasPendingWrites) existing.hasPendingWrites = incoming.hasPendingWrites;
           return;
         }
         thread.messages.push(incoming);
@@ -169,6 +192,19 @@ const chatsSlice = createSlice({
         thread.lastMessageTime = latest.timestamp;
       }
       if (!appended) sortMessages(thread.messages);
+    },
+    /** A "Show earlier" page: messages before the oldest one held. `complete` when it reached the chat's first message. */
+    olderMessagesLoaded(state, action: PayloadAction<{ chatId: string; messages: Message[]; complete: boolean }>) {
+      const thread = state.threads.find((t) => t.id === action.payload.chatId);
+      if (!thread) return;
+      const known = new Set(thread.messages.map((m) => m.id));
+      const added = action.payload.messages.filter((m) => !known.has(m.id));
+      if (added.length > 0) {
+        thread.messages.unshift(...added);
+        sortMessages(thread.messages);
+        applyProposalResponses(thread);
+      }
+      if (action.payload.complete && !thread.historyComplete) thread.historyComplete = true;
     },
     participantsAdded(
       state,
@@ -187,9 +223,12 @@ const chatsSlice = createSlice({
       thread.lastMessage = action.payload.notice.text;
       thread.lastMessageTime = action.payload.notice.timestamp;
     },
+    /** Dispatched with every snapshot of the open chat: changes the thread only when there was something unread */
     chatRead(state, action: PayloadAction<string>) {
       const thread = state.threads.find((t) => t.id === action.payload);
-      if (thread) { thread.unreadCount = 0; thread.lastReadMessageId = thread.lastMessageId; }
+      if (!thread) return;
+      if (thread.unreadCount !== 0) thread.unreadCount = 0;
+      if (thread.lastReadMessageId !== thread.lastMessageId) thread.lastReadMessageId = thread.lastMessageId;
     },
     /** Removes the chat from this device's list only; the conversation itself is not deleted for others */
     chatDeleted(state, action: PayloadAction<string>) {
@@ -199,11 +238,14 @@ const chatsSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, () => initialState);
+    // Repeated by every inbox snapshot: only what still names the person is touched, so a repeat leaves the state (and
+    // the persisted, encrypted chats) as they are
     builder.addCase(identityRedacted, (state, { payload: uid }) => {
       state.threads.forEach((thread) => {
-        if (thread.buddy.id === uid) { thread.buddy.name = ''; thread.buddy.avatar = ''; thread.buddy.bio = ''; thread.buddy.tagline = ''; }
-        thread.participants = thread.participants?.filter((p) => p.id !== uid);
-        thread.messages.forEach((m) => { if (m.senderId === uid) { m.senderName = ''; m.senderAvatar = undefined; } });
+        const { buddy } = thread;
+        if (buddy.id === uid && (buddy.name || buddy.avatar || buddy.bio || buddy.tagline)) { buddy.name = ''; buddy.avatar = ''; buddy.bio = ''; buddy.tagline = ''; }
+        if (thread.participants?.some((p) => p.id === uid)) thread.participants = thread.participants.filter((p) => p.id !== uid);
+        thread.messages.forEach((m) => { if (m.senderId === uid && (m.senderName || m.senderAvatar)) { m.senderName = ''; m.senderAvatar = undefined; } });
       });
     });
   },
@@ -216,6 +258,7 @@ export const {
   inboxSynced,
   messageAppended,
   messagesReceived,
+  olderMessagesLoaded,
   participantsAdded,
   chatRead,
   chatDeleted,

@@ -6,4 +6,6 @@
 - Public domain terms: https://www.naturalearthdata.com/about/
 - Boundary policy: https://www.naturalearthdata.com/about/disputed-boundaries-policy/
 
+The app does not bundle the JSON: `russiaBoundaryEncoded.ts` carries the same coordinates as polylines (integer millionths of a degree, about a third of the size) and is decoded on the first check. After changing the JSON run `node scripts/encode-boundary.mjs`; a unit test fails while the two differ.
+
 Used offline to replace rectangular bounding boxes. Country geometry is approximate cartographic data, not border attestation. Device GPS can also be spoofed; this is an app eligibility rule, not a server security boundary. Regression tests include northeastern Ukraine, Poland, Rostov, Kaliningrad and Crimea.

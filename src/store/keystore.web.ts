@@ -6,4 +6,5 @@ import { createSplitStorage } from './secureStorage';
  * in localStorage next to the data would protect nothing. The state is stored per slice but unencrypted; this build
  * is for previews and development, not for the stores.
  */
+export const encryptedEntryStorage = AsyncStorage;
 export const encryptedAsyncStorage = createSplitStorage(AsyncStorage);

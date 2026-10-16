@@ -1,17 +1,23 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, original, PayloadAction } from '@reduxjs/toolkit';
 import { personalDataReset } from '../actions';
 import { GroupMeetup } from '../../types';
 import { isMeetupArchived } from '../../logic/lifecycle';
+import { reuseUnchanged } from '../../utils/reuse';
 
 const meetupsSlice = createSlice({
   name: 'meetups',
   initialState: { items: [] as GroupMeetup[] },
   reducers: {
-    /** A complete server snapshot removes deleted events, while preserving unsaved creations. */
+    /**
+     * A complete server snapshot removes deleted events, while preserving unsaved creations. Meetups equal to the ones
+     * already held keep their objects (and the list its identity when nothing changed), so their cards do not re-render.
+     */
     meetupsReconciled(state, action: PayloadAction<{ items: GroupMeetup[]; pendingIds: string[] }>) {
-      const byId = new Map(state.items.filter((m) => action.payload.pendingIds.includes(m.id)).map((m) => [m.id, m]));
+      const prev = original(state.items) ?? [];
+      const byId = new Map(prev.filter((m) => action.payload.pendingIds.includes(m.id)).map((m) => [m.id, m]));
       action.payload.items.forEach((m) => byId.set(m.id, m));
-      state.items = Array.from(byId.values());
+      const next = reuseUnchanged(prev, Array.from(byId.values())) as GroupMeetup[];
+      if (next !== prev) state.items = next;
     },
     meetupUpserted(state, action: PayloadAction<GroupMeetup>) {
       const idx = state.items.findIndex((m) => m.id === action.payload.id);
