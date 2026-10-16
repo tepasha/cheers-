@@ -576,4 +576,13 @@ export const pl: Record<string, string> = {
   "Підтвердити через Apple і видалити": "Potwierdź przez Apple i usuń",
   "Щоб підтвердити, що це ви, увійдіть через Apple ще раз.": "Aby potwierdzić, że to Ty, zaloguj się ponownie przez Apple.",
   "Підтримати розробника 🍺": "Wesprzyj twórcę 🍺",
+  "Ласкаво просимо до «Будьмо!» 🍻": "Witaj w Budmo! 🍻",
+  "«Пошук» і «Мапа» показують людей і заклади поруч. Фільтруй за відстанню та інтересами.": "„Odkrywaj” i „Mapa” pokazują ludzi i lokale w pobliżu. Filtruj według odległości i zainteresowań.",
+  "Сподобалась людина? Підніми келих «Будьмо!» — це перший крок до знайомства.": "Ktoś ci się spodobał? Wznieś toast „Budmo!” — to pierwszy krok do poznania się.",
+  "Кличі 📣": "Spotkania 📣",
+  "Створи клич «Зараз», щоб покликати компанію до свого столика, або заплануй зустріч наперед.": "Utwórz zaproszenie „Teraz”, by zaprosić towarzystwo do swojego stolika, albo zaplanuj spotkanie z wyprzedzeniem.",
+  "Приєднуйся до чужих кличів — організатор побачить тебе за столиком.": "Dołączaj do cudzych zaproszeń — organizator zobaczy cię przy stoliku.",
+  "Друзі, чати й безпека 💬": "Znajomi, czaty i bezpieczeństwo 💬",
+  "Домовляйся про деталі в чатах, надсилай тости й створюй групові чати.": "Ustalaj szczegóły na czatach, wysyłaj toasty i twórz czaty grupowe.",
+  "У кожному чаті є кнопка екстреної безпеки, а будь-кого можна заблокувати чи поскаржитись.": "Każdy czat ma przycisk bezpieczeństwa awaryjnego, a każdego możesz zablokować lub zgłosić.",
 };

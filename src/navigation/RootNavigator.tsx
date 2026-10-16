@@ -23,7 +23,7 @@ import { VerifyEmailScreen } from '../screens/VerifyEmailScreen';
 import { RussiaBlockScreen } from '../screens/RussiaBlockScreen';
 import { BirthDateScreen } from '../screens/BirthDateScreen';
 import { checkAge } from '../logic/session';
-import { GamificationTour } from '../components/GamificationTour';
+import { OnboardingTour } from '../components/OnboardingTour';
 import { AdBanner } from '../components/AdBanner';
 import { useTr } from '../hooks/useT';
 
@@ -76,7 +76,7 @@ const Tabs = () => {
         <Tab.Screen name="Chats" component={ChatsScreen} options={{ title: t('tab_chats'), tabBarLabel: t('tab_chats'), tabBarBadge: badge(unreadChats) }} />
         <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: t('tab_profile'), tabBarLabel: t('tab_profile') }} />
       </Tab.Navigator>
-      <GamificationTour />
+      <OnboardingTour />
     </>
   );
 };

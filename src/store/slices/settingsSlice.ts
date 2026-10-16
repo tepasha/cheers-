@@ -13,7 +13,7 @@ interface SettingsState {
   shareLocation: boolean;
   simulateRuBlock: boolean;
   push: PushNotificationSettings;
-  gamificationTourSeen: boolean;
+  onboardingSeen: boolean;
 }
 
 const detected = detectLanguageFromGeo(INITIAL_USER_LOCATION);
@@ -32,7 +32,7 @@ const initialState: SettingsState = {
     webPushEnabled: false,
     vibrateEnabled: true,
   },
-  gamificationTourSeen: false,
+  onboardingSeen: false,
 };
 
 const settingsSlice = createSlice({
@@ -59,14 +59,14 @@ const settingsSlice = createSlice({
     pushSettingsUpdated(state, action: PayloadAction<Partial<PushNotificationSettings>>) {
       state.push = { ...state.push, ...action.payload };
     },
-    gamificationTourSeenSet(state, action: PayloadAction<boolean>) {
-      state.gamificationTourSeen = action.payload;
+    onboardingSeenSet(state, action: PayloadAction<boolean>) {
+      state.onboardingSeen = action.payload;
     },
   },
   extraReducers: (builder) => {
     builder.addCase(personalDataReset, (state) => {
       state.push = { ...initialState.push };
-      state.gamificationTourSeen = false;
+      state.onboardingSeen = false;
       state.shareLocation = false;
     });
   },
@@ -79,6 +79,6 @@ export const {
   batterySaverSet,
   ruBlockSimulationSet,
   pushSettingsUpdated,
-  gamificationTourSeenSet,
+  onboardingSeenSet,
 } = settingsSlice.actions;
 export default settingsSlice.reducer;

@@ -576,4 +576,13 @@ export const en: Record<string, string> = {
   "Підтвердити через Apple і видалити": "Confirm with Apple and delete",
   "Щоб підтвердити, що це ви, увійдіть через Apple ще раз.": "To confirm it is you, sign in with Apple once more.",
   "Підтримати розробника 🍺": "Support the developer 🍺",
+  "Ласкаво просимо до «Будьмо!» 🍻": "Welcome to Budmo! 🍻",
+  "«Пошук» і «Мапа» показують людей і заклади поруч. Фільтруй за відстанню та інтересами.": "Discover and Map show people and venues nearby. Filter by distance and interests.",
+  "Сподобалась людина? Підніми келих «Будьмо!» — це перший крок до знайомства.": "Like someone? Raise a glass with “Budmo!” — the first step to meeting.",
+  "Кличі 📣": "Hangouts 📣",
+  "Створи клич «Зараз», щоб покликати компанію до свого столика, або заплануй зустріч наперед.": "Post a “Now” hangout to invite company to your table, or schedule a meetup ahead.",
+  "Приєднуйся до чужих кличів — організатор побачить тебе за столиком.": "Join other people’s hangouts — the organizer will see you at the table.",
+  "Друзі, чати й безпека 💬": "Friends, chats & safety 💬",
+  "Домовляйся про деталі в чатах, надсилай тости й створюй групові чати.": "Agree on details in chats, send toasts and create group chats.",
+  "У кожному чаті є кнопка екстреної безпеки, а будь-кого можна заблокувати чи поскаржитись.": "Every chat has an emergency safety button, and you can block or report anyone.",
 };
