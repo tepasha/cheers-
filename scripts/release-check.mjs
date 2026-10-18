@@ -56,6 +56,8 @@ const ADMOB_UNIT_ENV = {
   android: ['ADMOB_ANDROID_BANNER_ID', 'ADMOB_ANDROID_INLINE_ID'],
   ios: ['ADMOB_IOS_BANNER_ID', 'ADMOB_IOS_INLINE_ID'],
 };
+/** Architectures ANDROID_ABIS may list (preview APK only, app.config.ts androidSlimApk) */
+const ANDROID_ABIS = ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'];
 const isAdMobAppId = (value) => /^ca-app-pub-\d{16}~\d{10}$/.test(value) && !value.startsWith('ca-app-pub-3940256099942544');
 const isAdMobUnitId = (value) => /^ca-app-pub-\d{16}\/\d{10}$/.test(value);
 
@@ -119,6 +121,13 @@ export function checkEnv(env, { platform, profile = 'production' } = {}) {
   if (value('SUPPORT_EMAIL') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value('SUPPORT_EMAIL'))) problems.push('SUPPORT_EMAIL must be a valid email address');
   if (value('SENTRY_DSN') && !isHttpsUrl(value('SENTRY_DSN'))) problems.push('SENTRY_DSN must be an https URL');
   if (platform !== 'android' && value('EXPORT_ENCRYPTION_CLASSIFICATION') && !['exempt', 'non-exempt'].includes(value('EXPORT_ENCRYPTION_CLASSIFICATION'))) problems.push('EXPORT_ENCRYPTION_CLASSIFICATION must be exempt or non-exempt after operator review');
+  if (platform !== 'ios' && value('ANDROID_ABIS')) {
+    const abis = value('ANDROID_ABIS').split(',').map((abi) => abi.trim()).filter(Boolean);
+    if (profile !== 'preview') problems.push('ANDROID_ABIS is for the preview APK only: a production AAB must keep every architecture (Play splits it per device)');
+    for (const abi of abis) {
+      if (!ANDROID_ABIS.includes(abi)) problems.push(`ANDROID_ABIS: unknown architecture "${abi}" (${ANDROID_ABIS.join(', ')})`);
+    }
+  }
   for (const os of platform ? [platform] : Object.keys(PLATFORM_ENV)) {
     const appIdName = `ADMOB_${os.toUpperCase()}_APP_ID`;
     const appId = value(appIdName);

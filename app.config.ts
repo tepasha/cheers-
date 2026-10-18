@@ -16,6 +16,8 @@ import { withGradleProperties, type ConfigPlugin } from 'expo/config-plugins';
  *   ADMOB_ANDROID_APP_ID, ADMOB_IOS_APP_ID  AdMob app ids (ca-app-pub-…~…), compiled into the native apps
  *   ADMOB_{ANDROID,IOS}_{BANNER,INLINE}_ID  AdMob ad units (ca-app-pub-…/…) of the tab-bar strip and the list slots.
  *                         Optional: without them a build shows Google's test ads (set them for production only)
+ *   ANDROID_ABIS          Preview only (EAS `preview`): comma-separated CPU architectures of the sideloaded APK, e.g.
+ *                         `arm64-v8a`. Unset: all four, which made the stage APK ~100 MB (see androidSlimApk below)
  *   EXPO_GO_UPDATE=1      Only for `eas update` (ota.yml, preview): publish a copy that Expo Go can open (see below)
  * Locally all of them are optional (demo mode without FIREBASE_*). Preview requires Firebase/Google configuration;
  * legal links, support email, Sentry and real AdMob app ids are optional. Production requires all of them.
@@ -58,6 +60,22 @@ const withAdMobAndroidBackend: ConfigPlugin = (config) =>
 const ADMOB_SAMPLE_APP_ID = { android: 'ca-app-pub-3940256099942544~3347511713', ios: 'ca-app-pub-3940256099942544~1458002511' };
 const isAdMobAppId = (value: string) => /^ca-app-pub-\d{16}~\d{10}$/.test(value) && !value.startsWith('ca-app-pub-3940256099942544');
 const isAdMobUnitId = (value: string) => /^ca-app-pub-\d{16}\/\d{10}$/.test(value);
+
+const ANDROID_ABIS = ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'];
+const androidAbis = (): string[] | undefined => clean(env.ANDROID_ABIS)?.split(',').map((abi) => abi.trim()).filter(Boolean);
+
+/**
+ * A universal APK carries every native library (React Native, Hermes, Sentry, Maps, AdMob) once per architecture,
+ * stored uncompressed, although a phone loads one; x86/x86_64 only serve emulators. Play cuts an AAB per device by
+ * itself, so this is for the preview APK testers sideload: only the listed architectures, with compressed libraries
+ * (a smaller download; extracted on install). It must come from an EAS variable, not EAS_BUILD_PROFILE: the options
+ * are part of the native fingerprint, and `eas update --environment preview` has no build profile, so a
+ * profile-dependent value would give updates a runtime version no preview APK has.
+ */
+function androidSlimApk(): { buildArchs: string[]; useLegacyPackaging: true } | undefined {
+  const abis = androidAbis();
+  return abis?.length ? { buildArchs: abis, useLegacyPackaging: true } : undefined;
+}
 
 const isHttpsUrl = (value: string | undefined): boolean => {
   try {
@@ -114,6 +132,11 @@ export function releaseConfigProblems(projectRoot: string, platform?: string, pr
     }
   }
   if (platform !== 'ios') {
+    const abis = androidAbis();
+    if (abis && production) problems.push('ANDROID_ABIS is for the preview APK only: a production AAB must keep every architecture (Play splits it per device)');
+    for (const abi of abis ?? []) {
+      if (!ANDROID_ABIS.includes(abi)) problems.push(`ANDROID_ABIS: unknown architecture "${abi}" (${ANDROID_ABIS.join(', ')})`);
+    }
     need('GOOGLE_MAPS_API_KEY', clean(env.GOOGLE_MAPS_API_KEY));
     const servicesFile = clean(env.GOOGLE_SERVICES_JSON);
     need('GOOGLE_SERVICES_JSON', servicesFile);
@@ -181,6 +204,8 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     plugins: [
       ...(config.plugins ?? []),
       '@react-native-community/datetimepicker',
+      // R8 and resource shrinking strip what release builds never call (most of Play Services Ads and Maps)
+      ['expo-build-properties', { android: { enableMinifyInReleaseBuilds: true, enableShrinkResourcesInReleaseBuilds: true, ...androidSlimApk() } }],
       // delayAppMeasurementInit: nothing is sent to Google before the consent step (services/ads.ts) has run.
       // cstr6suwn9: Google's own SKAdNetwork id (iOS install attribution without tracking)
       ['react-native-google-mobile-ads', { androidAppId: admobAppId.android, iosAppId: admobAppId.ios, delayAppMeasurementInit: true, skAdNetworkItems: ['cstr6suwn9.skadnetwork'] }],

@@ -217,7 +217,7 @@ describe('release-check: production only from main or a release tag', () => {
  */
 describe('app.config.ts release gate', () => {
   const stubEnv = (env: Record<string, string | undefined>) => {
-    for (const name of [...ALL_ENV, 'FIREBASE_OAUTH_CLIENT_ID', 'GOOGLE_SERVICES_JSON', 'EAS_BUILD_PROFILE', 'EAS_BUILD_PLATFORM']) vi.stubEnv(name, env[name]);
+    for (const name of [...ALL_ENV, 'FIREBASE_OAUTH_CLIENT_ID', 'GOOGLE_SERVICES_JSON', 'ANDROID_ABIS', 'EAS_BUILD_PROFILE', 'EAS_BUILD_PLATFORM']) vi.stubEnv(name, env[name]);
   };
   const root = process.cwd();
   afterEach(() => {
@@ -269,6 +269,31 @@ describe('app.config.ts release gate', () => {
       stubEnv({ ...env, [name]: undefined });
       expect(releaseConfigProblems(root, platform), name).toEqual([]);
     }
+  });
+
+  it('slims the Android APK only when ANDROID_ABIS lists architectures, and always shrinks release code', () => {
+    const context = { config: { name: 'Budmo', slug: 'budmo-app' }, projectRoot: root } as never;
+    const buildProperties = () => appConfig(context).plugins?.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-build-properties');
+    stubEnv(previewEnv());
+    expect(buildProperties()).toEqual(['expo-build-properties', { android: { enableMinifyInReleaseBuilds: true, enableShrinkResourcesInReleaseBuilds: true } }]);
+    stubEnv({ ...previewEnv(), ANDROID_ABIS: ' arm64-v8a, armeabi-v7a ' });
+    expect(buildProperties()).toEqual(['expo-build-properties', {
+      android: { enableMinifyInReleaseBuilds: true, enableShrinkResourcesInReleaseBuilds: true, buildArchs: ['arm64-v8a', 'armeabi-v7a'], useLegacyPackaging: true },
+    }]);
+  });
+
+  it('accepts ANDROID_ABIS for the preview APK only, with known architectures, like release-check', () => {
+    const env = { ...previewEnv(), GOOGLE_SERVICES_JSON: 'package.json', ANDROID_ABIS: 'arm64-v8a' };
+    stubEnv(env);
+    expect(releaseConfigProblems(root, 'android', 'preview')).toEqual([]);
+    expect(checkEnv(env, { platform: 'android', profile: 'preview' })).toEqual([]);
+    expect(releaseConfigProblems(root, 'ios', 'preview')).toEqual([]);
+    stubEnv({ ...fullEnv(), GOOGLE_SERVICES_JSON: 'package.json', ANDROID_ABIS: 'arm64-v8a' });
+    expect(releaseConfigProblems(root, 'android')[0]).toMatch(/preview APK only/);
+    expect(checkEnv({ ...fullEnv(), ANDROID_ABIS: 'arm64-v8a' }, { platform: 'android' })[0]).toMatch(/preview APK only/);
+    stubEnv({ ...env, ANDROID_ABIS: 'arm64' });
+    expect(releaseConfigProblems(root, 'android', 'preview')[0]).toMatch(/unknown architecture "arm64"/);
+    expect(checkEnv({ ...env, ANDROID_ABIS: 'arm64' }, { platform: 'android', profile: 'preview' })[0]).toMatch(/unknown architecture "arm64"/);
   });
 
   it('needs an existing google-services.json for Android only', () => {
