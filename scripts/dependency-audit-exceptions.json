@@ -1,0 +1,17 @@
+{
+  "reviewedAt": "2026-10-07",
+  "exceptions": [
+    {
+      "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "expiresAt": "2026-11-06",
+      "reason": "Metro micromatch uses repository-controlled glob patterns during builds. Application code does not consume user glob patterns. Upstream has no patched version in the current advisory. Review before extending."
+    },
+    {
+      "url": "https://github.com/advisories/GHSA-86w9-cpqp-85rv",
+      "package": "node-forge",
+      "expiresAt": "2026-11-06",
+      "reason": "Expo CLI certificate tooling verifies locally generated certificates/signatures. OTA code signing is not configured; application code does not import node-forge. Upstream has no patched version in the current advisory. Review any signing or dependency change."
+    }
+  ]
+}

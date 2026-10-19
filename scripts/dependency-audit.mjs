@@ -25,7 +25,7 @@ export function auditProblems(report, exceptions, now = new Date()) {
 
 function run() {
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const { exceptions } = JSON.parse(readFileSync(new URL('../docs/dependency-audit-exceptions.json', import.meta.url), 'utf8'));
+  const { exceptions } = JSON.parse(readFileSync(new URL('./dependency-audit-exceptions.json', import.meta.url), 'utf8'));
   for (const [label, cwd, allowed] of [['application', root, exceptions], ['functions', fileURLToPath(new URL('../functions/', import.meta.url)), []]]) {
     const command = process.platform === 'win32' ? 'cmd.exe' : 'npm';
     const args = process.platform === 'win32' ? ['/d', '/s', '/c', 'npm.cmd audit --json'] : ['audit', '--json'];
