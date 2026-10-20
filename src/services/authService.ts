@@ -72,6 +72,28 @@ export function describeAuthError(err: unknown): string {
   }
 }
 
+/**
+ * The sign-in form field an error is about, so the form can show it under that field. Null for errors that are not
+ * about what the person typed (network, configuration, server); those go to the error screen.
+ */
+export function authErrorField(err: unknown): 'email' | 'password' | null {
+  const code = (err as { code?: string } | null)?.code ?? '';
+  switch (code) {
+    case 'auth/email-already-in-use':
+      return 'email';
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-email':
+    case 'auth/weak-password':
+    case 'auth/too-many-requests':
+      // One vague "wrong email or password" for both (no account enumeration): it sits under the last field
+      return 'password';
+    default:
+      return null;
+  }
+}
+
 /** Codes the UI treats as "the person changed their mind", not as an error */
 export const CANCELLED = 'auth/cancelled';
 

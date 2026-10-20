@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle,  } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextInputProps, TextStyle, View, ViewStyle,  } from 'react-native';
 import { Image } from 'expo-image';
 import Feather from '@expo/vector-icons/Feather';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -207,15 +207,20 @@ export const Row = ({ children, style }: { children: React.ReactNode; style?: St
   <View style={[{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }, style]}>{children}</View>
 );
 
-export const Field = ({ label, ...props }: { label: string } & TextInputProps) => (
+/** Inline validation message under a form control; renders nothing without a message */
+export const FieldError = ({ message, style }: { message?: string | null; style?: StyleProp<TextStyle> }) =>
+  message ? <Text style={[styles.fieldError, style]} accessibilityLiveRegion="polite">{message}</Text> : null;
+
+export const Field = ({ label, error, ...props }: { label: string; error?: string | null } & TextInputProps) => (
   <View style={{ marginBottom: spacing.md }}>
     <Text style={[typography.label, { marginBottom: 6 }]}>{label}</Text>
     <TextInput
       accessibilityLabel={label}
       placeholderTextColor={colors.textDim}
       {...props}
-      style={[styles.input, props.multiline && { height: 84, textAlignVertical: 'top' }, props.style]}
+      style={[styles.input, !!error && styles.inputError, props.multiline && { height: 84, textAlignVertical: 'top' }, props.style]}
     />
+    <FieldError message={error} />
   </View>
 );
 
@@ -311,6 +316,8 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 14,
   },
+  inputError: { borderColor: colors.red },
+  fieldError: { color: colors.red, fontSize: 12, marginTop: 4 },
   sheetBackdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
   sheet: {
     maxHeight: '90%',

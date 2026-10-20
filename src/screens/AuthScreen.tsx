@@ -3,14 +3,14 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } fr
 import { Image } from 'expo-image';
 import appIcon from '../../assets/logo.png'; // 256 px copy: the 1024 px store icon would cost 1 MB of bundle
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Field, SegmentedControl } from '../components/ui';
+import { Button, Field, FieldError, SegmentedControl } from '../components/ui';
 import { BirthDatePicker } from '../components/BirthDatePicker';
 import { colors, radius, spacing, typography } from '../theme';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { authNoticeSet, authOperationSet } from '../store/slices/uiSlice';
 import { profileUpdated } from '../store/slices/authSlice';
 import { prefillGoogleBirthDate } from '../store/thunks/auth';
-import { authService, describeAuthError } from '../services/authService';
+import { authErrorField, authService, describeAuthError } from '../services/authService';
 import { firebaseConfigured } from '../services/firebase';
 import { analyticsService } from '../services/analyticsService';
 import { calculateAge } from '../utils/ageUtils';
@@ -37,6 +37,10 @@ export const AuthScreen = () => {
   const [birthInput, setBirthInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+  // Field errors appear after the first submit attempt, then follow the input as it is corrected
+  const [showErrors, setShowErrors] = useState(false);
+  // A rejection from Firebase about what was typed, shown under that field until the field changes
+  const [serverError, setServerError] = useState<{ field: 'email' | 'password'; text: string } | null>(null);
 
   const birthIso = useMemo(() => parseBirthDateInput(birthInput), [birthInput]);
   const age = birthIso ? calculateAge(birthIso) : null;
@@ -57,6 +61,23 @@ export const AuthScreen = () => {
             : null,
   };
   const hasErrors = Object.values(errors).some(Boolean);
+  const shown = (field: keyof typeof errors) =>
+    (showErrors ? errors[field] : null) ?? (serverError?.field === field ? serverError.text : null);
+
+  const editEmail = (value: string) => {
+    setEmail(value);
+    setServerError(null);
+  };
+  const editPassword = (value: string) => {
+    setPassword(value);
+    setServerError(null);
+  };
+  /** Errors about the typed credentials go under the field; anything else (network, server) to the error screen */
+  const showAuthError = (err: unknown) => {
+    const field = authErrorField(err);
+    if (field) setServerError({ field, text: tr(describeAuthError(err)) });
+    else reportAppError(err, { message: tr(describeAuthError(err)) });
+  };
 
   const underageNotice = useAppSelector((s) => s.ui.authNotice === 'underage');
   useEffect(() => {
@@ -109,8 +130,9 @@ export const AuthScreen = () => {
 
   const submit = async () => {
     setInfo(null);
+    setServerError(null);
     dispatch(authNoticeSet(null));
-    if (hasErrors) { reportAppError(Object.values(errors).find(Boolean)); return; }
+    if (hasErrors) { setShowErrors(true); return; }
     if (!firebaseConfigured) {
       reportAppError(tr('Демо-режим: Firebase не налаштовано, вхід недоступний. Заповніть .env (див. .env.example).'));
       return;
@@ -129,7 +151,7 @@ export const AuthScreen = () => {
         analyticsService.trackEvent('login', { method: 'email' });
       }
     } catch (err) {
-      reportAppError(err, { message: tr(describeAuthError(err)) });
+      showAuthError(err);
     } finally {
       setBusy(false);
       dispatch(authOperationSet(false));
@@ -139,7 +161,7 @@ export const AuthScreen = () => {
   const forgotPassword = async () => {
     setInfo(null);
     if (!isValidEmail(email)) {
-      reportAppError(tr('Введіть email, на який надіслати лист'));
+      setServerError({ field: 'email', text: tr('Введіть email, на який надіслати лист') });
       return;
     }
     setBusy(true);
@@ -174,6 +196,8 @@ export const AuthScreen = () => {
           onChange={(m) => {
             setMode(m);
             setInfo(null);
+            setShowErrors(false);
+            setServerError(null);
           }}
           options={[
             { value: 'login', label: tr('Вхід') },
@@ -184,13 +208,14 @@ export const AuthScreen = () => {
 
         {registering && (
           <>
-            <Field label={tr('ІМ’Я')} value={name} onChangeText={setName} placeholder={tr('Як до тебе звертатись')} autoCapitalize="words" maxLength={40} />
+            <Field label={tr('ІМ’Я')} value={name} onChangeText={setName} placeholder={tr('Як до тебе звертатись')} autoCapitalize="words" maxLength={40} error={shown('name')} />
           </>
         )}
         <Field
           label="EMAIL"
           value={email}
-          onChangeText={setEmail}
+          onChangeText={editEmail}
+          error={shown('email')}
           placeholder="you@example.com"
           keyboardType="email-address"
           autoCapitalize="none"
@@ -201,7 +226,8 @@ export const AuthScreen = () => {
         <Field
           label={tr('ПАРОЛЬ')}
           value={password}
-          onChangeText={setPassword}
+          onChangeText={editPassword}
+          error={shown('password')}
           placeholder={registering ? tr('Щонайменше 8 символів, літери й цифри') : tr('Ваш пароль')}
           secureTextEntry
           autoCapitalize="none"
@@ -212,6 +238,7 @@ export const AuthScreen = () => {
         {registering && (
           <>
             <BirthDatePicker value={birthInput} onChange={setBirthInput} disabled={busy} />
+            <FieldError message={shown('birth')} style={styles.underPicker} />
             {age !== null && age >= MIN_AGE && <Text style={styles.hint}>{tr('Вік: {age}', { age })}</Text>}
           </>
         )}
@@ -247,4 +274,6 @@ const styles = StyleSheet.create({
   hero: { alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xl },
   logo: { width: 84, height: 84, borderRadius: radius.xl },
   hint: { color: colors.green, fontSize: 12, marginTop: -spacing.sm, marginBottom: spacing.md },
+  // The picker keeps its own bottom margin: pull the message up to it, as the hint does
+  underPicker: { marginTop: -spacing.sm, marginBottom: spacing.md },
 });
