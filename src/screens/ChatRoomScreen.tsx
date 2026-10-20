@@ -339,7 +339,7 @@ const MessageBubble = React.memo(
             <Text style={typography.label}>{tr('ПРОПОЗИЦІЯ ЗУСТРІЧІ')}</Text>
             <Text style={typography.heading}>{p.barName}</Text>
             <Text style={typography.small}>
-              📍 {p.address} • 🕒 {p.time}
+              {p.address ? `📍 ${p.address} • ` : ''}🕒 {p.time}
             </Text>
             {p.status === 'pending' && !mine ? (
               <Row>
@@ -406,7 +406,7 @@ const ProposalSheet = ({
   const send = () => {
     if (!bar.trim()) return;
     if (!iso || Date.parse(iso) <= Date.now()) { Alert.error(tr('Оберіть майбутню дату та час зустрічі')); return; }
-    onSend(bar.trim(), address.trim() || tr('Київ'), tr('{date} о {time}', { date, time }));
+    onSend(bar.trim(), address.trim(), tr('{date} о {time}', { date, time }));
   };
 
   return (
@@ -425,7 +425,7 @@ const ProposalSheet = ({
             selected={bar === v.name}
             onPress={() => {
               setBar(v.name);
-              setAddress(`${v.district}, ${v.address}`);
+              setAddress(v.address);
             }}
           />
         ))}

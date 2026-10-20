@@ -43,7 +43,7 @@ export const BuddyCard = React.memo(({ buddy, actions }: { buddy: BuddyProfile; 
             {buddy.isFriend && <Icon name="user-check" size={14} color={colors.green} />}
           </Row>
           <Text style={typography.small} numberOfLines={1}>
-            📍 {buddy.locationName} • {formatDistance(buddy.distanceKm)}
+            📍 {formatDistance(buddy.distanceKm)}
           </Text>
           <Text style={[typography.small, { color: colors.amberSoft }]} numberOfLines={1}>
             {MOOD_METADATA[buddy.currentMood]?.emoji} {tr(MOOD_METADATA[buddy.currentMood]?.label ?? '')}
@@ -88,7 +88,7 @@ export const BuddyTile = React.memo(({ buddy, actions }: { buddy: BuddyProfile; 
       {buddy.name}, {buddy.age}
     </Text>
     <Text style={typography.tiny} numberOfLines={1}>
-      {formatDistance(buddy.distanceKm)} • {buddy.locationName}
+      {formatDistance(buddy.distanceKm)}
     </Text>
     <Button label={tr('Будьмо!')} small onPress={() => actions.onToast(buddy)} style={{ alignSelf: 'stretch' }} />
   </Pressable>
@@ -108,7 +108,7 @@ export const BuddySheet = ({ buddy, actions, onClose }: { buddy: BuddyProfile | 
             <Text style={typography.heading}>
               {buddy.name}, {buddy.age}
             </Text>
-            <Text style={typography.small}>📍 {buddy.locationName}</Text>
+            <Text style={typography.small}>📍 {formatDistance(buddy.distanceKm)}</Text>
             {buddy.levelTitle && <Badge label={tr('Рівень {level} • {levelTitle}', { level: buddy.level ?? 1, levelTitle: buddy.levelTitle })} />}
           </View>
         </Row>

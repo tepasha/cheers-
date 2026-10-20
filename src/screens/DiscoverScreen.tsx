@@ -24,7 +24,6 @@ export const DiscoverScreen = () => {
   useFocusDemand('people');
   const navigation = useNavigation();
   const buddies = useAppSelector(selectBuddies);
-  const locationName = useAppSelector((s) => s.location.current.locationName);
 
   const [viewMode, setViewMode] = useState<ViewMode>('feed');
   const [filters, setFilters] = useState<FilterSettings>(DEFAULT_FILTERS);
@@ -141,7 +140,7 @@ export const DiscoverScreen = () => {
       <OfflineBanner />
       <ScreenHeader
         title={tr('Пошук компанії')}
-        subtitle={tr('{count} поруч • {locationName}', { count: visible.length, locationName: tr(locationName) })}
+        subtitle={tr('{count} поруч', { count: visible.length })}
         right={<IconButton icon="sliders" label={tr('Фільтри')} active={activeCount > 0} badge={activeCount} onPress={() => setShowFilters(true)} />}
       />
       <View style={styles.controls}>

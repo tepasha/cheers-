@@ -170,7 +170,7 @@ export function detectLanguageFromGeo(
     const { lat, lng } = coords;
     // Ukraine approximate bounds
     if (lat >= 44.0 && lat <= 52.5 && lng >= 22.0 && lng <= 40.5) {
-      return { lang: 'uk', source: 'geo', locationHint: ph('Україна (Київ / Гео-координати)') };
+      return { lang: 'uk', source: 'geo', locationHint: ph('Україна (Гео-координати)') };
     }
     // Poland approximate bounds
     if (lat >= 49.0 && lat <= 55.0 && lng >= 14.0 && lng <= 24.2) {
@@ -189,15 +189,15 @@ export function detectLanguageFromGeo(
     userTz.includes('Uzhgorod') ||
     userTz.includes('Zaporozhye')
   ) {
-    return { lang: 'uk', source: 'geo', locationHint: ph('Україна (Таймзона Київ)') };
+    return { lang: 'uk', source: 'geo', locationHint: ph('Україна (Часовий пояс)') };
   }
 
   if (userTz.includes('Warsaw')) {
-    return { lang: 'pl', source: 'geo', locationHint: ph('Польща (Таймзона Варшава)') };
+    return { lang: 'pl', source: 'geo', locationHint: ph('Польща (Часовий пояс)') };
   }
 
   if (userTz.includes('Berlin') || userTz.includes('Vienna') || userTz.includes('Zurich')) {
-    return { lang: 'de', source: 'geo', locationHint: ph('Німеччина / DACH (Таймзона Берлін)') };
+    return { lang: 'de', source: 'geo', locationHint: ph('Німеччина / DACH (Часовий пояс)') };
   }
 
   // 4. Check device language preferences

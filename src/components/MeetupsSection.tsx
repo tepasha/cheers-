@@ -209,7 +209,7 @@ const CreateMeetupSheet = ({ onClose }: { onClose: () => void }) => {
             selected={venue === v.name}
             onPress={() => {
               setVenue(v.name);
-              setAddress(`${v.district}, ${v.address}`);
+              setAddress(v.address);
               setCoords({ lat: v.lat, lng: v.lng });
             }}
           />

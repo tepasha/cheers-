@@ -37,7 +37,7 @@ export const FriendsScreen = () => {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? friends.filter((f) => `${f.name} ${f.tagline} ${f.locationName}`.toLowerCase().includes(q)) : friends;
+    return q ? friends.filter((f) => `${f.name} ${f.tagline}`.toLowerCase().includes(q)) : friends;
   }, [friends, query]);
 
   const confirmRemove = (f: BuddyProfile) =>
@@ -90,7 +90,7 @@ export const FriendsScreen = () => {
                   {item.name}
                 </Text>
                 <Text style={typography.small} numberOfLines={1}>
-                  📍 {item.locationName} • {formatDistance(item.distanceKm)}
+                  📍 {formatDistance(item.distanceKm)}
                 </Text>
                 {item.activeCheckIn ? (
                   <Badge label={tr('🟢 у {barName}', { barName: item.activeCheckIn.barName })} color={colors.green} bg={colors.greenBg} />

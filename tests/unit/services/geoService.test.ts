@@ -3,8 +3,7 @@ import {
   calculateDistanceKm, 
   calculateBearing, 
   formatDistance, 
-  simulateWalkingStep, 
-  PRESET_LOCATIONS, 
+  simulateWalkingStep,
   INITIAL_USER_LOCATION 
 } from '@/services/geoService';
 
@@ -21,8 +20,8 @@ describe('geoService', () => {
   });
 
   it('should calculate short distances correctly (e.g. Podil to Golden Gate ~1.5 - 2.5 km)', () => {
-    const podil = PRESET_LOCATIONS.find(p => p.id === 'podil')!;
-    const goldenGate = PRESET_LOCATIONS.find(p => p.id === 'golden_gate')!;
+    const podil = { lat: 50.4635, lng: 30.518 };
+    const goldenGate = { lat: 50.4492, lng: 30.5132 };
     const dist = calculateDistanceKm(podil.lat, podil.lng, goldenGate.lat, goldenGate.lng);
     expect(dist).toBeGreaterThan(1.0);
     expect(dist).toBeLessThan(3.0);
@@ -50,19 +49,6 @@ describe('geoService', () => {
     expect(dist).toBeLessThan(0.3); // under 300 meters
     expect(step.lat).toBeTypeOf('number');
     expect(step.lng).toBeTypeOf('number');
-  });
-
-  it('should provide complete curated preset locations with valid coordinates and venues', () => {
-    expect(PRESET_LOCATIONS.length).toBeGreaterThanOrEqual(6);
-    PRESET_LOCATIONS.forEach(loc => {
-      expect(loc.id).toBeTruthy();
-      expect(loc.name).toBeTruthy();
-      expect(loc.popularBars).toBeTruthy();
-      expect(loc.lat).toBeGreaterThan(40);
-      expect(loc.lat).toBeLessThan(55);
-      expect(loc.lng).toBeGreaterThan(20);
-      expect(loc.lng).toBeLessThan(40);
-    });
   });
 
   it('should have initial user location set to Podil', () => {

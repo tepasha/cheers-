@@ -432,7 +432,7 @@ export const firestoreSyncService = {
               ...data,
               userName: data.userName || ph('Користувач'),
               barName: data.barName || ph('Бар'),
-              locationArea: data.locationArea || ph('Київ'),
+              locationArea: data.locationArea || '',
               drinkPreference: data.drinkPreference || ph('Келих за настроєм'),
               createdAt: data.createdAt || ph('Щойно'),
               distanceKm: distKm,

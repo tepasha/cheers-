@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase-admin/app';
+import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
@@ -13,6 +13,7 @@ import { adultAge, rateLimit, TERMS_VERSION } from './access';
 import { discoverPeople, getPublicProfile } from './discovery';
 import { checkPushReceipts } from './receipts';
 import { backfillFeedCells, tagFeedCell } from './feedArea';
+import { nearbyArea, searchNearbyVenues } from './places';
 
 const requireEligible = (auth: { uid: string; token: Record<string, unknown> } | undefined) => {
   if (!auth) throw new HttpsError('unauthenticated', 'Sign in first');
@@ -77,6 +78,17 @@ export const publicUserProfile = onCall(async (request) => {
   await rateLimit(db, uid, 'profile', 0, 3000);
   if ((await db.doc(`bannedUsers/${uid}`).get()).exists) throw new HttpsError('permission-denied', 'Account disabled');
   return getPublicProfile(db, uid, request.data?.userId);
+});
+
+/** Bars, pubs and restaurants for the map, straight from Places API (New); see places.ts for why nothing is cached */
+export const nearbyVenues = onCall(async (request) => {
+  const uid = requireEligible(request.auth);
+  const area = nearbyArea(request.data);
+  const db = getFirestore(DATABASE_ID.value());
+  // Every call is billed: one area every 2 s at most, 200 a day per person
+  await rateLimit(db, uid, 'venues', 2000, 200);
+  const { access_token } = await applicationDefault().getAccessToken();
+  return searchNearbyVenues(fetch, access_token, process.env.GCLOUD_PROJECT ?? '', area);
 });
 
 export const onChatMessage = onDocumentCreated(

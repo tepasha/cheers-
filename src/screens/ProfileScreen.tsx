@@ -136,9 +136,8 @@ export const ProfileScreen = () => {
 
         <SectionTitle>{tr('Геолокація')}</SectionTitle>
         <Card style={{ gap: spacing.sm }}>
-          <Text style={typography.body}>{tr(location.locationName)}</Text>
           <Text style={typography.tiny}>
-            {location.isSimulated ? tr('Обраний район (можна змінити на вкладці «Мапа»)') : tr('GPS • точність ±{accuracyMeters} м • {lastUpdated}', { accuracyMeters: location.accuracyMeters, lastUpdated: location.lastUpdated })}
+            {location.isSimulated ? tr('GPS вимкнено') : tr('GPS • точність ±{accuracyMeters} м • {lastUpdated}', { accuracyMeters: location.accuracyMeters, lastUpdated: location.lastUpdated })}
           </Text>
           <Button label={tr('Використовувати мій GPS')} icon="crosshair" small variant="secondary" onPress={useRealLocation} />
           <SettingRow title={tr('Показувати мене поруч')} subtitle={tr('Лише з GPS: інші бачать приблизний район, а не точну позицію.')} value={settings.shareLocation} onChange={async (enabled) => {

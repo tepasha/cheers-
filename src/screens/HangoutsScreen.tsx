@@ -150,7 +150,7 @@ const HangoutCard = React.memo(({ hangout: h, myId, onReport, onChat, onClose, o
             {h.barName}
           </Text>
           <Text style={typography.small} numberOfLines={1}>
-            {h.userName} • {tr(h.locationArea)}
+            {h.userName}
             {h.distanceFormatted ? ` • ${h.distanceFormatted}` : ''}
           </Text>
         </View>
@@ -180,7 +180,6 @@ const CreateHangoutSheet = ({ visible, onClose }: { visible: boolean; onClose: (
   const user = useAppSelector((s) => s.auth.user);
   const location = useAppSelector(selectLocation);
   const [bar, setBar] = useState('');
-  const [area, setArea] = useState('');
   const [drink, setDrink] = useState(tr('Крафтове пиво & Сидр'));
   const [description, setDescription] = useState('');
   const [slots, setSlots] = useState(2);
@@ -198,7 +197,6 @@ const CreateHangoutSheet = ({ visible, onClose }: { visible: boolean; onClose: (
 
   const reset = () => {
     setBar('');
-    setArea('');
     setDescription('');
     setSlots(2);
     setVenueCoords(null);
@@ -213,7 +211,8 @@ const CreateHangoutSheet = ({ visible, onClose }: { visible: boolean; onClose: (
         userName: user.name || tr('Користувач'),
         userAvatar: user.avatar,
         barName: bar.trim(),
-        locationArea: area.trim() || location.locationName,
+        // No district name is published any more (2026-10-20); the field stays for older clients
+        locationArea: '',
         drinkPreference: drink.trim() || tr('Келих за настроєм'),
         description: description.trim(),
         createdAt: tr('Щойно'),
@@ -246,14 +245,12 @@ const CreateHangoutSheet = ({ visible, onClose }: { visible: boolean; onClose: (
             selected={bar === v.name}
             onPress={() => {
               setBar(v.name);
-              setArea(`${v.cityName}, ${v.district}`);
               setVenueCoords({ lat: v.lat, lng: v.lng });
             }}
           />
         ))}
       </Row>
       <Field label={tr('ЗАКЛАД')} value={bar} onChangeText={(t) => { setBar(t); setVenueCoords(null); }} placeholder={tr('напр. Squat 17b, Win Bar…')} />
-      <Field label={tr('РАЙОН')} value={area} onChangeText={setArea} placeholder={location.locationName} />
       <Field label={tr('ЩО П’ЄМО')} value={drink} onChangeText={setDrink} />
       <Field label={tr('ОПИС')} value={description} onChangeText={setDescription} multiline placeholder={tr('Де сидимо, яка атмосфера, що обговорюємо…')} maxLength={240} />
       <Text style={typography.label}>{tr('ВІЛЬНИХ МІСЦЬ')}</Text>

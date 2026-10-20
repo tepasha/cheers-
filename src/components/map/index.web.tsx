@@ -21,6 +21,7 @@ interface MapViewProps {
   onPress?: () => void;
   children?: React.ReactNode;
   // Accepted and ignored so MapScreen compiles against both implementations
+  onRegionChangeComplete?: (region: Region) => void;
   userInterfaceStyle?: string;
   showsCompass?: boolean;
   toolbarEnabled?: boolean;
@@ -60,6 +61,9 @@ interface MarkerProps {
   identifier?: string;
   tracksViewChanges?: boolean;
   onPress?: (event: { stopPropagation: () => void }) => void;
+  // A custom pin drawing: the list shows its own dot instead
+  anchor?: { x: number; y: number };
+  children?: React.ReactNode;
 }
 
 export const Marker = ({ coordinate, pinColor = 'red', title, identifier, onPress }: MarkerProps) => {
