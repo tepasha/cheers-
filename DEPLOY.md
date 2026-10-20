@@ -2,7 +2,7 @@
 
 Автоматичне тестування та ручний production: [інструкція Expo](docs/expo-testing.md). Push у гілку `stage` автоматично деплоїть staging-бекенд, збирає Android preview APK і публікує preview-OTA (лише тестове оточення); push у `main` запускає тільки CI. Production запускається тільки через **Run workflow**; створення тегу нічого не викочує.
 
-> **iOS вимкнено з деплою.** CI збирає, відправляє й оновлює (OTA, `eas update --platform android`) лише Android; `build-ios.yml` видалено, а release.yml і promote.yml не мають iOS-кроків і не вимагають ключів Apple. Пункти про Apple нижче лишаються довідкою на випадок повернення iOS (відновіть `build-ios.yml` з історії git).
+> **iOS у production вимкнено.** release.yml, ota.yml і promote.yml збирають, відправляють і оновлюють лише Android; `build-ios.yml` видалено (за потреби відновіть з історії git). На `stage` є окремий iOS preview ([preview-ios.yml](.github/workflows/preview-ios.yml)), вимкнений, доки змінна репозиторію `IOS_PREVIEW` не `true`: див. «iOS preview (stage)» нижче. Інші пункти про Apple лишаються довідкою.
 
 ## Зміни для першого публічного релізу — 2026-10-07
 
@@ -122,10 +122,39 @@ npx eas-cli build --platform android --profile preview
 - **Android:** `promote.yml`, `build_id` – EAS-id production-збірки з тегу, `rollout: 0.1`. Пізніше той самий `build_id` з `0.5`, потім `1` (= 100%, `completed`). Workflow бере versionCode і пакет з EAS, приймає лише завершену production store-збірку з коміту в `main` і переводить її з internal у production через Play Developer API ([scripts/play-promote.mjs](scripts/play-promote.mjs)), нічого не завантажуючи вдруге. Зменшити частку не можна: зупиняйте розгортання в Play Console (Halt). Якщо в Play увімкнено Managed publishing або коміт відхилено з «changesNotSentForReview», опублікуйте зміну в Play Console.
 - **iOS:** не деплоїться. Раніше `promote.yml`, `platform: ios` заливав листинг ([store.config.json](store.config.json)) через `eas metadata:push` після перевірки `--store` (немає `REPLACE_ME`, юридичні посилання https з EAS `production`). Збірку для рев'ю, «Submit for Review» і phased release обираєте в App Store Connect: EAS цього не робить.
 
+### iOS preview (stage)
+
+Ad hoc-збірка для зареєстрованих iPhone (EAS internal distribution, без TestFlight) і OTA каналу `preview` для неї. [preview-ios.yml](.github/workflows/preview-ios.yml) викликається з `preview.yml` після staging-бекенду, незалежно від Android, або запускається вручну на `stage`. Нова збірка робиться лише коли змінився iOS-fingerprint (нативний код, плагіни, `eas.json`); на JS-зміни виходить тільки OTA. `force_build` при ручному запуску збирає завжди. Встановлення: посилання «встановити з EAS» у підсумку run, відкрити на iPhone. Встановлюється лише на iPhone з ad hoc-профілю. Копії для Expo Go на iOS немає.
+
+Перший запуск (з Windows, усе в хмарі EAS; macOS не потрібна):
+
+1. Apple Developer Program (оплачений) і Team ID (developer.apple.com → Membership, 10 символів).
+2. Google Cloud (проєкт Firebase) → Credentials → OAuth client типу **iOS**, bundle ID `cheers.app`. В EAS `preview`:
+   ```
+   npx eas-cli env:create --environment preview --name GOOGLE_IOS_CLIENT_ID --value <id>.apps.googleusercontent.com --visibility plaintext
+   npx eas-cli env:create --environment preview --name EXPORT_ENCRYPTION_CLASSIFICATION --value exempt --visibility plaintext
+   ```
+   `exempt` лише після перевірки власником (див. export compliance вище). `GOOGLE_IOS_CLIENT_ID` додає плагін Google sign-in у конфіг, тобто змінює fingerprint і **Android** теж: встановлені APK перестануть отримувати OTA, доки не поставлять APK з наступного push у `stage`.
+3. Зареєструйте тестові iPhone: `npx eas-cli device:create` → посилання/QR відкрити на iPhone у Safari, встановити профіль.
+4. Перша збірка інтерактивно (вхід в Apple ID; EAS реєструє `cheers.app` з Sign In with Apple, створює сертифікат дистрибуції й ad hoc-профіль; у `--non-interactive` сертифікат не створюється):
+   ```
+   npx eas-cli build -p ios --profile preview
+   ```
+   Якщо `cheers.app` уже зайнятий іншою командою Apple, доведеться міняти ідентифікатор і в `android.package` теж (`release-check` вимагає однакових).
+5. App Store Connect → Users and Access → Integrations → App Store Connect API: командний ключ (роль App Manager), `.p8` завантажується один раз. Ключ дає CI змогу додавати нові iPhone у профіль. У Git Bash:
+   ```
+   base64 -w0 AuthKey_<KEY_ID>.p8 | gh secret set APP_STORE_CONNECT_API_KEY_BASE64
+   gh secret set APP_STORE_CONNECT_KEY_ID --body <KEY_ID>
+   gh secret set APP_STORE_CONNECT_ISSUER_ID --body <issuer-uuid>
+   gh variable set APPLE_TEAM_ID --body <TEAM_ID>
+   gh variable set IOS_PREVIEW --body true
+   ```
+6. Push у `stage` (або Actions → **iOS preview (stage)** → Run workflow на `stage`). Новий iPhone пізніше: `npx eas-cli device:create`, потім ручний запуск з `force_build`.
+
 ### OTA-оновлення
 
 - **Що це:** EAS Update доставляє JS і ресурси без рев'ю стору. `runtimeVersion` = нативний **fingerprint** (`runtimeVersion: { policy: 'fingerprint' }` у [app.config.ts](app.config.ts)): оновлення доходить лише до збірок з тим самим нативним кодом. **Не перемикайте на `appVersion`:** тоді оновлення діставалося б збірок тієї самої версії з іншим нативним кодом і падало б у них. `extra` (EAS-змінні) і версія у fingerprint не входять ([fingerprint.config.js](fingerprint.config.js)): кожне оновлення несе їх у маніфесті. Будь-яка нативна зміна (залежності, плагіни, ключ карт, iOS client id, `google-services.json`, `eas.json`) потребує store-збірки.
-- **preview:** автоматично на кожен push у `stage` ([preview.yml](.github/workflows/preview.yml)), після staging-деплою та успішної Android preview-збірки; разом з ним публікується копія для Expo Go.
+- **preview:** автоматично на кожен push у `stage` ([preview.yml](.github/workflows/preview.yml)), після staging-деплою та успішної Android preview-збірки; разом з ним публікується копія для Expo Go. iOS-оновлення публікує [preview-ios.yml](.github/workflows/preview-ios.yml), коли `IOS_PREVIEW=true`.
 - **Розмір stage APK:** універсальний APK несе нативні бібліотеки всіх чотирьох архітектур, ще й нестиснуті (~100 MB). Змінна `ANDROID_ABIS` в EAS `preview` (Plain text, напр. `arm64-v8a`; `arm64-v8a,armeabi-v7a` для старих 32-бітних телефонів) лишає лише вказані архітектури та стискає бібліотеки ([app.config.ts](app.config.ts), `androidSlimApk`). Вона входить у fingerprint, тож має бути саме EAS-змінною (її бачать і `eas build`, і `eas update --environment preview`), а після її зміни потрібна нова preview-збірка. У `production` її заборонено: Play сам ділить AAB під пристрій. R8 і shrinkResources увімкнені для всіх release-збірок.
 - **production:** `ota.yml` вручну з `main` або тегу, після CI і схвалення `production`. Перед публікацією workflow перевіряє повноту EAS `production`, що вона вказує на бекенд GitHub `production`, і що для **кожної** платформи є завершена production-збірка з тим самим runtime (інакше падає: оновлення нікому б не дійшло; спершу store-збірка). Після публікації перевіряє фактичний runtime ще раз.
 - **Відкат:** `npx eas-cli update:rollback` (публікує попередню групу оновлень каналу, а якщо її немає, повертає вбудований у збірку бандл) або новий OTA з виправленням.

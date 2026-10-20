@@ -6,7 +6,7 @@ name: 🧪 Preview (stage)
 # Everything here targets the test environment only (GitHub Environment `staging`, EAS `preview`) and every step
 # runs on every push. Production has its own workflows (release.yml, ota.yml, promote.yml and the reusable
 # build-android.yml / deploy-backend.yml); this file shares only the CI gate with them. A push to main runs only CI.
-# iOS is not deployed.
+# iOS runs in its own workflow, preview-ios.yml, after the backend, once the repository variable IOS_PREVIEW is `true`.
 on:
   push:
     branches: [ stage ]
@@ -217,6 +217,20 @@ jobs:
             while read -r old; do
               gh release delete "$old" --cleanup-tag --yes
             done
+
+  # Off until the Apple side is set up (DEPLOY.md, "iOS preview"); independent of the Android jobs
+  ios:
+    name: 🍏 iOS
+    needs: backend
+    if: vars.IOS_PREVIEW == 'true'
+    uses: ./.github/workflows/preview-ios.yml
+    with:
+      ci_checked: true
+    secrets:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
 
   # JS and assets for the installed preview APKs (runtime version = native fingerprint, app.config.ts), and a copy
   # with runtime version exposdk:<SDK>.0.0 for Expo Go, which opens no other kind of update.

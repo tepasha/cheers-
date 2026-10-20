@@ -1,0 +1,247 @@
+name: 🍏 iOS preview (stage)
+
+# The iOS half of the stage test line: an ad hoc build for the registered test iPhones (EAS internal distribution,
+# installed from the EAS build page, no TestFlight) and the OTA update of the `preview` channel for it.
+# Called by preview.yml after the staging backend once the repository variable IOS_PREVIEW is `true`, or started by
+# hand on stage (force_build after registering a new iPhone: the ad hoc profile has to list it).
+# iOS builds are slow and scarce on EAS, so a build is cut only when no finished preview build has this commit's iOS
+# fingerprint; JS-only pushes reach the installed builds through the update alone.
+# The distribution certificate is created once interactively (DEPLOY.md, "iOS preview"): eas-cli 24.8.0 does not
+# create it in --non-interactive mode. The App Store Connect key lets EAS create and repair the ad hoc profile here.
+on:
+  # A caller sets ci_checked only after its CI gate succeeds; an independent manual run performs CI below.
+  workflow_call:
+    inputs:
+      ci_checked:
+        description: 'Caller has successfully completed ci-check.yml for this commit'
+        type: boolean
+        default: false
+    secrets:
+      EXPO_TOKEN:
+        required: true
+      APP_STORE_CONNECT_API_KEY_BASE64:
+        required: false
+      APP_STORE_CONNECT_KEY_ID:
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        required: false
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Зібрати нову iOS-збірку, навіть якщо збірка з цим fingerprint уже є (після реєстрації нового iPhone)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  # The preview channel is fed from stage only: a manual run from another branch would ship its JS to the testers
+  gate:
+    name: 🚦 Only from stage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 🚦 stage branch
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/stage" ]; then
+            echo "::error::The iOS preview is built from the stage branch only (this run: $GITHUB_REF)"
+            exit 1
+          fi
+
+  # Started by hand, nothing has tested this ref yet. preview.yml has run ci-check.yml already, so it is skipped then.
+  ci:
+    name: ✅ CI gate
+    needs: gate
+    if: ${{ !inputs.ci_checked }}
+    uses: ./.github/workflows/ci-check.yml
+
+  # Build (when the fingerprint is new) and then the update, in one job: the update must not land before the build
+  # that it targets exists. The EAS output contains artifact links, so it is summarised and never printed whole.
+  ios:
+    name: 🍏 iOS ad hoc + OTA → preview channel
+    needs: [gate, ci]
+    # A skipped CI is accepted only when the caller explicitly completed ci-check.yml
+    if: >-
+      !cancelled() && needs.gate.result == 'success'
+      && (needs.ci.result == 'success' || (needs.ci.result == 'skipped' && inputs.ci_checked))
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Not preview.yml's group: a called workflow that waits on its caller's group never starts
+    concurrency:
+      group: ios-preview-stage
+      cancel-in-progress: false
+    env:
+      PROFILE: preview
+      CHANNEL: preview
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 🟢 Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: 🚀 Setup EAS & Expo CLI
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8
+        with:
+          eas-version: 24.8.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      # The resolved Expo config (android.googleServicesFile included) is hashed for iOS too, so this machine needs
+      # the file variable's contents to compute the worker's fingerprint, as in preview.yml (.eas/ is never uploaded)
+      - name: Download EAS files for native fingerprinting
+        run: |
+          eas env:pull "$PROFILE" --path "$RUNNER_TEMP/eas-build.env" --non-interactive
+          if [ ! -f .eas/.env/GOOGLE_SERVICES_JSON ]; then
+            echo "::error::GOOGLE_SERVICES_JSON must be a Sensitive file variable in EAS $PROFILE so local and worker fingerprints include the same contents."
+            exit 1
+          fi
+
+      - name: 🏷️ Project is linked to EAS
+        run: node scripts/release-check.mjs --project
+
+      # GOOGLE_IOS_CLIENT_ID and EXPORT_ENCRYPTION_CLASSIFICATION are required for iOS even in preview
+      - name: 🔐 EAS environment is complete
+        run: eas env:exec "$PROFILE" "node scripts/release-check.mjs --env --platform ios --profile $PROFILE" --non-interactive
+
+      # The fingerprint is computed with the EAS variables (the Google sign-in URL scheme is a config plugin option)
+      - name: 🔎 Does a build with this fingerprint exist
+        id: plan
+        env:
+          FORCE_BUILD: ${{ inputs.force_build }}
+        run: |
+          eas env:exec "$PROFILE" \
+            'npx expo-updates runtimeversion:resolve --platform ios --workflow managed > "$RUNNER_TEMP/fingerprint.json"' --non-interactive
+          runtime="$(jq -r '.runtimeVersion // empty' "$RUNNER_TEMP/fingerprint.json")"
+          if [ -z "$runtime" ]; then
+            echo "::error::Could not resolve the iOS runtime version, see the log above"
+            exit 1
+          fi
+          eas build:list --platform ios --channel "$CHANNEL" --runtime-version "$runtime" \
+            --status finished --limit 1 --json --non-interactive > "$RUNNER_TEMP/existing.json"
+          echo "runtime=$runtime" >> "$GITHUB_OUTPUT"
+          if [ "$FORCE_BUILD" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif jq -e 'length > 0' "$RUNNER_TEMP/existing.json" > /dev/null; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### 🍏 iOS ($PROFILE)"
+              jq -r '.[0] | "- нативний код не змінився (runtime `\(.runtimeVersion)`): нова збірка не потрібна, [чинна збірка](\(.buildDetailsPageUrl)) отримає OTA"' "$RUNNER_TEMP/existing.json"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # eas-cli reads the key only from EXPO_ASC_API_KEY_PATH / EXPO_ASC_KEY_ID / EXPO_ASC_ISSUER_ID and in
+      # --non-interactive mode also needs EXPO_APPLE_TEAM_ID. Without it EAS cannot add newly registered iPhones to the
+      # ad hoc profile, and finds that out only after the cloud build has started, so every value is checked here.
+      # The key is decoded outside the workspace, never into the project archive EAS uploads.
+      - name: 🔑 App Store Connect API key
+        if: steps.plan.outputs.build == 'true'
+        env:
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          KEY_DIR: ${{ runner.temp }}/asc
+        run: |
+          missing=""
+          [ -n "$APP_STORE_CONNECT_API_KEY_BASE64" ] || missing="$missing secret APP_STORE_CONNECT_API_KEY_BASE64,"
+          [ -n "$APP_STORE_CONNECT_KEY_ID" ] || missing="$missing secret APP_STORE_CONNECT_KEY_ID,"
+          [ -n "$APP_STORE_CONNECT_ISSUER_ID" ] || missing="$missing secret APP_STORE_CONNECT_ISSUER_ID,"
+          [ -n "$APPLE_TEAM_ID" ] || missing="$missing variable APPLE_TEAM_ID,"
+          if [ -n "$missing" ]; then
+            echo "::error::iOS builds need the App Store Connect API key in CI. Missing:${missing%,}. See DEPLOY.md, \"iOS preview\"."
+            exit 1
+          fi
+          # The values themselves are never printed
+          if ! echo "$APP_STORE_CONNECT_KEY_ID" | grep -qE '^[0-9A-Z]{1,30}$'; then
+            echo "::error::APP_STORE_CONNECT_KEY_ID must be the key id from App Store Connect (uppercase letters and digits, e.g. AB32CZE81F)"
+            exit 1
+          fi
+          if ! echo "$APP_STORE_CONNECT_ISSUER_ID" | grep -qiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
+            echo "::error::APP_STORE_CONNECT_ISSUER_ID must be the Issuer ID (a UUID) shown above the key list in App Store Connect → Users and Access → Integrations"
+            exit 1
+          fi
+          if ! echo "$APPLE_TEAM_ID" | grep -qE '^[0-9A-Z]{10}$'; then
+            echo "::error::APPLE_TEAM_ID must be the 10-character Apple Developer team id"
+            exit 1
+          fi
+          mkdir -p "$KEY_DIR"
+          chmod 700 "$KEY_DIR"
+          if ! echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$KEY_DIR/AuthKey.p8" 2>/dev/null \
+             || ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$KEY_DIR/AuthKey.p8"; then
+            echo "::error::APP_STORE_CONNECT_API_KEY_BASE64 is not a base64-encoded .p8 key (encode it with: base64 -w0 AuthKey_<id>.p8)"
+            exit 1
+          fi
+          chmod 600 "$KEY_DIR/AuthKey.p8"
+          echo "✅ App Store Connect API key is ready"
+
+      # Testers install from the EAS build page (link or QR on the iPhone); only iPhones in the ad hoc profile can.
+      # An .ipa in a GitHub release would not install on a phone, so nothing is attached there.
+      - name: 🔨 EAS Build for iOS
+        if: steps.plan.outputs.build == 'true'
+        env:
+          EXPO_ASC_API_KEY_PATH: ${{ runner.temp }}/asc/AuthKey.p8
+          EXPO_ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          EXPO_APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          if eas build --platform ios --profile "$PROFILE" --non-interactive --json > "$RUNNER_TEMP/build.json"; then
+            BUILD_EXIT=0
+          else
+            BUILD_EXIT=$?
+          fi
+          {
+            echo "### 🍏 iOS ($PROFILE)"
+            if jq -e 'type == "array" and length > 0' "$RUNNER_TEMP/build.json" > /dev/null 2>&1; then
+              jq -r '.[] | "- збірка `\(.id)`: **\(.status)** — [встановити з EAS](\(.buildDetailsPageUrl)) (лише зареєстровані iPhone)"' "$RUNNER_TEMP/build.json"
+            else
+              echo "- EAS не повернув результат збірки, див. лог кроку"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "::error::eas build failed (exit $BUILD_EXIT), see the log above. First iOS build? The distribution certificate is created interactively, see DEPLOY.md, \"iOS preview\"."
+            exit "$BUILD_EXIT"
+          fi
+          if [ "$(jq -r '.[0].status' "$RUNNER_TEMP/build.json")" != "FINISHED" ]; then
+            echo "::error::The EAS build did not finish"
+            exit 1
+          fi
+
+      - name: 🧹 Remove the App Store Connect key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"
+
+      # As in preview.yml: `eas update` reports success even when no installed binary has the update's runtime version
+      - name: 📡 Publish the update
+        run: |
+          MESSAGE="$(git log -1 --pretty=%s)"
+          eas update --platform ios --channel "$CHANNEL" --environment "$CHANNEL" --message "$MESSAGE" --non-interactive --json \
+            > "$RUNNER_TEMP/update.json"
+          runtime="$(jq -r '.[0].runtimeVersion // empty' "$RUNNER_TEMP/update.json")"
+          if [ -z "$runtime" ]; then
+            echo "::error::eas update returned no updates, see the log above"
+            exit 1
+          fi
+          builds="$(eas build:list --platform ios --channel "$CHANNEL" --runtime-version "$runtime" \
+            --status finished --limit 1 --json --non-interactive | jq 'length')"
+          if [ "$builds" -gt 0 ]; then
+            echo "- OTA: runtime \`$runtime\`, reaches the $CHANNEL builds" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::ios: runtime version $runtime has no finished $CHANNEL build (the build step computed ${{ steps.plan.outputs.runtime }})"
+          fi
+
+      - name: Upload source maps for crash reports
+        run: |
+          eas env:exec "$CHANNEL" 'if [ -n "$SENTRY_ORG" ] && [ -n "$SENTRY_PROJECT" ] && [ -n "$SENTRY_AUTH_TOKEN" ]; then
+            npx sentry-expo-upload-sourcemaps dist
+          else
+            echo "Sentry source-map upload skipped: upload credentials are not configured"
+          fi' --non-interactive

@@ -19,7 +19,7 @@ describe('Expo deployment entry points', () => {
   it('runs the whole test line automatically on the stage branch, against staging only', () => {
     const preview = workflow('preview');
     expect(preview.on.push.branches).toEqual(['stage']);
-    expect(Object.keys(preview.jobs)).toEqual(['ci', 'backend', 'android', 'ota']);
+    expect(Object.keys(preview.jobs)).toEqual(['ci', 'backend', 'android', 'ios', 'ota']);
     expect(preview.jobs.ci.uses).toBe('./.github/workflows/ci-check.yml');
     expect(preview.jobs.backend.environment).toBe('staging');
     expect(preview.jobs.android.env.PROFILE).toBe('preview');
@@ -30,6 +30,8 @@ describe('Expo deployment entry points', () => {
   it('runs every stage step on every push: nothing is skipped, nothing reuses the production workflows', () => {
     const preview = workflow('preview');
     for (const [name, job] of Object.entries(preview.jobs) as [string, { if?: string; uses?: string; steps?: Step[] }][]) {
+      // iOS is the one switch: off until the Apple side is set up
+      if (name === 'ios') continue;
       expect(job.if).toBeUndefined();
       if (name !== 'ci') expect(job.uses).toBeUndefined();
       // `always()` only keeps the cleanup running after a failure
@@ -42,6 +44,29 @@ describe('Expo deployment entry points', () => {
     expect(jobs.backend.needs).toBe('ci');
     expect(jobs.android.needs).toBe('backend');
     expect(jobs.ota.needs).toBe('android');
+    expect(jobs.ios.needs).toBe('backend');
+  });
+
+  it('runs the iOS preview in its own workflow, behind IOS_PREVIEW, from stage only', () => {
+    const { ios } = workflow('preview').jobs;
+    expect(ios.if).toBe("vars.IOS_PREVIEW == 'true'");
+    expect(ios.uses).toBe('./.github/workflows/preview-ios.yml');
+    expect(ios.with.ci_checked).toBe(true);
+    const config = workflow('preview-ios');
+    expect(Object.keys(config.on)).toEqual(['workflow_call', 'workflow_dispatch']);
+    expect(config.permissions).toEqual({ contents: 'read' });
+    expect(config.jobs.gate.steps[0].run).toContain('refs/heads/stage');
+    const job = config.jobs.ios;
+    expect(job.needs).toEqual(['gate', 'ci']);
+    expect(job.env).toEqual({ PROFILE: 'preview', CHANNEL: 'preview' });
+    // A called workflow must not wait on its caller's concurrency group
+    expect(job.concurrency.group).not.toBe(workflow('preview').concurrency.group);
+    const steps = job.steps as Step[];
+    expect(step(steps, 'EAS Build for iOS').if).toBe("steps.plan.outputs.build == 'true'");
+    const update = step(steps, 'Publish the update');
+    expect(update.if).toBeUndefined();
+    expect(update.run).toContain('eas update --platform ios --channel "$CHANNEL"');
+    expect(steps.indexOf(update)).toBeGreaterThan(steps.indexOf(step(steps, 'EAS Build for iOS')));
   });
 
   it('attaches the stage APK to a GitHub pre-release, never to the latest release', () => {
@@ -74,7 +99,7 @@ describe('Expo deployment entry points', () => {
     }
   });
 
-  it('deploys Android only: no iOS build, submit or update', () => {
+  it('deploys Android only to production: no iOS build, submit or update', () => {
     expect(existsSync('.github/workflows/build-ios.yml')).toBe(false);
     expect(Object.keys(workflow('release').jobs)).not.toContain('ios');
     expect(workflow('promote').on.workflow_dispatch.inputs.platform).toBeUndefined();
@@ -86,7 +111,7 @@ describe('Expo deployment entry points', () => {
     const { jobs } = workflow('release');
     expect(jobs.ci.uses).toBe('./.github/workflows/ci-check.yml');
     for (const name of ['backend', 'android']) expect(jobs[name].with.ci_checked).toBe(true);
-    for (const child of ['build-android', 'deploy-backend']) {
+    for (const child of ['build-android', 'deploy-backend', 'preview-ios']) {
       const config = workflow(child);
       expect(config.on.workflow_call.inputs.ci_checked.default).toBe(false);
       expect(config.on.workflow_dispatch?.inputs?.ci_checked).toBeUndefined();
